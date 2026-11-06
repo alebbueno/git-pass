@@ -124,7 +124,7 @@ fn list_repos_blocking(id: Uuid) -> Result<Vec<GithubRepoSummary>, String> {
 pub async fn cloud_repos(account_id: String) -> Result<Vec<CloudRepo>, String> {
     let id = parse_account(&account_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
+        let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
         if !cfg.accounts.iter().any(|a| a.id == id) {
             return Err("Conta desconhecida.".to_string());
         }
@@ -225,7 +225,7 @@ pub async fn cloud_clone(
             );
         };
 
-        let mut cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
+        let mut cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
         if !cfg.accounts.iter().any(|a| a.id == id) {
             return Err("Conta desconhecida.".to_string());
         }
@@ -244,7 +244,7 @@ pub async fn cloud_clone(
 
         emit("binding", 100);
         // Reload: the config may have changed during a long clone.
-        cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
+        cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
         gitpass_core::bindings::create_binding(&mut cfg, id, &dest).map_err(|e| {
             format!(
                 "Clonado em `{}`, mas não foi possível vincular à conta: {e}. Podes vinculá-lo em «Repositórios».",
@@ -294,5 +294,35 @@ end tell"#,
     #[cfg(not(target_os = "macos"))]
     {
         Err("O seletor de pastas só está disponível no macOS por agora.".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract_tests::{expect, keys};
+
+    /// api-cloud.ts: CloudRepo (flattened GithubRepoSummary + local fields), RepoPermissions, CloneProgressPayload.
+    #[test]
+    fn response_keys_match_typescript() {
+        let repo = CloudRepo {
+            repo: GithubRepoSummary::default(),
+            local_binding_id: None,
+            local_path: None,
+        };
+        assert_eq!(
+            keys(&repo),
+            expect(&[
+                "full_name", "name", "private", "html_url", "pushed_at", "default_branch", "permissions", "owner_login",
+                "owner_type", "fork", "archived", "description", "clone_url", "local_binding_id", "local_path"
+            ])
+        );
+        let v = serde_json::to_value(&repo).unwrap();
+        assert_eq!(keys(&repo.repo.permissions), expect(&["admin", "maintain", "push", "triage", "pull"]));
+        assert!(v["permissions"].is_object());
+        assert_eq!(
+            keys(&CloneProgressPayload { full_name: String::new(), phase: String::new(), percent: 0 }),
+            expect(&["full_name", "phase", "percent"])
+        );
     }
 }

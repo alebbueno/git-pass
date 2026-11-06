@@ -581,3 +581,112 @@ pub fn repos_open_in_finder(path: String) -> Result<(), String> {
 pub fn repos_open_in_terminal(path: String) -> Result<(), String> {
     open_with(&["-a", "Terminal"], &existing_dir(&path)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract_tests::{expect, keys};
+
+    fn row() -> RepoRow {
+        RepoRow {
+            id: String::new(),
+            account_id: String::new(),
+            account_login: None,
+            account_label: None,
+            account_missing: false,
+            root_path: String::new(),
+            github_owner: None,
+            github_repo: None,
+            remote_url: None,
+            remote_has_credentials: false,
+            exists: true,
+            branch: None,
+            detached_at: None,
+            identity: IdentityRow {
+                state: Some(IdentityState::NotSet),
+                local_name: None,
+                local_email: None,
+                expected_name: None,
+                expected_email: None,
+            },
+        }
+    }
+
+    /// api-repos.ts: RepoRow, RepoIdentityRow, BindOutcome, BindItemResult, DiscoveredRepo, DiscoverResult.
+    #[test]
+    fn response_keys_match_typescript() {
+        let r = row();
+        assert_eq!(
+            keys(&r),
+            expect(&[
+                "id", "account_id", "account_login", "account_label", "account_missing", "root_path", "github_owner",
+                "github_repo", "remote_url", "remote_has_credentials", "exists", "branch", "detached_at", "identity"
+            ])
+        );
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(keys(&r.identity), expect(&["state", "local_name", "local_email", "expected_name", "expected_email"]));
+        assert_eq!(v["identity"]["state"], "not_set");
+
+        assert_eq!(keys(&BindOutcome::Cancelled), expect(&["status"]));
+        assert_eq!(keys(&BindOutcome::Bound { repo: row(), reason: Some(SuggestionReason::OnlyAccount) }), expect(&["status", "repo", "reason"]));
+        let needs = BindOutcome::NeedsAccount {
+            root_path: String::new(),
+            github_owner: String::new(),
+            github_repo: String::new(),
+            suggested_account_id: None,
+            candidates: vec![CandidateRow { account_id: String::new(), can_push: None }],
+        };
+        assert_eq!(
+            keys(&needs),
+            expect(&["status", "root_path", "github_owner", "github_repo", "suggested_account_id", "candidates"])
+        );
+        let n = serde_json::to_value(&needs).unwrap();
+        assert_eq!(n["status"], "needs_account");
+        assert_eq!(keys(&CandidateRow { account_id: String::new(), can_push: Some(true) }), expect(&["account_id", "can_push"]));
+
+        assert_eq!(keys(&BindItemResult { path: String::new(), repo: None, error: None }), expect(&["path", "repo", "error"]));
+        assert_eq!(
+            keys(&DiscoveredRow {
+                root_path: String::new(),
+                github_owner: String::new(),
+                github_repo: String::new(),
+                remote_url: String::new(),
+                suggested_account_id: None,
+                suggestion_reason: None,
+            }),
+            expect(&["root_path", "github_owner", "github_repo", "remote_url", "suggested_account_id", "suggestion_reason"])
+        );
+        assert_eq!(
+            keys(&DiscoverResult { repos: vec![], roots: vec![], truncated: false, elapsed_ms: 0 }),
+            expect(&["repos", "roots", "truncated", "elapsed_ms"])
+        );
+    }
+
+    #[test]
+    fn enums_match_typescript() {
+        let id: Vec<_> = [IdentityState::Correct, IdentityState::Different, IdentityState::NotSet]
+            .iter()
+            .map(|s| serde_json::to_value(s).unwrap())
+            .collect();
+        assert_eq!(id, ["correct", "different", "not_set"]);
+        let reasons: Vec<_> = [
+            SuggestionReason::OwnerLogin,
+            SuggestionReason::SameOwnerBinding,
+            SuggestionReason::OnlyAccount,
+            SuggestionReason::PushAccess,
+        ]
+        .iter()
+        .map(|s| serde_json::to_value(s).unwrap())
+        .collect();
+        assert_eq!(reasons, ["owner_login", "same_owner_binding", "only_account", "push_access"]);
+    }
+
+    /// `repos_bind_many` receives `{ path, account_id }` exactly as api-repos.ts sends it.
+    #[test]
+    fn bind_request_accepts_frontend_payload() {
+        let items: Vec<BindRequest> =
+            serde_json::from_str(r#"[{"path":"/tmp/x","account_id":"abc"}]"#).expect("deserialize BindRequest");
+        assert_eq!(items[0].path, "/tmp/x");
+        assert_eq!(items[0].account_id, "abc");
+    }
+}

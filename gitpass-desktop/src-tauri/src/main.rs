@@ -5,6 +5,8 @@ mod cmd_accounts;
 mod cmd_cloud;
 mod cmd_integration;
 mod cmd_repos;
+#[cfg(test)]
+mod contract_tests;
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -53,7 +55,7 @@ fn tray_tooltip(cfg: &AppConfig) -> String {
     };
 
     let Some(b) = binding else {
-        return "GitPass — add accounts & repo bindings".to_string();
+        return "GitPass — ligue contas e vincule repositórios".to_string();
     };
 
     let acc = cfg.accounts.iter().find(|a| a.id == b.account_id);
@@ -117,7 +119,7 @@ fn get_config_path() -> Result<String, String> {
 fn oauth_config_status() -> OauthConfigStatus {
     let oauth_env_path = match gitpass_core::app_support_dir() {
         Ok(d) => d.join("oauth.env").display().to_string(),
-        Err(_) => "(app support dir unknown)".to_string(),
+        Err(_) => "(pasta de dados desconhecida)".to_string(),
     };
     let _ = load_oauth_env_file_if_needed();
     match resolve_oauth_client_id() {
@@ -138,7 +140,7 @@ fn oauth_config_status() -> OauthConfigStatus {
 
 #[tauri::command]
 fn list_bindings() -> Result<Vec<BindingRow>, String> {
-    let cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
+    let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
     let mut out = Vec::new();
     for r in &cfg.repos {
         let acc_login = cfg
@@ -159,9 +161,14 @@ fn list_bindings() -> Result<Vec<BindingRow>, String> {
 }
 
 #[tauri::command]
-fn repo_commit_log(root_path: String, limit: Option<usize>) -> Result<Vec<String>, String> {
-    let root = PathBuf::from(root_path);
-    git_log_lines(&root, limit.unwrap_or(30))
+async fn repo_commit_log(root_path: String, limit: Option<usize>) -> Result<Vec<String>, String> {
+    // `git log` can be slow on big repos; keep it off the main thread (sync commands run there).
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = PathBuf::from(root_path);
+        git_log_lines(&root, limit.unwrap_or(30))
+    })
+    .await
+    .map_err(|e| format!("Erro interno da app: {e}"))?
 }
 
 #[cfg(unix)]
@@ -172,7 +179,7 @@ fn ipc_ping_gitpassd() -> Result<String, String> {
     let path = gitpass_core::ipc_socket_path().map_err(|e| e.to_string())?;
     if !path.exists() {
         return Err(format!(
-            "gitpassd não está a correr (sem socket em {}). Só os hooks Git precisam do daemon; Connect OAuth e painel funcionam sem ele. Abre Definições e escolhe «Reparar».",
+            "O serviço gitpassd não está a correr (sem socket em {}). Só os hooks do Git precisam dele; ligar contas e o painel funcionam sem ele. Abra as Definições e escolha «Reparar».",
             path.display()
         ));
     }
@@ -188,27 +195,27 @@ fn ipc_ping_gitpassd() -> Result<String, String> {
     let mut line = String::new();
     reader.read_line(&mut line).map_err(|e| e.to_string())?;
     if line.is_empty() {
-        return Err("empty response from gitpassd".to_string());
+        return Err("O gitpassd não respondeu.".to_string());
     }
 
     match decode_response_line(&line).map_err(|e| e.to_string())? {
         IpcResponse::Pong {
             gitpassd_version,
-        } => Ok(format!("Connected — gitpassd {}", gitpassd_version)),
+        } => Ok(format!("Ligado — gitpassd {}", gitpassd_version)),
         IpcResponse::Error { code, message } => Err(format!("{code}: {message}")),
-        _ => Err("unexpected response from gitpassd".to_string()),
+        _ => Err("Resposta inesperada do gitpassd.".to_string()),
     }
 }
 
 #[cfg(not(unix))]
 #[tauri::command]
 fn ipc_ping_gitpassd() -> Result<String, String> {
-    Err("IPC ping is only available on Unix".to_string())
+    Err("A verificação do gitpassd só está disponível em macOS e Linux.".to_string())
 }
 
 #[tauri::command]
 fn open_keychain_docs() -> String {
-    format!("OAuth tokens use Keychain service `{KEYCHAIN_SERVICE}` (account github.oauth.<uuid>).")
+    format!("Os tokens de acesso ficam guardados no Keychain do macOS (serviço `{KEYCHAIN_SERVICE}`, conta github.oauth.<id>). Nunca são escritos no ficheiro de configuração nem em URLs.")
 }
 
 #[tauri::command]
@@ -225,7 +232,7 @@ fn open_application_support() -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = dir;
-        Err("open folder is only implemented on macOS".to_string())
+        Err("Abrir a pasta só está disponível no macOS.".to_string())
     }
 }
 
@@ -361,4 +368,46 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running GitPass");
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::contract_tests::{expect, keys};
+
+    #[test]
+    fn response_keys_match_typescript() {
+        // api.ts: OauthConfigStatus, BindingRow
+        assert_eq!(
+            keys(&super::OauthConfigStatus {
+                ok: true,
+                message: String::new(),
+                oauth_env_path: String::new(),
+                client_id_configured: true,
+            }),
+            expect(&["ok", "message", "oauth_env_path", "client_id_configured"])
+        );
+        assert_eq!(
+            keys(&super::BindingRow {
+                id: String::new(),
+                account_id: String::new(),
+                account_login: None,
+                root_path: String::new(),
+                github_owner: None,
+                github_repo: None,
+            }),
+            expect(&["id", "account_id", "account_login", "root_path", "github_owner", "github_repo"])
+        );
+        // api.ts: DeviceCodeStart (core struct returned by accounts_device_start)
+        assert_eq!(
+            keys(&gitpass_core::DeviceCodeStart {
+                client_id: String::new(),
+                user_code: String::new(),
+                verification_uri: String::new(),
+                device_code: String::new(),
+                interval_secs: 5,
+                expires_in_secs: 900,
+            }),
+            expect(&["client_id", "user_code", "verification_uri", "device_code", "interval_secs", "expires_in_secs"])
+        );
+    }
 }

@@ -30,6 +30,9 @@ const SUCCESS_CLOSE_MS = 1500;
 const COPIED_RESET_MS = 2000;
 const LABEL_MAX = 64;
 const OAUTH_UNAVAILABLE = "A ligação ao GitHub não está disponível nesta versão da app.";
+/** Erros de rede passageiros durante o polling não cancelam o fluxo (texto de `NETWORK_ERROR` em cmd_accounts.rs). */
+const NETWORK_ERROR_HINT = "contactar o GitHub";
+const MAX_POLL_NETWORK_ERRORS = 4;
 const GITHUB_APPS_URL = "https://github.com/settings/applications";
 
 /** Permissões OAuth mostradas no cartão; `required` sinaliza quando faltam. */
@@ -1038,6 +1041,7 @@ class DeviceFlowModal extends ModalBase {
 
   private async poll(start: DeviceCodeStart, deadline: number, token: FlowToken): Promise<void> {
     let intervalSecs = Math.max(1, start.interval_secs);
+    let networkErrors = 0;
     while (!token.cancelled) {
       await token.sleep(intervalSecs * 1000);
       if (token.cancelled) return;
@@ -1048,6 +1052,7 @@ class DeviceFlowModal extends ModalBase {
       try {
         const res = await accountsApi.devicePoll(start.client_id, start.device_code);
         if (token.cancelled) return;
+        networkErrors = 0;
         if (res.status === "slow_down") {
           intervalSecs = Math.max(1, intervalSecs, res.interval_secs);
         } else if (res.status === "done") {
@@ -1057,6 +1062,7 @@ class DeviceFlowModal extends ModalBase {
         }
       } catch (e) {
         if (token.cancelled) return;
+        if (errMessage(e).includes(NETWORK_ERROR_HINT) && ++networkErrors < MAX_POLL_NETWORK_ERRORS) continue;
         this.showError("A autorização não foi concluída.", errMessage(e));
         return;
       }
