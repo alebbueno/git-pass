@@ -14,6 +14,7 @@ use crate::SecretError;
 
 #[derive(Debug, Error)]
 pub enum GithubApiError {
+    /// `body` is only GitHub's `message` (see [`sanitize_error_body`]), never the raw response.
     #[error("HTTP {status}: {body}")]
     Http { status: u16, body: String },
     #[error("reqwest: {0}")]
@@ -43,12 +44,37 @@ struct RepoResponse {
     permissions: Option<RepoPermissions>,
 }
 
+const ERROR_MESSAGE_MAX_CHARS: usize = 200;
+
+/// Reduces an error response to GitHub's `message` field (capped, without control characters).
+/// Raw bodies can reflect request data, so they never end up in errors, logs or the UI.
+pub fn sanitize_error_body(body: &str) -> String {
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        #[serde(default)]
+        message: Option<String>,
+    }
+    serde_json::from_str::<ErrorBody>(body)
+        .ok()
+        .and_then(|b| b.message)
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(ERROR_MESSAGE_MAX_CHARS)
+        .collect()
+}
+
 /// `GET /repos/{owner}/{repo}` — returns permissions for the authenticated token.
 pub fn fetch_repo_permissions(
     token: &str,
     owner: &str,
     repo: &str,
 ) -> Result<RepoPermissions, GithubApiError> {
+    // Untrusted names (local `origin`) must not turn the authenticated request into another API path.
+    crate::clone::split_full_name(&format!("{owner}/{repo}")).map_err(|_| GithubApiError::Http {
+        status: 404,
+        body: "invalid repository name".into(),
+    })?;
     let url = format!("https://api.github.com/repos/{owner}/{repo}");
     let client = Client::builder()
         .user_agent("gitpassd-validation")
@@ -64,7 +90,10 @@ pub fn fetch_repo_permissions(
     let status = resp.status().as_u16();
     let body = resp.text()?;
     if !(200..300).contains(&status) {
-        return Err(GithubApiError::Http { status, body });
+        return Err(GithubApiError::Http {
+            status,
+            body: sanitize_error_body(&body),
+        });
     }
 
     let r: RepoResponse = serde_json::from_str(&body)?;
@@ -126,4 +155,25 @@ pub fn token_can_push_for_account(
 
     let p = fetch_repo_permissions(&bundle.access_token, owner, repo)?;
     Ok(p.admin || p.maintain || p.push)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_body_keeps_only_the_message() {
+        let body = r#"{"message":"API rate limit exceeded for user ID 1.\n","documentation_url":"https://docs.github.com","echo":"gho_secret"}"#;
+        assert_eq!(sanitize_error_body(body), "API rate limit exceeded for user ID 1.");
+        assert_eq!(sanitize_error_body("<html>gho_secret</html>"), "");
+        assert_eq!(sanitize_error_body(&format!(r#"{{"message":"{}"}}"#, "x".repeat(500))).len(), 200);
+    }
+
+    #[test]
+    fn invalid_repo_names_never_reach_the_api() {
+        for (o, r) in [("..", "user"), ("o", "../../user"), ("o", "r?x=1"), ("o/x", "r"), ("", "r")] {
+            let e = fetch_repo_permissions("tok", o, r).unwrap_err();
+            assert!(matches!(e, GithubApiError::Http { status: 404, .. }), "{o}/{r}");
+        }
+    }
 }

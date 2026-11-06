@@ -22,6 +22,8 @@ const OAUTH_UNAVAILABLE: &str = "A ligação ao GitHub não está disponível ne
 const NETWORK_ERROR: &str =
     "Não foi possível contactar o GitHub. Verifique a ligação à Internet e tente novamente.";
 const LABEL_MAX_CHARS: usize = 64;
+/// GitHub device codes are 40 hex characters; leave room for format changes.
+const DEVICE_CODE_MAX_LEN: usize = 128;
 
 #[derive(Debug, Serialize)]
 pub struct AccountInfo {
@@ -173,6 +175,32 @@ fn oauth_err(e: OauthError) -> String {
         OauthError::Secret(e) => keychain_err(e),
         OauthError::Url(_) => "O GitHub não concluiu a autorização. Tente novamente.".into(),
     }
+}
+
+/// The WebView echoes back what `accounts_device_start` returned; anything else is refused, so a
+/// token is never obtained (and stored) for another OAuth app.
+fn check_device_poll_input(client_id: &str, device_code: &str) -> Result<(), String> {
+    let expected = resolve_oauth_client_id().map_err(|_| OAUTH_UNAVAILABLE.to_string())?;
+    if client_id != expected {
+        return Err(OAUTH_UNAVAILABLE.into());
+    }
+    if !is_plausible_device_code(device_code) {
+        return Err("Este código já não é válido. Peça um novo código.".into());
+    }
+    Ok(())
+}
+
+fn is_plausible_device_code(code: &str) -> bool {
+    (1..=DEVICE_CODE_MAX_LEN).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+fn clean_label(raw: &str) -> String {
+    raw.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_id(account_id: &str) -> Result<Uuid, String> {
@@ -379,6 +407,7 @@ pub async fn accounts_device_poll(
     device_code: String,
 ) -> Result<DevicePollResult, String> {
     let res = blocking(move || {
+        check_device_poll_input(&client_id, &device_code)?;
         match github_oauth_device_poll_once(&client_id, &device_code).map_err(oauth_err)? {
             DevicePollOutcome::Pending => Ok(DevicePollResult::Pending),
             DevicePollOutcome::SlowDown { interval_secs } => {
@@ -484,7 +513,7 @@ pub async fn accounts_set_label(
 ) -> Result<AccountInfo, String> {
     let row = blocking(move || {
         let id = parse_id(&account_id)?;
-        let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+        let label = clean_label(&label);
         if label.chars().count() > LABEL_MAX_CHARS {
             return Err(format!("O rótulo pode ter no máximo {LABEL_MAX_CHARS} caracteres."));
         }
@@ -568,6 +597,9 @@ pub async fn accounts_remove(app: AppHandle, account_id: String) -> Result<Remov
         let mut cfg = load_cfg()?;
         account_index(&cfg, id)?;
         github_token_delete(id).map_err(keychain_err)?;
+        if let Ok(dir) = gitpass_core::app_support_dir() {
+            gitpass_core::integration::clear_token_rejected(&dir, id);
+        }
 
         let removed: Vec<Uuid> = cfg
             .repos
@@ -739,5 +771,19 @@ mod tests {
         let all = [TokenState::Ok, TokenState::Revoked, TokenState::Missing, TokenState::Offline, TokenState::Error];
         let json: Vec<_> = all.iter().map(|s| serde_json::to_value(s).unwrap()).collect();
         assert_eq!(json, ["ok", "revoked", "missing", "offline", "error"]);
+    }
+
+    #[test]
+    fn device_codes_are_short_alphanumeric() {
+        assert!(is_plausible_device_code("3584d83530557fdd1f46af8289938c8ef79f9dc5"));
+        assert!(!is_plausible_device_code(""));
+        assert!(!is_plausible_device_code("abc&client_secret=x"));
+        assert!(!is_plausible_device_code(&"a".repeat(DEVICE_CODE_MAX_LEN + 1)));
+    }
+
+    #[test]
+    fn labels_drop_control_characters() {
+        assert_eq!(clean_label("  Tra\u{1b}[31mbalho\n pessoal\u{0} "), "Tra [31mbalho pessoal");
+        assert_eq!(clean_label("Olá   mundo"), "Olá mundo");
     }
 }

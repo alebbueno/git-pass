@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 const CONFIG_CHANGED_EVENT: &str = "gitpass-config-changed";
 const DISCOVER_BUDGET: Duration = Duration::from_millis(2500);
+const MAX_DISCOVER_ROOTS: usize = 32;
+const MAX_BIND_MANY: usize = 500;
 
 #[derive(Serialize)]
 pub struct IdentityRow {
@@ -337,11 +339,22 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-fn existing_dir(path: &str) -> Result<PathBuf, String> {
+/// Root of a bound repo matching `path` (symlinks resolved). The WebView is untrusted: only folders
+/// listed in the config may be opened or inspected (`open` would launch an `.app` bundle, for instance).
+pub(crate) fn bound_repo_root(path: &str) -> Result<PathBuf, String> {
     let p = expand_home(path);
-    match p.canonicalize() {
-        Ok(c) if c.is_dir() => Ok(c),
-        _ => Err(format!("A pasta {} não existe.", p.display())),
+    let Ok(c) = p.canonicalize() else {
+        return Err(format!("A pasta {} não existe.", p.display()));
+    };
+    let cfg = load_config()?;
+    let bound = cfg
+        .repos
+        .iter()
+        .any(|r| r.root_path.canonicalize().unwrap_or_else(|_| r.root_path.clone()) == c);
+    if bound && c.is_dir() {
+        Ok(c)
+    } else {
+        Err("Esta pasta não é um repositório vinculado no GitPass. Atualiza a lista e tenta novamente.".to_string())
     }
 }
 
@@ -448,6 +461,9 @@ pub async fn repos_bind_path(app: AppHandle, path: String, account_id: String) -
 /// "Vincular todos": one result per item; failures do not stop the rest.
 #[tauri::command]
 pub async fn repos_bind_many(app: AppHandle, items: Vec<BindRequest>) -> Result<Vec<BindItemResult>, String> {
+    if items.len() > MAX_BIND_MANY {
+        return Err(format!("Vincula no máximo {MAX_BIND_MANY} repositórios de cada vez."));
+    }
     blocking(move || {
         let mut cfg = load_config()?;
         let mut out = Vec::with_capacity(items.len());
@@ -536,7 +552,10 @@ pub async fn repos_discover(roots: Option<Vec<String>>) -> Result<DiscoverResult
         let started = Instant::now();
         let cfg = load_config()?;
         let candidates: Vec<PathBuf> = match roots {
-            Some(r) => r.iter().map(|s| expand_home(s)).collect(),
+            Some(r) if r.len() > MAX_DISCOVER_ROOTS => {
+                return Err(format!("Escolhe no máximo {MAX_DISCOVER_ROOTS} pastas de cada vez."));
+            }
+            Some(r) => r.iter().map(|s| expand_home(s)).filter(|p| p.is_absolute()).collect(),
             None => {
                 let home = dirs_home().ok_or_else(|| "Não foi possível determinar a pasta pessoal.".to_string())?;
                 default_discover_roots(&home)
@@ -574,12 +593,12 @@ pub async fn repos_pick_folder() -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub fn repos_open_in_finder(path: String) -> Result<(), String> {
-    open_with(&[], &existing_dir(&path)?)
+    open_with(&[], &bound_repo_root(&path)?)
 }
 
 #[tauri::command]
 pub fn repos_open_in_terminal(path: String) -> Result<(), String> {
-    open_with(&["-a", "Terminal"], &existing_dir(&path)?)
+    open_with(&["-a", "Terminal"], &bound_repo_root(&path)?)
 }
 
 #[cfg(test)]
