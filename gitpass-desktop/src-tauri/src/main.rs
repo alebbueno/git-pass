@@ -160,7 +160,7 @@ fn list_bindings() -> Result<Vec<BindingRow>, String> {
 
 #[tauri::command]
 fn repo_commit_log(root_path: String, limit: Option<usize>) -> Result<Vec<String>, String> {
-    let root = PathBuf::from(root_path);
+    let root = cmd_repos::bound_repo_root(&root_path)?;
     git_log_lines(&root, limit.unwrap_or(30))
 }
 
@@ -229,12 +229,28 @@ fn open_application_support() -> Result<(), String> {
     }
 }
 
+const EXTERNAL_URL_MAX_LEN: usize = 2048;
+
+/// Only web addresses with a host and without embedded credentials reach the system browser.
+fn checked_external_url(raw: &str) -> Result<tauri::Url, String> {
+    let refused = || "Só é possível abrir endereços web (http ou https).".to_string();
+    if raw.len() > EXTERNAL_URL_MAX_LEN {
+        return Err(refused());
+    }
+    let url = tauri::Url::parse(raw.trim()).map_err(|_| refused())?;
+    let has_host = url.host_str().is_some_and(|h| !h.is_empty());
+    let has_credentials = !url.username().is_empty() || url.password().is_some();
+    if !matches!(url.scheme(), "http" | "https") || !has_host || has_credentials {
+        return Err(refused());
+    }
+    Ok(url)
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(format!("URL não permitido: {url}"));
-    }
-    opener::open_browser(&url).map_err(|e| e.to_string())
+    let url = checked_external_url(&url)?;
+    opener::open_browser(url.as_str())
+        .map_err(|e| format!("Não foi possível abrir o browser ({e}). Copia o endereço e abre-o manualmente."))
 }
 
 fn main() {
@@ -361,4 +377,29 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running GitPass");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checked_external_url;
+
+    #[test]
+    fn external_urls_are_limited_to_plain_web_addresses() {
+        for ok in ["https://github.com/o/r", "http://example.com/x?y=1#z", " https://github.com/settings/applications "] {
+            assert!(checked_external_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "x-apple.systempreferences:com.apple.preference",
+            "https://user:pass@github.com/",
+            "https://ghp_abc@github.com/",
+            "https://",
+            "/relative",
+            "",
+        ] {
+            assert!(checked_external_url(bad).is_err(), "{bad}");
+        }
+        assert!(checked_external_url(&format!("https://e.com/{}", "a".repeat(3000))).is_err());
+    }
 }

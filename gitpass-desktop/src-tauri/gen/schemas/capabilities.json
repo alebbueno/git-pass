@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default permissions for GitPass v1 skeleton","local":true,"windows":["main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Main window: only listens to backend events. App commands (generate_handler!) are not ACL-gated; no window, webview, menu, tray, path or other core APIs are exposed to the WebView.","local":true,"windows":["main"],"permissions":["core:event:allow-listen","core:event:allow-unlisten"]}}

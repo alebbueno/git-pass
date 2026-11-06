@@ -429,7 +429,8 @@ pub fn hook_script(phase: &str, validate: bool, gitpass_bin: &Path, config: &Pat
     let validate_block = if validate {
         r#"
 gitpass_top=$(git rev-parse --show-toplevel 2>/dev/null)
-if [ -n "$gitpass_top" ] && [ -f "$gitpass_config" ] && grep -qF "root_path = \"$gitpass_top\"" "$gitpass_config"; then
+# TOML writes paths containing " or \ as literal strings ('...').
+if [ -n "$gitpass_top" ] && [ -f "$gitpass_config" ] && { grep -qF "root_path = \"$gitpass_top\"" "$gitpass_config" || grep -qF "root_path = '$gitpass_top'" "$gitpass_config"; }; then
   if [ -x "$gitpass_bin" ]; then
     GITPASS_HOOK=1 "$gitpass_bin" hook --phase "$gitpass_phase" </dev/null || exit $?
   else
@@ -527,11 +528,19 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     fs::create_dir_all(parent)?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let tmp = parent.join(format!(".{name}.tmp-{}", std::process::id()));
+    let _ = fs::remove_file(&tmp);
     {
-        let mut f = fs::File::create(&tmp)?;
+        let mut opts = fs::OpenOptions::new();
+        // `create_new` never follows a symlink planted at `tmp`; the mode applies from creation, so
+        // private files (backup) are never briefly readable by others.
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, mode);
+        let mut f = opts.open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
+    // The umask may have masked bits at creation (e.g. 0o755 → 0o755 & !umask).
     #[cfg(unix)]
     fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))?;
     #[cfg(not(unix))]
@@ -675,11 +684,11 @@ impl<'a> GitConfig<'a> {
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), String> {
-        self.write(&["--replace-all", key, value])
+        self.write(&["--replace-all", "--", key, value])
     }
 
     fn add(&self, key: &str, value: &str) -> Result<(), String> {
-        self.write(&["--add", key, value])
+        self.write(&["--add", "--", key, value])
     }
 
     fn unset_all(&self, key: &str) -> Result<(), String> {
@@ -1169,6 +1178,10 @@ pub fn apply(env: &IntegrationEnv, opts: ApplyOptions) -> Result<IntegrationRepo
     let _g = lock();
     fs::create_dir_all(&env.app_support)
         .map_err(|e| format!("Não foi possível criar {}: {e}", env.app_support.display()))?;
+    // Holds the binaries Git executes, the hooks and the config they read: owner-only.
+    #[cfg(unix)]
+    fs::set_permissions(&env.app_support, fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("Não foi possível proteger {}: {e}", env.app_support.display()))?;
     let _ = fs::remove_file(env.disabled_marker());
     let mut changes = Vec::new();
     let mut warnings = Vec::new();
@@ -1393,6 +1406,63 @@ mod tests {
     fn set_global(env: &IntegrationEnv, args: &[&str]) {
         let o = git(env, None, &[&["config", "--global"], args].concat());
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+
+    #[test]
+    fn helper_value_is_inert_for_shell_metacharacters() {
+        let t = TempDir::new();
+        let env = test_env(&t);
+        let canary = t.0.join("pwned");
+        let dir = t.0.join(format!("a $(touch {}) `id` \"q\" ; & | 'x'", canary.display()));
+        let helper = dir.join("git-credential-gitpass");
+        write_exec(&helper, "#!/bin/sh\n[ \"$1\" = get ] || exit 0\necho username=octo\necho password=ok-meta\n");
+        set_global(&env, &["--add", CREDENTIAL_HELPER_KEY, &credential_helper_value(&helper)]);
+        let mut child = Command::new(find_git().unwrap())
+            .env("GIT_CONFIG_GLOBAL", env.git_global_config.as_ref().unwrap())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(["credential", "fill"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"protocol=https\nhost=github.com\n\n").unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("password=ok-meta"));
+        assert!(!canary.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_created_owner_only() {
+        let t = TempDir::new();
+        let env = test_env(&t);
+        apply(&env, ApplyOptions::default()).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&env.backup_file()), 0o600);
+        assert_eq!(mode(&env.app_support), 0o700);
+        assert_eq!(mode(&env.hooks_dir()), 0o700);
+        for s in SIDECARS {
+            assert_eq!(mode(&env.bin_path(s)), 0o755, "{}", s.name);
+        }
+        mark_token_rejected(&env.app_support, Uuid::new_v4(), "gho_x").unwrap();
+        for e in fs::read_dir(env.app_support.join(REJECTED_TOKENS_DIR_NAME)).unwrap() {
+            assert_eq!(mode(&e.unwrap().path()), 0o600);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_does_not_follow_a_planted_tmp_symlink() {
+        let t = TempDir::new();
+        let victim = t.0.join("victim");
+        fs::write(&victim, "keep").unwrap();
+        let dest = t.0.join("out.json");
+        let tmp = t.0.join(format!(".out.json.tmp-{}", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+        write_atomic(&dest, b"new", 0o600).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "new");
     }
 
     #[test]
@@ -1682,6 +1752,35 @@ mod tests {
         fs::write(env.app_support.join("block"), "").unwrap();
         assert!(!commit(&env, &repo).status.success());
         assert_eq!(fs::read_to_string(&marker).unwrap(), "commit-msg\ncommit-msg\n");
+    }
+
+    #[test]
+    fn hooks_validate_bound_repos_whose_path_toml_writes_as_literal_string() {
+        let t = TempDir::new();
+        let env = test_env(&t);
+        set_global(&env, &["user.name", "T"]);
+        set_global(&env, &["user.email", "t@example.com"]);
+        apply(&env, ApplyOptions::default()).unwrap();
+        let calls = env.app_support.join("calls.log");
+
+        for name in [r#"say "hi""#, r"back\slash"] {
+            let repo = t.0.join(name);
+            fs::create_dir_all(&repo).unwrap();
+            assert!(git(&env, Some(&repo), &["init", "-q"]).status.success());
+            let mut cfg = AppConfig::default();
+            cfg.repos.push(RepoBinding {
+                id: Uuid::new_v4(),
+                account_id: Uuid::new_v4(),
+                root_path: repo.clone(),
+                github_owner: None,
+                github_repo: None,
+            });
+            cfg.save_to_path(&env.config_file()).unwrap();
+            let _ = fs::remove_file(&calls);
+            assert!(commit(&env, &repo).status.success());
+            let log = fs::read_to_string(&calls).unwrap_or_default();
+            assert!(log.lines().any(|l| l == "pre-commit"), "{name}: hook skipped validation");
+        }
     }
 
     #[test]

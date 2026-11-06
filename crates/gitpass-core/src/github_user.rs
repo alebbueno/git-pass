@@ -88,7 +88,7 @@ fn ensure_ok(r: RawResponse) -> Result<RawResponse, GithubApiError> {
     } else {
         Err(GithubApiError::Http {
             status: r.status,
-            body: r.body,
+            body: crate::github_api::sanitize_error_body(&r.body),
         })
     }
 }

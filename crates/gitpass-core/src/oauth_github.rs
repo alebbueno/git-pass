@@ -107,8 +107,8 @@ pub struct DeviceCodeStart {
     pub expires_in_secs: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
+/// Not `Serialize` on purpose: `Success` carries the token bundle, which must never reach the WebView.
+#[derive(Debug, Clone)]
 pub enum DevicePollOutcome {
     Pending,
     SlowDown { interval_secs: u64 },
@@ -307,6 +307,17 @@ struct AccessTokenResponse {
     interval: Option<u64>,
 }
 
+/// `"<oauth error code>: <what> HTTP <status>"`. The body is dropped: token endpoint responses may
+/// reflect the codes or tokens that were sent.
+fn token_endpoint_http_error(what: &str, status: u16, body: &str) -> OauthError {
+    let code = serde_json::from_str::<AccessTokenResponse>(body)
+        .ok()
+        .and_then(|t| t.error)
+        .filter(|c| !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+        .unwrap_or_else(|| "http_error".into());
+    OauthError::Msg(format!("{code}: {what} HTTP {status}"))
+}
+
 fn random_string(len: usize) -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     let mut rng = rand::thread_rng();
@@ -359,13 +370,8 @@ pub fn github_oauth_refresh(
         .send()?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(OauthError::Msg(format!(
-            "refresh token HTTP {}: {}",
-            status,
-            body.chars().take(400).collect::<String>()
-        )));
+        let status = resp.status().as_u16();
+        return Err(token_endpoint_http_error("refresh token", status, &resp.text().unwrap_or_default()));
     }
 
     let token: AccessTokenResponse = resp.json()?;
@@ -521,13 +527,8 @@ pub fn github_oauth_login(
         .send()?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(OauthError::Msg(format!(
-            "token exchange HTTP {}: {}",
-            status,
-            body.chars().take(400).collect::<String>()
-        )));
+        let status = resp.status().as_u16();
+        return Err(token_endpoint_http_error("token exchange", status, &resp.text().unwrap_or_default()));
     }
 
     let token: AccessTokenResponse = resp.json()?;
@@ -583,4 +584,23 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_endpoint_errors_drop_the_body() {
+        let body = r#"{"error":"bad_refresh_token","error_description":"ghr_secret was rejected"}"#;
+        let msg = token_endpoint_http_error("refresh token", 400, body).to_string();
+        assert!(msg.contains("bad_refresh_token: refresh token HTTP 400"), "{msg}");
+        assert!(!msg.contains("ghr_secret"), "{msg}");
+
+        let msg = token_endpoint_http_error("token exchange", 502, "<html>gho_x</html>").to_string();
+        assert!(msg.contains("http_error: token exchange HTTP 502") && !msg.contains("gho_x"), "{msg}");
+
+        let odd = r#"{"error":"Weird <b>code</b> gho_x"}"#;
+        assert!(!token_endpoint_http_error("x", 400, odd).to_string().contains("gho_x"));
+    }
 }

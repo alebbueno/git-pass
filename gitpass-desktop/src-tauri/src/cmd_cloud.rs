@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gitpass_core::clone::{clone_repo, default_clone_dir, split_full_name};
+use gitpass_core::clone::{clone_repo, default_clone_dir, split_full_name, validate_clone_parent};
 use gitpass_core::{
     embedded_oauth_client_id, github_oauth_env_credentials, github_oauth_refresh, github_token_load,
     github_token_save, list_user_repos, resolve_oauth_client_id, AppConfig, GithubApiError,
@@ -194,13 +194,7 @@ pub async fn cloud_clone(
     let (owner, repo) = split_full_name(&full_name)?;
 
     let dest: PathBuf = match dest_parent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(parent) => {
-            let parent = expand_tilde(parent);
-            if !parent.is_absolute() {
-                return Err("O destino tem de ser um caminho absoluto.".to_string());
-            }
-            parent.join(&repo)
-        }
+        Some(parent) => validate_clone_parent(&expand_tilde(parent), dirs_home().as_deref())?.join(&repo),
         None => default_clone_dir(&owner, &repo)?,
     };
 

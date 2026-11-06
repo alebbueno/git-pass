@@ -19,7 +19,7 @@ fn git_config_get(root: &Path, key: &str) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["config", "--local", "--get", key])
+        .args(["config", "--local", "--get", "--", key])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -33,7 +33,7 @@ fn git_config_set(root: &Path, key: &str, value: &str) -> Result<(), String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["config", "--local", key, value])
+        .args(["config", "--local", "--", key, value])
         .output()
         .map_err(|e| format!("git config: {e}"))?;
     if out.status.success() {
@@ -77,7 +77,7 @@ pub fn create_binding(cfg: &mut AppConfig, account_id: Uuid, root: &Path) -> Res
     let url = git_remote_url(&canon, "origin")
         .map_err(|e| format!("{e}. Adiciona o remote `origin` ou escolhe outro clone."))?;
     let gh = parse_github_remote(&url)
-        .ok_or_else(|| format!("O origin não aponta para github.com (`{url}`)."))?;
+        .ok_or_else(|| format!("O origin não aponta para github.com (`{}`).", redact_remote_url(&url)))?;
 
     if cfg.repos.iter().any(|r| r.root_path == canon) {
         return Err("Esta pasta já está vinculada.".to_string());
@@ -144,7 +144,7 @@ fn git_config_unset(root: &Path, key: &str) -> Result<(), String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["config", "--local", "--unset-all", key])
+        .args(["config", "--local", "--unset-all", "--", key])
         .output()
         .map_err(|e| format!("git config: {e}"))?;
     // Exit code 5: key was not set.
@@ -442,6 +442,19 @@ pub fn remote_url_has_credentials(raw: &str) -> bool {
     ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "x-access-token", "x-oauth-basic"]
         .iter()
         .any(|p| user.starts_with(p))
+}
+
+/// The remote URL safe to show: without the user/password part when it carries credentials.
+pub fn redact_remote_url(raw: &str) -> String {
+    let raw = raw.trim();
+    if remote_url_has_credentials(raw) {
+        if let Ok(mut u) = url::Url::parse(raw) {
+            let _ = u.set_password(None);
+            let _ = u.set_username("");
+            return u.to_string();
+        }
+    }
+    raw.to_string()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
@@ -771,6 +784,37 @@ mod tests {
         assert!(!remote_url_has_credentials("https://ana@github.com/a/b.git"));
         assert!(!remote_url_has_credentials("git@github.com:a/b.git"));
         assert_eq!(github_https_url("a", "b"), "https://github.com/a/b");
+    }
+
+    #[test]
+    fn remote_credentials_are_redacted_for_display() {
+        assert_eq!(redact_remote_url("https://ana:secret@gitlab.com/a/b.git"), "https://gitlab.com/a/b.git");
+        assert_eq!(redact_remote_url("https://ghp_abc@example.com/a/b"), "https://example.com/a/b");
+        assert_eq!(redact_remote_url("git@gitlab.com:a/b.git"), "git@gitlab.com:a/b.git");
+    }
+
+    #[test]
+    fn create_binding_error_never_shows_remote_credentials() {
+        let t = TempDir::new();
+        init_repo(&t.0, Some("https://ana:s3cr3t@gitlab.com/a/b.git"));
+        let acc = account("ana");
+        let mut cfg = AppConfig::default();
+        cfg.accounts.push(acc.clone());
+        let err = create_binding(&mut cfg, acc.id, &t.0).unwrap_err();
+        assert!(!err.contains("s3cr3t"), "{err}");
+        assert!(cfg.repos.is_empty());
+    }
+
+    #[test]
+    fn identity_values_that_look_like_options_are_stored_verbatim() {
+        let t = TempDir::new();
+        init_repo(&t.0, Some("https://github.com/ana/x"));
+        let mut acc = account("ana");
+        acc.name = Some("--global".into());
+        acc.email = Some("--file=/tmp/x".into());
+        let got = apply_repo_identity(&t.0, &acc).unwrap();
+        assert_eq!(got.name.as_deref(), Some("--global"));
+        assert_eq!(got.email.as_deref(), Some("--file=/tmp/x"));
     }
 
     #[test]

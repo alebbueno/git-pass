@@ -71,6 +71,90 @@ pub fn default_clone_dir(owner: &str, repo: &str) -> Result<PathBuf, String> {
     Ok(home.join("GitHub").join(owner).join(repo))
 }
 
+/// System locations a clone must never be written into (checked after resolving symlinks).
+const FORBIDDEN_CLONE_ROOTS: &[&str] = &[
+    "/System",
+    "/Library",
+    "/bin",
+    "/sbin",
+    "/usr",
+    "/etc",
+    "/var",
+    "/private/etc",
+    "/private/var",
+    "/dev",
+    "/Applications",
+];
+
+/// Validates a clone parent folder that came from the WebView and returns it with symlinks resolved.
+///
+/// Requires an absolute path without `.`/`..` components; the deepest existing ancestor is
+/// canonicalized, so a symlink cannot redirect the clone. Refuses system folders, `~/Library`
+/// (LaunchAgents, Application Support, …) and hidden folders directly under the home (`~/.ssh`, …).
+pub fn validate_clone_parent(parent: &Path, home: Option<&Path>) -> Result<PathBuf, String> {
+    use std::path::Component;
+    let invalid = || "O destino tem de ser um caminho absoluto, sem «..».".to_string();
+    if !parent.is_absolute() || parent.to_string_lossy().contains('\0') {
+        return Err(invalid());
+    }
+    if parent.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
+        return Err(invalid());
+    }
+
+    let mut existing = parent.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    let resolved = loop {
+        match existing.canonicalize() {
+            Ok(c) => break c,
+            Err(_) => {
+                let Some(name) = existing.file_name() else {
+                    return Err(invalid());
+                };
+                rest.push(name.to_os_string());
+                if !existing.pop() {
+                    return Err(invalid());
+                }
+            }
+        }
+    };
+    if !resolved.is_dir() {
+        return Err(format!("`{}` não é uma pasta.", resolved.display()));
+    }
+    let full = rest.iter().rev().fold(resolved, |p, n| p.join(n));
+
+    let forbidden = || {
+        format!(
+            "Não é possível clonar para `{}`. Escolhe uma pasta tua, por exemplo ~/GitHub.",
+            parent.display()
+        )
+    };
+    if full == Path::new("/") || FORBIDDEN_CLONE_ROOTS.iter().any(|r| starts_with_ci(&full, Path::new(r))) {
+        return Err(forbidden());
+    }
+    if let Some(home) = home {
+        let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+        if starts_with_ci(&full, &home) {
+            let first = full
+                .components()
+                .nth(home.components().count())
+                .map(|c| c.as_os_str().to_string_lossy().into_owned());
+            if first.as_deref().is_some_and(|f| f.eq_ignore_ascii_case("Library") || f.starts_with('.')) {
+                return Err(forbidden());
+            }
+        }
+    }
+    Ok(full)
+}
+
+/// Component-wise, ASCII case-insensitive `starts_with` (APFS is case-insensitive by default).
+fn starts_with_ci(path: &Path, prefix: &Path) -> bool {
+    let mut p = path.components();
+    prefix.components().all(|c| {
+        p.next()
+            .is_some_and(|x| x.as_os_str().to_string_lossy().eq_ignore_ascii_case(&c.as_os_str().to_string_lossy()))
+    })
+}
+
 /// Value of the `Authorization` header used for HTTPS access to github.com with an OAuth token.
 fn auth_header_value(token: &str) -> String {
     format!("AUTHORIZATION: basic {}", B64.encode(format!("x-access-token:{token}")))
@@ -139,6 +223,12 @@ pub fn clone_repo(
         return Err("Esta conta não tem token. Liga a conta GitHub em «Contas».".to_string());
     }
 
+    if std::fs::symlink_metadata(dest_dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!(
+            "`{}` é um atalho (symlink). Escolhe outro destino.",
+            dest_dir.display()
+        ));
+    }
     if dest_dir.exists() {
         let empty_dir = dest_dir.is_dir()
             && std::fs::read_dir(dest_dir)
@@ -159,10 +249,19 @@ pub fn clone_repo(
     let mut child = Command::new("git")
         .args(["clone", "--progress", "--", clone_url])
         .arg(dest_dir)
-        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader")
         .env("GIT_CONFIG_VALUE_0", auth_header_value(token))
+        // Empty helper resets every configured helper (global and `credential.<url>.helper`): if the
+        // token is rejected, Git must not fall back to another account's credentials, nor erase them.
+        .env("GIT_CONFIG_KEY_1", "credential.helper")
+        .env("GIT_CONFIG_VALUE_1", "")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_CONFIG_PARAMETERS")
         // Progress/error parsing relies on English output.
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
@@ -319,6 +418,61 @@ mod tests {
         let text = format!("oops {t} and {}", B64.encode(format!("x-access-token:{t}")));
         let r = redact(&text, t);
         assert!(!r.contains(t) && !r.contains(&B64.encode(format!("x-access-token:{t}"))));
+    }
+
+    /// Under `/tmp`: macOS's per-user temp dir lives in `/private/var`, which clones refuse.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = PathBuf::from("/tmp").join(format!("gitpass-clone-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn clone_parent_must_be_absolute_without_dot_dot() {
+        assert!(validate_clone_parent(Path::new("GitHub"), None).is_err());
+        assert!(validate_clone_parent(Path::new("/Users/x/../../etc"), None).is_err());
+        assert!(validate_clone_parent(Path::new("/Users/x/.."), None).is_err());
+    }
+
+    #[test]
+    fn clone_parent_refuses_system_library_and_hidden_home_dirs() {
+        let home = temp_dir("home");
+        std::fs::create_dir_all(home.join("Library/LaunchAgents")).unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::create_dir_all(home.join("Code")).unwrap();
+        let h = Some(home.as_path());
+        for bad in ["/", "/System/x", "/usr/local", "/etc", "/Library/LaunchDaemons", "/applications"] {
+            assert!(validate_clone_parent(Path::new(bad), h).is_err(), "{bad}");
+        }
+        assert!(validate_clone_parent(&home.join("Library/LaunchAgents"), h).is_err());
+        assert!(validate_clone_parent(&home.join("library/new"), h).is_err());
+        assert!(validate_clone_parent(&home.join(".ssh"), h).is_err());
+        assert_eq!(validate_clone_parent(&home.join("Code"), h).unwrap(), home.join("Code"));
+        // Missing folders are fine (created by the clone).
+        assert_eq!(validate_clone_parent(&home.join("Code/new/sub"), h).unwrap(), home.join("Code/new/sub"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clone_parent_symlinks_are_resolved_before_checks() {
+        let home = temp_dir("home-link");
+        std::fs::create_dir_all(home.join("Library/LaunchAgents")).unwrap();
+        std::os::unix::fs::symlink(home.join("Library/LaunchAgents"), home.join("innocent")).unwrap();
+        assert!(validate_clone_parent(&home.join("innocent"), Some(&home)).is_err());
+        assert!(validate_clone_parent(&home.join("innocent/deeper"), Some(&home)).is_err());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_dest_is_rejected() {
+        let d = temp_dir("dest-link");
+        std::fs::create_dir_all(d.join("target")).unwrap();
+        std::os::unix::fs::symlink(d.join("target"), d.join("repo")).unwrap();
+        let err = clone_repo("tok", "https://github.com/o/r.git", &d.join("repo"), |_| {}).unwrap_err();
+        assert!(err.contains("symlink"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -174,7 +174,10 @@ pub fn list_user_repos(token: &str) -> Result<Vec<GithubRepoSummary>, GithubApiE
             .filter(|u| u.starts_with(API_HOST_PREFIX));
         let body = resp.text()?;
         if !(200..300).contains(&status) {
-            return Err(GithubApiError::Http { status, body });
+            return Err(GithubApiError::Http {
+                status,
+                body: crate::github_api::sanitize_error_body(&body),
+            });
         }
 
         let rows: Vec<RepoRow> = serde_json::from_str(&body)?;
