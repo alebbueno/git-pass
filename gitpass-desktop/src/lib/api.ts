@@ -4,6 +4,9 @@ export type AccountRow = {
   id: string;
   login: string | null;
   label: string | null;
+  name?: string | null;
+  email?: string | null;
+  avatar_url?: string | null;
   auth: string;
   has_token: boolean;
 };
@@ -50,17 +53,10 @@ export type DevicePollUi =
 export const api = {
   configPath: () => invoke<string>("get_config_path"),
   oauthStatus: () => invoke<OauthConfigStatus>("oauth_config_status"),
-  accounts: () => invoke<AccountRow[]>("list_accounts"),
+  accounts: () => invoke<AccountRow[]>("accounts_list"),
   bindings: () => invoke<BindingRow[]>("list_bindings"),
   commitLog: (rootPath: string, limit = 40) =>
     invoke<string[]>("repo_commit_log", { rootPath, limit }),
-  cloudRepos: (accountId: string) =>
-    invoke<GithubRepoSummary[]>("github_cloud_repos_for_account", { accountId }),
-  deviceStart: () => invoke<DeviceCodeStart>("github_device_oauth_start"),
-  devicePoll: (clientId: string, deviceCode: string) =>
-    invoke<DevicePollUi>("github_device_oauth_poll", { clientId, deviceCode }),
-  /** Abre o seletor de pastas nativo e cria o vínculo; rejeita se o utilizador cancelar ou o origin não for GitHub. */
-  bindRepoDialog: (accountId: string) => invoke<void>("bind_repo_dialog", { accountId }),
   pingDaemon: () => invoke<string>("ipc_ping_gitpassd"),
   keychainHint: () => invoke<string>("open_keychain_docs"),
   openDataFolder: () => invoke<void>("open_application_support"),

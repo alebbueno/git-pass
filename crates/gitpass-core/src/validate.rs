@@ -88,24 +88,39 @@ fn emergency_allows_local_commit(cfg: &AppConfig) -> bool {
     false
 }
 
+/// What the user was doing, for messages ("o push", "o commit", ...).
+fn operation_label(phase: &str) -> &'static str {
+    match phase {
+        "pre-push" => "o push",
+        "pre-rebase" => "o rebase",
+        "pre-merge-commit" => "o merge",
+        _ => "o commit",
+    }
+}
+
+const REPAIR_HINT: &str = "Abre a app GitPass e escolhe «Reparar» em Definições.";
+
 /// Enforces **daemon must validate** policy when IPC is unavailable or the socket is missing.
+/// Development escape hatches (`GITPASS_ALLOW_*`) are deliberately not mentioned to users.
 pub fn policy_when_daemon_unreachable(phase: &str, cfg: &AppConfig) -> ValidateFail {
     if !is_validated_phase(phase) {
         return ValidateFail::Ok;
     }
+
+    let blocked = || ValidateFail::Err {
+        code: "GP-DAEMON-OFF",
+        message: format!(
+            "O serviço do GitPass não está a responder, por isso {} foi bloqueado. {REPAIR_HINT}",
+            operation_label(phase)
+        ),
+    };
 
     if is_push_phase(phase) {
         let allow = std::env::var("GITPASS_ALLOW_PUSH_WITHOUT_DAEMON").unwrap_or_default();
         if allow == "1" || allow.eq_ignore_ascii_case("true") {
             return ValidateFail::Ok;
         }
-        return ValidateFail::Err {
-            code: "GP-DAEMON-OFF",
-            message: format!(
-                "cannot reach gitpassd for hook `{phase}`.\n\
-                 Push blocked by policy. Start gitpassd or set GITPASS_ALLOW_PUSH_WITHOUT_DAEMON=1 for development only."
-            ),
-        };
+        return blocked();
     }
 
     let dev = std::env::var("GITPASS_ALLOW_LOCAL_COMMIT").unwrap_or_default();
@@ -116,12 +131,25 @@ pub fn policy_when_daemon_unreachable(phase: &str, cfg: &AppConfig) -> ValidateF
         return ValidateFail::Ok;
     }
 
-    ValidateFail::Err {
-        code: "GP-DAEMON-OFF",
-        message: format!(
-            "cannot reach gitpassd for hook `{phase}`.\n\
-             Commit blocked by policy. Start gitpassd, use emergency mode in config, or set GITPASS_ALLOW_LOCAL_COMMIT=1 (development only)."
-        ),
+    blocked()
+}
+
+/// `origin` as shown to the user: credentials embedded in the URL (`https://user:token@…`) removed.
+fn redact_url(url: &str) -> String {
+    if let Some((scheme, rest)) = url.split_once("://") {
+        let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+        if let Some((_, host)) = authority.rsplit_once('@') {
+            return format!("{scheme}://{host}{path}");
+        }
+    }
+    url.to_string()
+}
+
+fn api_error_detail(e: &crate::GithubApiError) -> String {
+    match e {
+        crate::GithubApiError::Http { status, .. } => format!("o GitHub respondeu HTTP {status}"),
+        crate::GithubApiError::Reqwest(_) => "sem ligação ao GitHub".into(),
+        _ => "resposta inesperada do GitHub".into(),
     }
 }
 
@@ -132,7 +160,7 @@ fn expect_binding<'a>(root: &Path, cfg: &'a AppConfig) -> Result<&'a RepoBinding
         .canonicalize()
         .map_err(|e| ValidateFail::Err {
             code: "GP-REPO",
-            message: format!("cannot canonicalize repo root: {e}"),
+            message: format!("Não foi possível abrir a pasta do repositório ({e})."),
         })?;
     cfg.repos
         .iter()
@@ -143,19 +171,12 @@ fn expect_binding<'a>(root: &Path, cfg: &'a AppConfig) -> Result<&'a RepoBinding
                 .unwrap_or_else(|_| r.root_path.clone());
             bound == root
         })
-        .ok_or_else(|| {
-            let msg = format!(
-                "no GitPass binding for this repo (root {}).\n\
-                 Add a [[repos]] entry in {} or run the app to bind an account.",
-                root.display(),
-                crate::config_file_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| "config.toml".into())
-            );
-            ValidateFail::Err {
-                code: "GP-BINDING",
-                message: msg,
-            }
+        .ok_or_else(|| ValidateFail::Err {
+            code: "GP-BINDING",
+            message: format!(
+                "Este repositório ({}) não está associado a nenhuma conta. Associa-o na app GitPass (Repositórios).",
+                root.display()
+            ),
         })
 }
 
@@ -165,25 +186,26 @@ fn account_by_id(cfg: &AppConfig, id: Uuid) -> Option<&Account> {
 
 /// Strict consistency: binding metadata vs `origin` URL (not about whether the user may push).
 fn binding_remote_consistency(binding: &RepoBinding, remote: &GitHubRepoId) -> Result<(), String> {
-    if let Some(ref bo) = binding.github_owner {
-        let bo_n = normalize_owner(bo);
-        if bo_n != remote.owner {
-            return Err(format!(
-                "binding says owner `{bo}` but `origin` is `{}/{}`",
-                remote.owner, remote.repo
-            ));
-        }
+    let owner_ok = binding
+        .github_owner
+        .as_deref()
+        .map_or(true, |bo| normalize_owner(bo) == remote.owner);
+    let repo_ok = binding
+        .github_repo
+        .as_deref()
+        .map_or(true, |br| br.trim_end_matches(".git").eq_ignore_ascii_case(remote.repo.as_str()));
+    if owner_ok && repo_ok {
+        return Ok(());
     }
-    if let Some(ref br) = binding.github_repo {
-        let br_norm = br.trim_end_matches(".git");
-        if !br_norm.eq_ignore_ascii_case(remote.repo.as_str()) {
-            return Err(format!(
-                "binding says repo `{br}` but `origin` points to `{}`",
-                remote.repo
-            ));
-        }
-    }
-    Ok(())
+    let registered = format!(
+        "{}/{}",
+        binding.github_owner.as_deref().unwrap_or(remote.owner.as_str()),
+        binding.github_repo.as_deref().unwrap_or(remote.repo.as_str())
+    );
+    Err(format!(
+        "O remoto «origin» aponta para {}/{}, mas no GitPass este repositório está registado como {registered}. Associa-o de novo na app GitPass (Repositórios).",
+        remote.owner, remote.repo
+    ))
 }
 
 /// Direct owner match: login equals `origin` owner.
@@ -243,7 +265,7 @@ pub fn validate_repo_for_hook_with_options(
         Err(e) => {
             return ValidateFail::Err {
                 code: "GP-GIT",
-                message: e,
+                message: format!("Não foi possível identificar o repositório Git ({e})."),
             };
         }
     };
@@ -262,10 +284,7 @@ pub fn validate_repo_for_hook_with_options(
         None => {
             return ValidateFail::Err {
                 code: "GP-ACCOUNT",
-                message: format!(
-                    "binding references missing account_id {} in config",
-                    binding.account_id
-                ),
+                message: "Este repositório está associado a uma conta que já não existe no GitPass. Escolhe outra conta na app GitPass (Repositórios).".into(),
             };
         }
     };
@@ -276,11 +295,8 @@ pub fn validate_repo_for_hook_with_options(
             return ValidateFail::Err {
                 code: "GP-ACCOUNT-LOGIN",
                 message: format!(
-                    "account {:?} has no github_login — set it in {}",
-                    account.label.as_deref().unwrap_or("(no label)"),
-                    crate::config_file_path()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| "config.toml".into())
+                    "A conta «{}» não tem utilizador do GitHub. Liga-a de novo na app GitPass (Contas).",
+                    account.label.as_deref().unwrap_or("sem nome")
                 ),
             };
         }
@@ -288,10 +304,10 @@ pub fn validate_repo_for_hook_with_options(
 
     let origin_url = match git_remote_url(&root, "origin") {
         Ok(u) => u,
-        Err(e) => {
+        Err(_) => {
             return ValidateFail::Err {
                 code: "GP-ORIGIN",
-                message: e,
+                message: "Este repositório não tem o remoto «origin». Adiciona-o (o endereço do repositório no GitHub) ou associa o repositório de novo na app GitPass.".into(),
             };
         }
     };
@@ -302,8 +318,8 @@ pub fn validate_repo_for_hook_with_options(
             return ValidateFail::Err {
                 code: "GP-REMOTE",
                 message: format!(
-                    "`origin` is not a github.com URL we understand: {origin_url}\n\
-                     GitPass v1 supports GitHub only."
+                    "O remoto «origin» ({}) não é um repositório do github.com. O GitPass só protege repositórios do GitHub; remove a associação na app GitPass (Repositórios) se este repositório não for do GitHub.",
+                    redact_url(&origin_url)
                 ),
             };
         }
@@ -312,7 +328,7 @@ pub fn validate_repo_for_hook_with_options(
     if let Err(msg) = binding_remote_consistency(binding, &remote) {
         return ValidateFail::Err {
             code: "GP-OWNER",
-            message: format!("{msg}\n  remote: {origin_url}\n  account: {login}"),
+            message: msg,
         };
     }
 
@@ -323,39 +339,27 @@ pub fn validate_repo_for_hook_with_options(
     if !needs_api_disambiguation(login, &remote, binding) {
         return ValidateFail::Err {
             code: "GP-OWNER",
-            message: format!(
-                "account `{login}` does not match `origin` owner `{}`.\n\
-                 remote: {origin_url}",
-                remote.owner
-            ),
+            message: owner_mismatch_message(&remote.owner, login),
         };
     }
+
+    let no_token = || ValidateFail::Err {
+        code: "GP-OAUTH",
+        message: format!(
+            "Este repositório pertence a {}, e é preciso confirmar no GitHub se a conta @{login} tem acesso, mas a conta não está ligada. Liga-a de novo na app GitPass (Contas).",
+            remote.owner
+        ),
+    };
 
     // --- Ambiguous: org/collaborator / fork-style ---
     let api_result = if opts.use_keychain_token {
         if github_token_load(binding.account_id).ok().flatten().is_none() {
-            return ValidateFail::Err {
-                code: "GP-OAUTH",
-                message: format!(
-                    "account `{login}` is not the `origin` owner (`{}`), and no OAuth token is stored.\n\
-                     Run: gitpass account login --account {login}\n\
-                     (GitHub API is required to confirm collaborator access on `{}/{}`.)",
-                    remote.owner, remote.owner, remote.repo
-                ),
-            };
+            return no_token();
         }
         token_can_push_for_account(binding.account_id, &remote.owner, &remote.repo)
     } else {
         let Some(tok) = opts.github_token.filter(|t| !t.trim().is_empty()) else {
-            return ValidateFail::Err {
-                code: "GP-OAUTH",
-                message: format!(
-                    "account `{login}` is not the `origin` owner (`{}`), and no OAuth token is stored.\n\
-                     Run: gitpass account login --account {login}\n\
-                     (GitHub API is required to confirm collaborator access on `{}/{}`.)",
-                    remote.owner, remote.owner, remote.repo
-                ),
-            };
+            return no_token();
         };
         token_can_push(tok, &remote.owner, &remote.repo)
     };
@@ -365,29 +369,45 @@ pub fn validate_repo_for_hook_with_options(
         Ok(false) => ValidateFail::Err {
             code: "GP-PERMISSION",
             message: format!(
-                "GitHub API: token for `{login}` does not have push access to `{}/{}`.\n\
-                 remote: {origin_url}",
-                remote.owner, remote.repo
+                "A conta @{login} não tem permissão de escrita em {}/{}. Muda a conta na app GitPass (Repositórios) ou pede acesso a {}.",
+                remote.owner, remote.repo, remote.owner
             ),
         },
         Err(e) => {
-            let detail = format!("{e}");
+            let detail = if matches!(e, crate::GithubApiError::Http { status: 401, .. }) {
+                format!("a conta @{login} precisa de ser ligada de novo na app GitPass (Contas)")
+            } else {
+                api_error_detail(&e)
+            };
             if opts.allow_ambiguous_when_api_unreachable {
                 ValidateFail::OkUnconfirmed {
                     warning: format!(
-                        "GitPass: could not confirm collaborator access via GitHub API ({detail}).\n\
-                         Allowing (ambiguous case) — set `GITPASS_STRICT_API=1` in the daemon environment to block when API fails."
+                        "GitPass: não foi possível confirmar no GitHub o acesso da conta @{login} a {}/{} ({detail}). {} foi permitido.",
+                        remote.owner,
+                        remote.repo,
+                        capitalize(operation_label(phase))
                     ),
                 }
             } else {
                 ValidateFail::Err {
                     code: "GP-API",
                     message: format!(
-                        "GitHub API error while checking `{}/{}`: {detail}",
+                        "Não foi possível confirmar no GitHub o acesso da conta @{login} a {}/{} ({detail}). Verifica a ligação à Internet e tenta de novo.",
                         remote.owner, remote.repo
                     ),
                 }
             }
         }
     }
+}
+
+fn owner_mismatch_message(owner: &str, login: &str) -> String {
+    format!(
+        "Este repositório pertence a {owner}, mas está associado à conta @{login}. Muda a conta na app GitPass (Repositórios)."
+    )
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }

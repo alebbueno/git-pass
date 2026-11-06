@@ -1,24 +1,24 @@
 // Prevents additional console window on Windows in release; keep macOS behavior default.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cmd_accounts;
+mod cmd_cloud;
+mod cmd_integration;
+mod cmd_repos;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gitpass_core::{
-    config_file_path, decode_response_line, encode_line, embedded_oauth_client_id, git_log_lines,
-    git_remote_url, github_oauth_device_poll_once, github_oauth_device_request_code,
-    github_token_load, github_token_save, list_user_repos, load_oauth_env_file_if_needed,
-    normalize_owner, parse_github_remote, resolve_oauth_client_id, AppConfig, AuthMode,
-    DeviceCodeStart, DevicePollOutcome, GithubRepoSummary, IpcRequest, IpcResponse, KEYCHAIN_SERVICE,
+    config_file_path, decode_response_line, encode_line, git_log_lines,
+    load_oauth_env_file_if_needed, resolve_oauth_client_id, AppConfig, IpcRequest, IpcResponse,
+    RepoBinding, KEYCHAIN_SERVICE,
 };
-use gitpass_core::DEFAULT_GITHUB_SCOPES;
-use gitpass_core::{Account, RepoBinding};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager};
-use uuid::Uuid;
+use tauri::{AppHandle, Listener, Manager};
 
 const TRAY_ID: &str = "gitpass-tray";
 
@@ -86,26 +86,7 @@ fn initial_tooltip() -> String {
     }
 }
 
-fn find_account_by_login<'a>(cfg: &'a AppConfig, login: &str) -> Option<&'a Account> {
-    let n = normalize_owner(login);
-    cfg.accounts.iter().find(|a| {
-        a.github_login
-            .as_ref()
-            .map(|l| normalize_owner(l) == n)
-            .unwrap_or(false)
-    })
-}
-
 // --- Tauri commands ---
-
-#[derive(serde::Serialize)]
-struct AccountRow {
-    id: String,
-    login: Option<String>,
-    label: Option<String>,
-    auth: String,
-    has_token: bool,
-}
 
 #[derive(serde::Serialize)]
 struct OauthConfigStatus {
@@ -113,18 +94,6 @@ struct OauthConfigStatus {
     message: String,
     oauth_env_path: String,
     client_id_configured: bool,
-}
-
-#[derive(serde::Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum DevicePollUi {
-    Pending,
-    SlowDown {
-        interval_secs: u64,
-    },
-    Done {
-        message: String,
-    },
 }
 
 #[derive(serde::Serialize)]
@@ -152,47 +121,19 @@ fn oauth_config_status() -> OauthConfigStatus {
     };
     let _ = load_oauth_env_file_if_needed();
     match resolve_oauth_client_id() {
-        Ok(id) => {
-            let embed = embedded_oauth_client_id().is_some();
-            OauthConfigStatus {
-                ok: true,
-                client_id_configured: true,
-                message: if embed {
-                    format!("GitHub OAuth Device flow ready (client_id embutido no build).")
-                } else {
-                    format!("GitHub OAuth client_id: {id}… (env ou oauth.env)")
-                },
-                oauth_env_path,
-            }
-        }
-        Err(e) => OauthConfigStatus {
+        Ok(_) => OauthConfigStatus {
+            ok: true,
+            client_id_configured: true,
+            message: "Ligação ao GitHub pronta.".to_string(),
+            oauth_env_path,
+        },
+        Err(_) => OauthConfigStatus {
             ok: false,
             client_id_configured: false,
-            message: format!(
-                "{e}\n\nPara builds plug-and-play: define GITPASS_GITHUB_OAUTH_CLIENT_ID ao compilar e ativa **Device flow** na OAuth App do GitHub (Developer Settings)."
-            ),
+            message: "A ligação ao GitHub não está disponível nesta versão da app.".to_string(),
             oauth_env_path,
         },
     }
-}
-
-#[tauri::command]
-fn list_accounts() -> Result<Vec<AccountRow>, String> {
-    let cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    for a in &cfg.accounts {
-        let has_token = github_token_load(a.id)
-            .map_err(|e| e.to_string())?
-            .is_some();
-        out.push(AccountRow {
-            id: a.id.to_string(),
-            login: a.github_login.clone(),
-            label: a.label.clone(),
-            auth: format!("{:?}", a.auth).to_lowercase(),
-            has_token,
-        });
-    }
-    Ok(out)
 }
 
 #[tauri::command]
@@ -223,142 +164,6 @@ fn repo_commit_log(root_path: String, limit: Option<usize>) -> Result<Vec<String
     git_log_lines(&root, limit.unwrap_or(30))
 }
 
-#[tauri::command]
-fn github_cloud_repos_for_account(account_id: String) -> Result<Vec<GithubRepoSummary>, String> {
-    let id = Uuid::parse_str(&account_id).map_err(|_| "invalid account id".to_string())?;
-    let cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
-    if !cfg.accounts.iter().any(|a| a.id == id) {
-        return Err("unknown account".to_string());
-    }
-    let bundle = github_token_load(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no GitHub token — use Connect GitHub first".to_string())?;
-    list_user_repos(&bundle.access_token).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn github_device_oauth_start() -> Result<DeviceCodeStart, String> {
-    load_oauth_env_file_if_needed().map_err(|e| e.to_string())?;
-    let client_id = resolve_oauth_client_id().map_err(|e| e.to_string())?;
-    let scopes =
-        std::env::var("GITPASS_OAUTH_SCOPES").unwrap_or_else(|_| DEFAULT_GITHUB_SCOPES.to_string());
-
-    let start = github_oauth_device_request_code(&client_id, &scopes).map_err(|e| e.to_string())?;
-    opener::open(&start.verification_uri).map_err(|e| format!("open browser: {e}"))?;
-    Ok(start)
-}
-
-#[tauri::command]
-fn github_device_oauth_poll(
-    app: AppHandle,
-    client_id: String,
-    device_code: String,
-) -> Result<DevicePollUi, String> {
-    match github_oauth_device_poll_once(&client_id, &device_code).map_err(|e| e.to_string())? {
-        DevicePollOutcome::Pending => Ok(DevicePollUi::Pending),
-        DevicePollOutcome::SlowDown { interval_secs } => Ok(DevicePollUi::SlowDown { interval_secs }),
-        DevicePollOutcome::Success { bundle, login } => {
-            let login_remote = login.clone();
-            let login_norm = normalize_owner(&login_remote);
-
-            let mut cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
-            if find_account_by_login(&cfg, &login_norm).is_some() {
-                return Err(format!(
-                    "A conta `{login_remote}` já existe. Remove-a no config ou usa o CLI."
-                ));
-            }
-
-            let id = Uuid::new_v4();
-            cfg.accounts.push(Account {
-                id,
-                github_login: Some(login_remote.clone()),
-                label: None,
-                auth: AuthMode::Https,
-            });
-            github_token_save(id, &bundle).map_err(|e| e.to_string())?;
-            cfg.save().map_err(|e| e.to_string())?;
-
-            let _ = app.emit("gitpass-config-changed", ());
-            refresh_tray_tooltip(&app);
-            Ok(DevicePollUi::Done {
-                message: format!("Conta @{login_remote} ligada; token no Keychain."),
-            })
-        }
-    }
-}
-
-#[tauri::command]
-fn bind_repo_dialog(account_id: String, app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        let out = Command::new("osascript")
-            .arg("-e")
-            .arg(
-                r#"tell application "System Events"
-  activate
-  set f to choose folder with prompt "Choose a local git repository folder"
-  POSIX path of f
-end tell"#,
-            )
-            .output()
-            .map_err(|e| format!("could not open folder picker: {e}"))?;
-        if !out.status.success() {
-            return Err("folder selection cancelled".to_string());
-        }
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if path.is_empty() {
-            return Err("no folder selected".to_string());
-        }
-        let root = PathBuf::from(&path);
-        return bind_repo_at_path(account_id, root, app);
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (account_id, app);
-        Err("folder picker is only wired on macOS for now".to_string())
-    }
-}
-
-fn bind_repo_at_path(account_id: String, root: PathBuf, app: AppHandle) -> Result<(), String> {
-    let acc_id = Uuid::parse_str(&account_id).map_err(|_| "invalid account id".to_string())?;
-
-    let mut cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
-    if !cfg.accounts.iter().any(|a| a.id == acc_id) {
-        return Err("unknown account".to_string());
-    }
-
-    let canon = root
-        .canonicalize()
-        .map_err(|e| format!("invalid path: {e}"))?;
-
-    let url = git_remote_url(&canon, "origin")
-        .map_err(|e| format!("{e}. Add remote `origin` or pick another clone."))?;
-    let gh = parse_github_remote(&url).ok_or_else(|| {
-        format!("origin is not a github.com URL (got `{url}`). Use HTTPS or git@github.com:owner/repo")
-    })?;
-    let owner = gh.owner;
-    let repo = gh.repo;
-
-    if cfg.repos.iter().any(|r| r.root_path == canon) {
-        return Err("this folder is already bound".to_string());
-    }
-
-    let id = Uuid::new_v4();
-    cfg.repos.push(RepoBinding {
-        id,
-        account_id: acc_id,
-        root_path: canon,
-        github_owner: Some(owner.clone()),
-        github_repo: Some(repo.clone()),
-    });
-    cfg.save().map_err(|e| e.to_string())?;
-
-    let _ = app.emit("gitpass-config-changed", ());
-    refresh_tray_tooltip(&app);
-    Ok(())
-}
-
 #[cfg(unix)]
 #[tauri::command]
 fn ipc_ping_gitpassd() -> Result<String, String> {
@@ -367,7 +172,7 @@ fn ipc_ping_gitpassd() -> Result<String, String> {
     let path = gitpass_core::ipc_socket_path().map_err(|e| e.to_string())?;
     if !path.exists() {
         return Err(format!(
-            "gitpassd não está a correr (sem socket em {}). Só os hooks Git precisam do daemon; Connect OAuth e painel funcionam sem ele. Para arrancar: cargo run -p gitpassd --bin gitpassd",
+            "gitpassd não está a correr (sem socket em {}). Só os hooks Git precisam do daemon; Connect OAuth e painel funcionam sem ele. Abre Definições e escolhe «Reparar».",
             path.display()
         ));
     }
@@ -437,25 +242,56 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_config_path,
             oauth_config_status,
-            list_accounts,
             list_bindings,
             repo_commit_log,
-            github_cloud_repos_for_account,
-            github_device_oauth_start,
-            github_device_oauth_poll,
-            bind_repo_dialog,
             ipc_ping_gitpassd,
             open_keychain_docs,
             open_application_support,
             open_external_url,
+            cmd_accounts::accounts_list,
+            cmd_accounts::accounts_device_start,
+            cmd_accounts::accounts_device_poll,
+            cmd_accounts::accounts_refresh_profile,
+            cmd_accounts::accounts_set_label,
+            cmd_accounts::accounts_emails,
+            cmd_accounts::accounts_set_email,
+            cmd_accounts::accounts_remove,
+            cmd_accounts::accounts_check,
+            cmd_repos::repos_list,
+            cmd_repos::repos_bind_dialog,
+            cmd_repos::repos_bind_path,
+            cmd_repos::repos_bind_many,
+            cmd_repos::repos_unbind,
+            cmd_repos::repos_change_account,
+            cmd_repos::repos_fix_identity,
+            cmd_repos::repos_discover,
+            cmd_repos::repos_pick_folder,
+            cmd_repos::repos_open_in_finder,
+            cmd_repos::repos_open_in_terminal,
+            cmd_cloud::cloud_repos,
+            cmd_cloud::cloud_clone,
+            cmd_cloud::cloud_choose_folder,
+            cmd_integration::integration_status,
+            cmd_integration::integration_apply,
+            cmd_integration::integration_undo,
+            cmd_integration::integration_daemon_restart,
+            cmd_integration::integration_daemon_stop,
         ])
         .setup(|app| {
+            cmd_integration::spawn_autostart(app.handle().clone());
+            let handle = app.handle().clone();
+            app.listen("gitpass-config-changed", move |_| refresh_tray_tooltip(&handle));
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+
             let icon = tray_icon_from_build().map_err(|e| format!("tray icon: {e}"))?;
 
-            let show = MenuItem::with_id(app, "show", "Open GitPass", true, None::<&str>)?;
-            let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Abrir GitPass", true, None::<&str>)?;
+            let hide = MenuItem::with_id(app, "hide", "Ocultar", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit GitPass", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Sair do GitPass", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &hide, &sep, &quit])?;
 
             let _tray = TrayIconBuilder::with_id(TRAY_ID)

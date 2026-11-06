@@ -1,5 +1,9 @@
 //! Shared types and paths for GitPass (daemon, CLI, Tauri).
 
+pub mod bindings;
+pub mod clone;
+pub mod github_user;
+pub mod integration;
 mod config;
 pub mod github_api;
 pub mod github_repos;

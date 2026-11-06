@@ -1,0 +1,53 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export type RepoPermissions = {
+  admin: boolean;
+  maintain: boolean;
+  push: boolean;
+  triage: boolean;
+  pull: boolean;
+};
+
+/** Repositório GitHub com permissões e (se existir) o clone local vinculado à mesma conta. */
+export type CloudRepo = {
+  full_name: string;
+  name: string;
+  private: boolean;
+  html_url: string;
+  pushed_at: string | null;
+  default_branch: string | null;
+  permissions: RepoPermissions;
+  owner_login: string;
+  /** "User" ou "Organization". */
+  owner_type: string;
+  fork: boolean;
+  archived: boolean;
+  description: string | null;
+  clone_url: string;
+  local_binding_id: string | null;
+  local_path: string | null;
+};
+
+export type ClonePhase = "starting" | "counting" | "compressing" | "receiving" | "resolving" | "checkout" | "binding";
+
+/** Payload do evento `gitpass-clone-progress`. */
+export type CloneProgressPayload = {
+  full_name: string;
+  phase: ClonePhase | string;
+  percent: number;
+};
+
+export const CLONE_PROGRESS_EVENT = "gitpass-clone-progress";
+
+export const apiCloud = {
+  /** Repositórios da conta com permissões; `local_binding_id` preenchido quando já há clone vinculado. */
+  repos: (accountId: string) => invoke<CloudRepo[]>("cloud_repos", { accountId }),
+  /**
+   * Clona `owner/repo` e vincula à conta. `destParent` é a pasta que vai conter a pasta do repositório
+   * (omitido → `~/GitHub/<owner>/<repo>`). Devolve o caminho do clone.
+   */
+  clone: (accountId: string, fullName: string, destParent?: string | null) =>
+    invoke<string>("cloud_clone", { accountId, fullName, destParent: destParent ?? null }),
+  /** Seletor de pastas nativo; `null` se o utilizador cancelar. */
+  chooseFolder: () => invoke<string | null>("cloud_choose_folder"),
+};

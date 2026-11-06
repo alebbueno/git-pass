@@ -235,6 +235,7 @@ fn account_cmd(cmd: AccountCmd) -> Result<i32, Box<dyn std::error::Error + Send 
                 github_login: Some(login.clone()),
                 label: args.label.clone(),
                 auth,
+                ..Default::default()
             });
             cfg.save()?;
             println!("ok: added account {id} ({login})");
@@ -301,6 +302,7 @@ fn account_cmd(cmd: AccountCmd) -> Result<i32, Box<dyn std::error::Error + Send 
                     github_login: Some(login_remote.clone()),
                     label: None,
                     auth: CoreAuthMode::Https,
+                    ..Default::default()
                 });
                 github_token_save(id, &bundle)?;
                 cfg.save()?;

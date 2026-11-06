@@ -46,7 +46,7 @@ impl Default for AppConfig {
 }
 
 /// A GitHub identity managed by the user (OAuth tokens live in Keychain, not here).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Account {
     pub id: Uuid,
     /// GitHub login, e.g. `octocat` (filled after OAuth or manual entry).
@@ -57,6 +57,14 @@ pub struct Account {
     pub label: Option<String>,
     #[serde(default)]
     pub auth: AuthMode,
+    /// GitHub profile name, used as `user.name` in bound repos.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Commit email applied as `user.email` in bound repos (primary or noreply).
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -175,6 +183,7 @@ mod tests {
             github_login: Some("octocat".into()),
             label: Some("Work".into()),
             auth: AuthMode::Https,
+            ..Default::default()
         });
         let s = toml::to_string_pretty(&cfg).unwrap();
         let back: AppConfig = toml::from_str(&s).unwrap();

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import logoLightUrl from "./assets/branding/RepoID-logo-fundo-claro.svg";
 import logoDarkUrl from "./assets/branding/RepoID-logo-fundo-escuro.svg";
 import { api } from "./lib/api";
+import { integrationApi, integrationHeadline, onIntegrationChanged, type IntegrationStatus } from "./lib/api-integration";
 import { esc, showToast } from "./lib/dom";
 import { brandSymbol, icon, type IconName } from "./lib/icons";
 import { profileChip } from "./lib/profile";
@@ -47,8 +48,8 @@ app.innerHTML = `
           <h2 class="eyebrow">Perfis</h2>
           <div id="sidebar-profiles" class="sidebar-profiles-list"></div>
         </section>
-        <button type="button" class="sidebar-footer" id="daemon-status" title="Estado do gitpassd (abre Definições)">
-          <span class="status-dot" aria-hidden="true"></span><span class="status-text">A testar daemon…</span>
+        <button type="button" class="sidebar-footer" id="daemon-status" title="Integração com o Git (abre Definições)">
+          <span class="status-dot" aria-hidden="true"></span><span class="status-text">A verificar integração…</span>
         </button>
       </aside>
       <main class="main" id="view-root" tabindex="-1"></main>
@@ -116,20 +117,25 @@ function setCount(view: ViewId, n: number): void {
   if (el) el.textContent = n > 0 ? String(n) : "";
 }
 
+function renderIntegration(st: IntegrationStatus): void {
+  const h = integrationHeadline(st);
+  daemonBtn.dataset.state = h.kind === "success" ? "ok" : "off";
+  daemonBtn.querySelector<HTMLElement>(".status-text")!.textContent = `Integração Git · ${h.label}`;
+  daemonBtn.title = h.detail;
+}
+
 async function refreshDaemon(): Promise<void> {
-  const text = daemonBtn.querySelector<HTMLElement>(".status-text")!;
   try {
-    await api.pingDaemon();
-    daemonBtn.dataset.state = "ok";
-    text.textContent = "gitpassd ativo";
+    renderIntegration(await integrationApi.status());
   } catch {
     daemonBtn.dataset.state = "off";
-    text.textContent = "gitpassd parado · só hooks";
+    daemonBtn.querySelector<HTMLElement>(".status-text")!.textContent = "Integração Git · indisponível";
   }
 }
 
 document.addEventListener(DATA_CHANGED_EVENT, () => void refreshSidebar());
 void listen("gitpass-config-changed", () => ctx.notifyDataChanged());
+void onIntegrationChanged(renderIntegration);
 
 const initial = location.hash.replace("#", "") as ViewId;
 navigate(VIEWS.some((v) => v.id === initial) ? initial : "overview");

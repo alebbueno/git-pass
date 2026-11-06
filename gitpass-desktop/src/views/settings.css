@@ -81,19 +81,12 @@
   line-height: 1.55;
 }
 
-.settings-message {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .settings-row-control .segmented button {
   min-height: 32px;
 }
 
-/* Caminhos e comandos */
-.settings-path,
-.settings-code {
+/* Caminhos */
+.settings-path {
   display: flex;
   align-items: center;
   gap: var(--rid-space-2);
@@ -111,28 +104,65 @@
   user-select: text;
 }
 
-.settings-code-block {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: var(--rid-space-2) 0;
-  overflow-x: auto;
-  user-select: text;
-}
-
-.settings-code-block code {
-  padding: 0;
-  background: transparent;
-  color: var(--rid-text);
-  font-size: inherit;
-}
-
 .settings-copy {
   flex-shrink: 0;
 }
 
 .settings-copy.settings-copied {
   color: var(--rid-feedback-success-foreground);
+}
+
+/* Integração com o Git */
+.settings-check .settings-row-control {
+  align-self: flex-start;
+  padding-top: 2px;
+}
+
+.settings-check-value {
+  margin-top: var(--rid-space-1);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-int-actions .settings-row-desc {
+  margin-top: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-int-undo {
+  color: var(--rid-feedback-error-foreground);
+}
+
+/* Diálogo de confirmação */
+.settings-dialog-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.settings-dialog-body {
+  margin: var(--rid-space-3) 0 0;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--rid-muted-text);
+}
+
+.settings-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--rid-space-2);
+  margin-top: var(--rid-space-5);
+}
+
+.settings-btn-danger {
+  background: var(--rid-feedback-error-foreground);
+  border-color: transparent;
+  color: var(--rid-surface);
+}
+
+.settings-btn-danger:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 /* Keychain */

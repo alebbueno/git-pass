@@ -7,9 +7,15 @@ use std::env;
 use std::fs::{self, File};
 use std::path::PathBuf;
 
+/// `bundle.externalBin` names in tauri.conf.json (without the target triple).
+const SIDECARS: [&str; 3] = ["gitpass-cli", "gitpass-credential-helper", "gitpass-daemon"];
+/// Must match `gitpass_core::integration::SIDECAR_STUB_MARKER`: the app refuses to install placeholders.
+const SIDECAR_STUB_MARKER: &str = "GITPASS_SIDECAR_STUB";
+
 fn main() {
     ensure_frontend_dist_stub();
     ensure_app_icon_png();
+    ensure_sidecar_placeholders();
     let dist_index =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../dist/index.html");
     println!("cargo:rerun-if-changed={}", dist_index.display());
@@ -42,6 +48,40 @@ fn ensure_frontend_dist_stub() {
             "gitpass-desktop: created stub {} (run npm run build in gitpass-desktop/ for production assets)",
             index.display()
         );
+    }
+}
+
+/// `tauri_build::build()` fails when an `externalBin` file is missing. Real binaries come from
+/// `npm run build:sidecars` (run automatically by `tauri build`); until then, plain `cargo check` /
+/// `tauri dev` get placeholders that exit with an error.
+fn ensure_sidecar_placeholders() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let dir = manifest_dir.join("binaries");
+    let triple = env::var("TARGET").unwrap();
+    let _ = fs::create_dir_all(&dir);
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        let _ = fs::write(&ignore, "*\n");
+    }
+    for name in SIDECARS {
+        let path = dir.join(format!("{name}-{triple}"));
+        if path.exists() {
+            continue;
+        }
+        let body = format!(
+            "#!/bin/sh\n# {SIDECAR_STUB_MARKER}: placeholder written by build.rs. Run `npm run build:sidecars` in gitpass-desktop/.\necho \"GitPass: {name} was not built into this app.\" >&2\nexit 1\n"
+        );
+        if fs::write(&path, body).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o755));
+            }
+            eprintln!(
+                "gitpass-desktop: created placeholder sidecar {} (run npm run build:sidecars for the real binary)",
+                path.display()
+            );
+        }
     }
 }
 

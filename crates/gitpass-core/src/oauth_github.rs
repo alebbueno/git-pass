@@ -15,7 +15,8 @@ use url::Url;
 
 use crate::secrets::{GithubTokenBundle, SecretError};
 
-pub const DEFAULT_GITHUB_SCOPES: &str = "read:user read:org repo";
+/// `user:email` lets the app pick the commit email; `workflow` allows pushing `.github/workflows` changes.
+pub const DEFAULT_GITHUB_SCOPES: &str = "read:user user:email read:org repo workflow";
 
 /// Default localhost port — your GitHub OAuth app "Authorization callback URL" must be `http://127.0.0.1:{port}/callback`.
 pub const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 8765;

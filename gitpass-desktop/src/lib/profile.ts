@@ -13,8 +13,8 @@ export function profileFamily(accountId: string): ProfileFamily {
   return PROFILE_FAMILIES[Math.abs(h) % PROFILE_FAMILIES.length];
 }
 
-export function profileName(a: Pick<AccountRow, "id" | "login" | "label">): string {
-  return a.label || a.login || a.id.slice(0, 8);
+export function profileName(a: Pick<AccountRow, "id" | "login" | "label"> & { name?: string | null }): string {
+  return a.label || a.name || a.login || a.id.slice(0, 8);
 }
 
 export function profileInitials(name: string): string {
@@ -28,7 +28,7 @@ export function profileInitials(name: string): string {
  * O nome fica sempre visível (a cor nunca é o único indicador).
  */
 export function profileChip(
-  a: Pick<AccountRow, "id" | "login" | "label">,
+  a: Pick<AccountRow, "id" | "login" | "label"> & { name?: string | null },
   opts: { size?: "sm" | "md"; showName?: boolean } = {}
 ): string {
   const name = profileName(a);
@@ -39,7 +39,7 @@ export function profileChip(
 }
 
 /** Avatar circular só com iniciais (para listas onde o nome já aparece ao lado). */
-export function profileAvatar(a: Pick<AccountRow, "id" | "login" | "label">, size = 36): string {
+export function profileAvatar(a: Pick<AccountRow, "id" | "login" | "label"> & { name?: string | null }, size = 36): string {
   const name = profileName(a);
   return `<span class="profile-avatar profile-${profileFamily(a.id)}" style="--avatar-size:${size}px" aria-hidden="true">${esc(profileInitials(name))}</span>`;
 }

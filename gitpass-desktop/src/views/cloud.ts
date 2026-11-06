@@ -1,6 +1,13 @@
 import "./cloud.css";
-import { api, type AccountRow, type BindingRow, type GithubRepoSummary } from "../lib/api";
-import { esc, relativeTime, showToast, withBusy } from "../lib/dom";
+import { listen } from "@tauri-apps/api/event";
+import { api, type AccountRow, type BindingRow } from "../lib/api";
+import {
+  apiCloud,
+  CLONE_PROGRESS_EVENT,
+  type CloneProgressPayload,
+  type CloudRepo,
+} from "../lib/api-cloud";
+import { errMessage, esc, relativeTime, shortenPath, showToast, withBusy } from "../lib/dom";
 import { icon } from "../lib/icons";
 import { profileChip, profileName } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
@@ -8,11 +15,97 @@ import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
 const PAGE_SIZE = 50;
 
 type LocalFilter = "all" | "local" | "cloud";
+type PermFilter = "all" | "write";
 
 type RepoState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ok"; repos: GithubRepoSummary[] };
+  | { status: "ok"; repos: CloudRepo[] };
+
+type CloneJob = { accountId: string; fullName: string; phase: string; percent: number };
+
+type Popover = { key: string; accountId: string; fullName: string; parent: string | null };
+
+// ---------- Estado partilhado entre montagens ----------
+// A clonagem continua se o utilizador sair desta vista; ao voltar, o progresso reaparece.
+
+const activeClones = new Map<string, CloneJob>();
+/** Clones concluídos nesta sessão (a linha passa a "Clone local" antes de a lista recarregar). */
+const clonedKeys = new Set<string>();
+let sink: { render: () => void; progress: () => void } | null = null;
+let listenerStarted = false;
+
+const rowKey = (accountId: string, fullName: string) => `${accountId}|${fullName.toLowerCase()}`;
+
+function ensureProgressListener(): void {
+  if (listenerStarted) return;
+  listenerStarted = true;
+  void listen<CloneProgressPayload>(CLONE_PROGRESS_EVENT, (ev) => {
+    const name = ev.payload.full_name.toLowerCase();
+    for (const job of activeClones.values()) {
+      if (job.fullName.toLowerCase() === name) {
+        job.phase = ev.payload.phase;
+        job.percent = ev.payload.percent;
+      }
+    }
+    sink?.progress();
+  }).catch(() => {
+    listenerStarted = false;
+  });
+}
+
+const PHASE_LABEL: Record<string, string> = {
+  starting: "A iniciar…",
+  counting: "A contar objetos",
+  compressing: "A comprimir objetos",
+  receiving: "A receber objetos",
+  resolving: "A resolver deltas",
+  checkout: "A extrair ficheiros",
+  binding: "A vincular à conta",
+};
+
+/** Intervalo [início, fim] de cada fase no progresso global (as fases do Git são sequenciais). */
+const PHASE_SPAN: Record<string, [number, number]> = {
+  starting: [0, 0],
+  counting: [0, 5],
+  compressing: [5, 10],
+  receiving: [10, 80],
+  resolving: [80, 95],
+  checkout: [95, 100],
+  binding: [100, 100],
+};
+
+function overallPercent(job: CloneJob): number {
+  const [from, to] = PHASE_SPAN[job.phase] ?? [0, 100];
+  const p = Math.max(0, Math.min(100, job.percent));
+  return Math.round(from + ((to - from) * p) / 100);
+}
+
+// ---------- Permissões ----------
+
+const svg = (inner: string) =>
+  `<svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+const ICON_SHIELD = svg('<path d="M12 3 4 6v6c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>');
+const ICON_PENCIL = svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>');
+const ICON_EYE = svg('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
+const ICON_ARCHIVE = svg('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>');
+
+function canWrite(r: CloudRepo): boolean {
+  const p = r.permissions;
+  return !!p && (p.admin || p.maintain || p.push);
+}
+
+function permissionBadge(r: CloudRepo): string {
+  const p = r.permissions;
+  if (!p) return "";
+  if (p.admin) return `<span class="badge success" title="Administrador do repositório">${ICON_SHIELD}Admin</span>`;
+  if (p.maintain || p.push) {
+    const title = p.maintain && !p.push ? "Manutenção (pode escrever)" : "Pode enviar alterações (push)";
+    return `<span class="badge success" title="${title}">${ICON_PENCIL}Escrita</span>`;
+  }
+  if (p.triage || p.pull) return `<span class="badge" title="Só leitura">${ICON_EYE}Leitura</span>`;
+  return "";
+}
 
 export const mount: MountView = (root, ctx) => {
   // Estado em memória enquanto a tela está montada
@@ -24,7 +117,10 @@ export const mount: MountView = (root, ctx) => {
   const expanded = new Set<string>();
   let query = "";
   let localFilter: LocalFilter = "all";
+  let permFilter: PermFilter = "all";
   let profileFilter = "all";
+  let popover: Popover | null = null;
+  let focusPopover = false;
   let generation = 0;
   let alive = true;
 
@@ -32,7 +128,7 @@ export const mount: MountView = (root, ctx) => {
     <header class="view-header">
       <div>
         <h1 class="view-title">Na cloud</h1>
-        <p class="view-sub">Repositórios no GitHub, por perfil.</p>
+        <p class="view-sub">Repositórios no GitHub, por perfil. Clona com a conta certa.</p>
       </div>
       <div class="view-actions">
         <button type="button" class="btn ghost" id="cloud-refresh">${icon("refresh")}<span>Atualizar</span></button>
@@ -48,6 +144,10 @@ export const mount: MountView = (root, ctx) => {
         <button type="button" data-local="local" aria-pressed="false">Com clone local</button>
         <button type="button" data-local="cloud" aria-pressed="false">Só na cloud</button>
       </div>
+      <div class="segmented" id="cloud-perm-filter" role="group" aria-label="Filtrar por permissão">
+        <button type="button" data-perm="all" aria-pressed="true">Qualquer acesso</button>
+        <button type="button" data-perm="write" aria-pressed="false">Posso escrever</button>
+      </div>
       <div class="segmented" id="cloud-profile-filter" role="group" aria-label="Filtrar por perfil" hidden></div>
     </div>
     <div class="cloud-body" id="cloud-body"></div>
@@ -57,6 +157,7 @@ export const mount: MountView = (root, ctx) => {
   const toolbar = root.querySelector<HTMLElement>("#cloud-toolbar")!;
   const searchInput = root.querySelector<HTMLInputElement>("#cloud-search")!;
   const localGroup = root.querySelector<HTMLElement>("#cloud-local-filter")!;
+  const permGroup = root.querySelector<HTMLElement>("#cloud-perm-filter")!;
   const profileGroup = root.querySelector<HTMLElement>("#cloud-profile-filter")!;
   const body = root.querySelector<HTMLElement>("#cloud-body")!;
 
@@ -72,20 +173,34 @@ export const mount: MountView = (root, ctx) => {
     return keys;
   }
 
-  async function fetchRepos(account: AccountRow, gen: number): Promise<void> {
-    repoStates.set(account.id, { status: "loading" });
-    renderBody();
+  function isLocalRepo(accountId: string, r: CloudRepo, locals: Set<string>): boolean {
+    return !!r.local_binding_id || locals.has(r.full_name.toLowerCase()) || clonedKeys.has(rowKey(accountId, r.full_name));
+  }
+
+  async function fetchRepos(account: AccountRow, gen: number, silent = false): Promise<void> {
+    const prev = repoStates.get(account.id);
+    if (!silent || !prev || prev.status !== "ok") {
+      repoStates.set(account.id, { status: "loading" });
+      renderBody();
+    }
     try {
-      const repos = await api.cloudRepos(account.id);
+      const repos = await apiCloud.repos(account.id);
       if (!alive || gen !== generation) return;
       repoStates.set(account.id, { status: "ok", repos });
     } catch (e) {
       if (!alive || gen !== generation) return;
-      repoStates.set(account.id, { status: "error", message: String(e) });
+      if (silent && prev?.status === "ok") {
+        // Mantém a lista anterior em vez de a trocar por um erro numa atualização em segundo plano.
+        repoStates.set(account.id, prev);
+        showToast(`Não foi possível atualizar os repositórios de ${profileName(account)}: ${errMessage(e)}`);
+      } else {
+        repoStates.set(account.id, { status: "error", message: errMessage(e) });
+      }
     }
     renderBody();
   }
 
+  /** Carrega contas e vínculos; as listas já carregadas ficam visíveis enquanto atualizam. */
   async function loadAll(): Promise<void> {
     const gen = ++generation;
     try {
@@ -96,7 +211,7 @@ export const mount: MountView = (root, ctx) => {
       loadError = null;
     } catch (e) {
       if (!alive || gen !== generation) return;
-      loadError = String(e);
+      loadError = errMessage(e);
       loadedAccounts = true;
       renderAll();
       return;
@@ -106,11 +221,36 @@ export const mount: MountView = (root, ctx) => {
     for (const id of [...repoStates.keys()]) if (!ids.has(id)) repoStates.delete(id);
     if (profileFilter !== "all" && !ids.has(profileFilter)) profileFilter = "all";
     for (const a of accounts) {
-      if (a.has_token) repoStates.set(a.id, { status: "loading" });
-      else repoStates.delete(a.id);
+      if (!a.has_token) repoStates.delete(a.id);
+      else if (!repoStates.has(a.id)) repoStates.set(a.id, { status: "loading" });
     }
     renderAll();
-    await Promise.all(accounts.filter((a) => a.has_token).map((a) => fetchRepos(a, gen)));
+    await Promise.all(accounts.filter((a) => a.has_token).map((a) => fetchRepos(a, gen, true)));
+  }
+
+  // ---------- Clonagem ----------
+
+  function destLabel(p: Popover): string {
+    const [owner, name] = p.fullName.split("/");
+    return p.parent ? `${shortenPath(p.parent).replace(/\/$/, "")}/${name}` : `~/GitHub/${owner}/${name}`;
+  }
+
+  async function startClone(p: Popover): Promise<void> {
+    const key = p.key;
+    if (activeClones.has(key)) return;
+    activeClones.set(key, { accountId: p.accountId, fullName: p.fullName, phase: "starting", percent: 0 });
+    popover = null;
+    renderBody();
+    try {
+      const path = await apiCloud.clone(p.accountId, p.fullName, p.parent);
+      clonedKeys.add(key);
+      showToast(`${p.fullName} clonado em ${shortenPath(path)}.`, "ok");
+    } catch (e) {
+      showToast(errMessage(e));
+    } finally {
+      activeClones.delete(key);
+      sink?.render();
+    }
   }
 
   // ---------- Renderização ----------
@@ -119,6 +259,9 @@ export const mount: MountView = (root, ctx) => {
     toolbar.hidden = accounts.length === 0;
     for (const btn of localGroup.querySelectorAll<HTMLButtonElement>("button")) {
       btn.setAttribute("aria-pressed", String(btn.dataset.local === localFilter));
+    }
+    for (const btn of permGroup.querySelectorAll<HTMLButtonElement>("button")) {
+      btn.setAttribute("aria-pressed", String(btn.dataset.perm === permFilter));
     }
     if (accounts.length > 1) {
       profileGroup.hidden = false;
@@ -137,23 +280,83 @@ export const mount: MountView = (root, ctx) => {
     renderBody();
   }
 
-  function repoRow(r: GithubRepoSummary, isLocal: boolean): string {
+  function progressHtml(job: CloneJob): string {
+    const pct = overallPercent(job);
+    const label = PHASE_LABEL[job.phase] ?? "A clonar…";
+    return `<div class="cloud-progress-wrap" data-clone-key="${esc(rowKey(job.accountId, job.fullName))}">
+      <div class="cloud-progress" role="progressbar" aria-label="A clonar ${esc(job.fullName)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+        <span class="cloud-progress-fill" style="width:${pct}%"></span>
+      </div>
+      <span class="cloud-progress-label small muted"><span class="cloud-progress-phase">${esc(label)}</span> · <span class="cloud-progress-pct">${pct}%</span></span>
+    </div>`;
+  }
+
+  function popoverHtml(p: Popover, account: AccountRow): string {
+    return `<div class="cloud-popover" role="dialog" aria-label="Clonar ${esc(p.fullName)}">
+      <div class="field-label">Destino</div>
+      <div class="cloud-dest mono small" title="${esc(destLabel(p))}">${icon("folder", 14)}<span class="truncate">${esc(destLabel(p))}</span></div>
+      <div class="cloud-popover-choose">
+        <button type="button" class="btn" data-pop-choose>${icon("folder")}<span>Escolher pasta…</span></button>
+        ${p.parent ? `<button type="button" class="btn ghost" data-pop-reset>Usar a pasta por omissão</button>` : ""}
+      </div>
+      <p class="muted small cloud-popover-hint">Clona com o perfil ${esc(profileName(account))} e vincula a pasta a este perfil.</p>
+      <div class="cloud-popover-actions">
+        <button type="button" class="btn ghost" data-pop-cancel>Cancelar</button>
+        <button type="button" class="btn primary" data-pop-confirm>${icon("cloud")}<span>Clonar</span></button>
+      </div>
+    </div>`;
+  }
+
+  function repoRow(a: AccountRow, r: CloudRepo, isLocal: boolean): string {
+    const key = rowKey(a.id, r.full_name);
+    const job = activeClones.get(key);
+
     const privateBadge = r.private
       ? `<span class="badge cloud-badge-private">${icon("lock", 12)}Privado</span>`
       : "";
-    const localBadge = isLocal ? `<span class="badge success">${icon("check", 12)}Clone local</span>` : "";
+    const archivedBadge = r.archived
+      ? `<span class="badge warning" title="Repositório arquivado (só leitura)">${ICON_ARCHIVE}Arquivado</span>`
+      : "";
+    const forkBadge = r.fork ? `<span class="badge" title="Fork de outro repositório">${icon("branch", 12)}Fork</span>` : "";
+    const localBadge = isLocal && !job ? `<span class="badge success">${icon("check", 12)}Clone local</span>` : "";
     const branch = r.default_branch
       ? `<span class="cloud-branch mono muted small" title="Ramo por omissão">${icon("branch", 13)}<span class="truncate">${esc(r.default_branch)}</span></span>`
       : "";
     const pushed = r.pushed_at
       ? `<span class="cloud-pushed muted small" title="Último push">${esc(relativeTime(r.pushed_at))}</span>`
       : "";
-    return `<li><a class="list-row cloud-row" href="${esc(r.html_url)}" target="_blank" rel="noopener noreferrer">
-      <span class="cloud-row-name mono truncate">${esc(r.full_name)}</span>
-      <span class="cloud-row-meta">${privateBadge}${localBadge}${branch}</span>
-      ${pushed}
-      <span class="cloud-external muted" aria-label="Abrir no GitHub">${icon("external", 14)}</span>
-    </a></li>`;
+    const desc = r.description
+      ? `<span class="cloud-desc muted small truncate" title="${esc(r.description)}">${esc(r.description)}</span>`
+      : "";
+
+    let action = "";
+    if (job) {
+      action = `<span class="badge cloud-cloning" role="status"><span class="spinner cloud-mini-spinner" aria-hidden="true"></span>A clonar</span>`;
+    } else if (isLocal) {
+      action = `<button type="button" class="btn" data-open-local>${icon("repo")}<span>Abrir</span></button>`;
+    } else {
+      const open = popover?.key === key;
+      action = `<button type="button" class="btn primary" data-clone-open aria-haspopup="dialog" aria-expanded="${open}">${icon("plus")}<span>Clonar</span></button>`;
+    }
+
+    const pop = popover?.key === key && !job && !isLocal ? popoverHtml(popover, a) : "";
+
+    return `<li class="cloud-item" data-key="${esc(key)}" data-account="${esc(a.id)}" data-full="${esc(r.full_name)}">
+      <div class="list-row cloud-row">
+        <div class="cloud-row-main">
+          <span class="cloud-row-name mono truncate" title="${esc(r.full_name)}">${esc(r.full_name)}</span>
+          ${desc}
+        </div>
+        <span class="cloud-row-meta">${permissionBadge(r)}${privateBadge}${archivedBadge}${forkBadge}${localBadge}${branch}</span>
+        ${pushed}
+        <span class="cloud-actions">
+          ${action}
+          <button type="button" class="btn ghost icon-only" data-open-url="${esc(r.html_url)}" aria-label="Abrir ${esc(r.full_name)} no GitHub" title="Abrir no GitHub">${icon("external", 15)}</button>
+        </span>
+        ${job ? progressHtml(job) : ""}
+      </div>
+      ${pop}
+    </li>`;
   }
 
   function sectionHead(a: AccountRow, countText: string, extra = ""): string {
@@ -200,12 +403,13 @@ export const mount: MountView = (root, ctx) => {
     const q = query.trim().toLowerCase();
     const filtered = state.repos.filter((r) => {
       if (q && !r.full_name.toLowerCase().includes(q)) return false;
-      const isLocal = locals.has(r.full_name.toLowerCase());
+      const isLocal = isLocalRepo(a.id, r, locals);
       if (localFilter === "local" && !isLocal) return false;
       if (localFilter === "cloud" && isLocal) return false;
+      if (permFilter === "write" && !canWrite(r)) return false;
       return true;
     });
-    const filtering = q !== "" || localFilter !== "all";
+    const filtering = q !== "" || localFilter !== "all" || permFilter !== "all";
     const total = state.repos.length;
     const countText = filtering
       ? `${filtered.length} de ${total} ${total === 1 ? "repositório" : "repositórios"}`
@@ -220,7 +424,7 @@ export const mount: MountView = (root, ctx) => {
       const showAll = expanded.has(a.id);
       const visible = showAll ? filtered : filtered.slice(0, PAGE_SIZE);
       const more = filtered.length - visible.length;
-      content = `<ul class="list">${visible.map((r) => repoRow(r, locals.has(r.full_name.toLowerCase()))).join("")}</ul>
+      content = `<ul class="list">${visible.map((r) => repoRow(a, r, isLocalRepo(a.id, r, locals))).join("")}</ul>
         ${more > 0 ? `<div class="cloud-more"><button type="button" class="btn" data-more="${esc(a.id)}">Mostrar mais (${more})</button></div>` : ""}`;
     }
     return `<section class="cloud-section" aria-label="${esc(profileName(a))}">
@@ -249,20 +453,47 @@ export const mount: MountView = (root, ctx) => {
     }
     const shown = accounts.filter((a) => profileFilter === "all" || a.id === profileFilter);
     body.innerHTML = shown.map(sectionHtml).join("");
+    if (focusPopover) {
+      focusPopover = false;
+      body.querySelector<HTMLElement>("[data-pop-confirm]")?.focus();
+    }
+  }
+
+  /** Atualiza só as barras de progresso (evita reconstruir a lista a cada percentagem). */
+  function renderProgress(): void {
+    for (const el of body.querySelectorAll<HTMLElement>("[data-clone-key]")) {
+      const job = activeClones.get(el.dataset.cloneKey ?? "");
+      if (!job) continue;
+      const pct = overallPercent(job);
+      el.querySelector<HTMLElement>(".cloud-progress")?.setAttribute("aria-valuenow", String(pct));
+      const fill = el.querySelector<HTMLElement>(".cloud-progress-fill");
+      if (fill) fill.style.width = `${pct}%`;
+      const phase = el.querySelector<HTMLElement>(".cloud-progress-phase");
+      if (phase) phase.textContent = PHASE_LABEL[job.phase] ?? "A clonar…";
+      const pctEl = el.querySelector<HTMLElement>(".cloud-progress-pct");
+      if (pctEl) pctEl.textContent = `${pct}%`;
+    }
   }
 
   // ---------- Eventos ----------
 
-  const onSearch = () => {
+  searchInput.addEventListener("input", () => {
     query = searchInput.value;
     renderBody();
-  };
-  searchInput.addEventListener("input", onSearch);
+  });
 
   localGroup.addEventListener("click", (ev) => {
     const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-local]");
     if (!btn) return;
     localFilter = btn.dataset.local as LocalFilter;
+    renderToolbar();
+    renderBody();
+  });
+
+  permGroup.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-perm]");
+    if (!btn) return;
+    permFilter = btn.dataset.perm as PermFilter;
     renderToolbar();
     renderBody();
   });
@@ -275,11 +506,14 @@ export const mount: MountView = (root, ctx) => {
     renderBody();
   });
 
+  let choosing = false;
+
   body.addEventListener("click", (ev) => {
     const el = ev.target as HTMLElement;
     const action = el.closest<HTMLElement>("[data-action]")?.dataset.action;
     if (action === "accounts") return ctx.navigate("accounts");
     if (action === "reload") return void loadAll();
+
     const retry = el.closest<HTMLElement>("[data-retry]")?.dataset.retry;
     if (retry) {
       const acc = accounts.find((a) => a.id === retry);
@@ -290,15 +524,99 @@ export const mount: MountView = (root, ctx) => {
     if (more) {
       expanded.add(more);
       renderBody();
+      return;
+    }
+
+    const url = el.closest<HTMLElement>("[data-open-url]")?.dataset.openUrl;
+    if (url) {
+      api.openExternal(url).catch((e) => showToast(errMessage(e)));
+      return;
+    }
+    if (el.closest("[data-open-local]")) return ctx.navigate("repos");
+
+    const item = el.closest<HTMLElement>(".cloud-item");
+    const accountId = item?.dataset.account;
+    const fullName = item?.dataset.full;
+    const key = item?.dataset.key;
+
+    if (el.closest("[data-clone-open]") && accountId && fullName && key) {
+      if (popover?.key === key) {
+        popover = null;
+        renderBody();
+      } else {
+        popover = { key, accountId, fullName, parent: null };
+        focusPopover = true;
+        renderBody();
+      }
+      return;
+    }
+    if (el.closest("[data-pop-cancel]")) {
+      popover = null;
+      renderBody();
+      return;
+    }
+    if (el.closest("[data-pop-reset]") && popover) {
+      popover.parent = null;
+      renderBody();
+      return;
+    }
+    const chooseBtn = el.closest<HTMLButtonElement>("[data-pop-choose]");
+    if (chooseBtn && popover && !choosing) {
+      choosing = true;
+      const p = popover;
+      void withBusy(chooseBtn, "A escolher…", () => apiCloud.chooseFolder())
+        .then((folder) => {
+          if (folder && alive && popover === p) p.parent = folder;
+        })
+        .catch((e) => showToast(errMessage(e)))
+        .finally(() => {
+          choosing = false;
+          if (alive && popover === p) {
+            focusPopover = true;
+            renderBody();
+          }
+        });
+      return;
+    }
+    if (el.closest("[data-pop-confirm]") && popover) {
+      void startClone(popover);
     }
   });
 
+  // Fechar o popover: clique fora ou Escape.
+  const onDocClick = (ev: MouseEvent) => {
+    if (!popover) return;
+    const t = ev.target as HTMLElement | null;
+    if (!t || !t.isConnected) return;
+    if (t.closest(".cloud-popover") || t.closest("[data-clone-open]")) return;
+    popover = null;
+    renderBody();
+  };
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === "Escape" && popover) {
+      popover = null;
+      renderBody();
+    }
+  };
+  document.addEventListener("click", onDocClick);
+  document.addEventListener("keydown", onKey);
+
   refreshBtn.addEventListener("click", () => {
-    void withBusy(refreshBtn, "A atualizar…", loadAll).catch((e) => showToast(String(e)));
+    void withBusy(refreshBtn, "A atualizar…", loadAll).catch((e) => showToast(errMessage(e)));
   });
 
   const onDataChanged = () => void loadAll();
   document.addEventListener(DATA_CHANGED_EVENT, onDataChanged);
+
+  sink = {
+    render: () => {
+      if (alive) renderBody();
+    },
+    progress: () => {
+      if (alive) renderProgress();
+    },
+  };
+  ensureProgressListener();
 
   renderBody();
   void loadAll();
@@ -306,6 +624,10 @@ export const mount: MountView = (root, ctx) => {
   return () => {
     alive = false;
     generation++;
+    popover = null;
     document.removeEventListener(DATA_CHANGED_EVENT, onDataChanged);
+    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onKey);
+    sink = null;
   };
 };

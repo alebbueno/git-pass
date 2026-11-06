@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>O GitPass procura repositórios Git na Secretária para os associar à conta GitHub certa.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>O GitPass procura repositórios Git nos Documentos para os associar à conta GitHub certa.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>O GitPass acede a esta pasta apenas quando escolhe um repositório que esteja nela.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>O GitPass usa o seletor de pastas do sistema para escolher repositórios e destinos de clonagem.</string>
+</dict>
+</plist>

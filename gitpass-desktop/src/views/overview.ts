@@ -1,5 +1,6 @@
 import "./overview.css";
 import { api, type AccountRow, type BindingRow } from "../lib/api";
+import { integrationApi, integrationHeadline, onIntegrationChanged, type IntegrationStatus } from "../lib/api-integration";
 import { esc, withBusy, shortenPath } from "../lib/dom";
 import { icon } from "../lib/icons";
 import { profileAvatar, profileChip, profileName } from "../lib/profile";
@@ -13,7 +14,7 @@ type State = {
   oauth: Loadable<boolean>;
   accounts: Loadable<AccountRow[]>;
   bindings: Loadable<BindingRow[]>;
-  daemon: Loadable<boolean>;
+  integration: Loadable<IntegrationStatus>;
 };
 
 const escAttr = esc;
@@ -50,11 +51,11 @@ function renderTiles(s: State): string {
   // OAuth
   let oauth: string;
   if (s.oauth.status === "loading") {
-    oauth = tile("settings", "key", "OAuth", "A verificar…", badge("neutral", "A verificar"));
+    oauth = tile("settings", "key", "GitHub", "A verificar…", badge("neutral", "A verificar"));
   } else if (s.oauth.status === "ok" && s.oauth.value) {
-    oauth = tile("settings", "key", "OAuth", "Cliente GitHub configurado", badge("success", "Pronto", "check"));
+    oauth = tile("settings", "key", "GitHub", "Ligação ao GitHub pronta", badge("success", "Pronta", "check"));
   } else {
-    oauth = tile("settings", "key", "OAuth", "Falta configurar o cliente", badge("error", "Configurar", "x"));
+    oauth = tile("settings", "key", "GitHub", "Esta build não tem o GitHub configurado", badge("error", "Indisponível", "x"));
   }
 
   // Contas
@@ -70,17 +71,19 @@ function renderTiles(s: State): string {
     accounts = tile("accounts", "user", "Contas", plural(n, "conta ligada", "contas ligadas"), badge("success", String(n), "check"));
   }
 
-  // gitpassd
-  let daemon: string;
-  if (s.daemon.status === "loading") {
-    daemon = tile("settings", "activity", "gitpassd", "A verificar…", badge("neutral", "A verificar"));
-  } else if (s.daemon.status === "ok") {
-    daemon = tile("settings", "activity", "gitpassd", "Serviço em execução", badge("success", "Ativo", "check"));
+  // Integração Git
+  let integration: string;
+  if (s.integration.status === "loading") {
+    integration = tile("settings", "activity", "Integração Git", "A verificar…", badge("neutral", "A verificar"));
+  } else if (s.integration.status === "error") {
+    integration = tile("settings", "activity", "Integração Git", "Não foi possível verificar", badge("error", "Erro", "x"));
   } else {
-    daemon = tile("settings", "activity", "gitpassd", "Só necessário para hooks Git", badge("warning", "Parado", "alert"));
+    const h = integrationHeadline(s.integration.value);
+    const sym = h.kind === "success" ? "check" : h.kind === "warning" ? "alert" : "x";
+    integration = tile("settings", "activity", "Integração Git", h.detail, badge(h.kind, h.label, sym));
   }
 
-  return `<div class="overview-tiles">${oauth}${accounts}${daemon}</div>`;
+  return `<div class="overview-tiles">${oauth}${accounts}${integration}</div>`;
 }
 
 function step(n: string, eyebrow: string, title: string, desc: string, done: boolean, next: boolean, view: ViewId): string {
@@ -267,7 +270,7 @@ export const mount: MountView = (root, ctx) => {
     oauth: { status: "loading" },
     accounts: { status: "loading" },
     bindings: { status: "loading" },
-    daemon: { status: "loading" },
+    integration: { status: "loading" },
   };
 
   const draw = (): void => {
@@ -284,21 +287,24 @@ export const mount: MountView = (root, ctx) => {
         oauth: { status: "loading" },
         accounts: { status: "loading" },
         bindings: { status: "loading" },
-        daemon: { status: "loading" },
+        integration: { status: "loading" },
       };
       draw();
     }
 
-    // O ping do daemon pode demorar: atualiza o tile à parte.
-    const ping = api.pingDaemon().then(
-      (): Loadable<boolean> => ({ status: "ok", value: true }),
-      (e): Loadable<boolean> => ({ status: "error", message: msg(e) })
+    // O estado da integração contacta o Git e o daemon: atualiza o tile à parte.
+    void integrationApi.status().then(
+      (value) => {
+        if (disposed || mine !== seq) return;
+        state = { ...state, integration: { status: "ok", value } };
+        draw();
+      },
+      (e) => {
+        if (disposed || mine !== seq) return;
+        state = { ...state, integration: { status: "error", message: msg(e) } };
+        draw();
+      }
     );
-    void ping.then((daemon) => {
-      if (disposed || mine !== seq) return;
-      state = { ...state, daemon };
-      draw();
-    });
 
     const [oauth, accounts, bindings] = await Promise.allSettled([api.oauthStatus(), api.accounts(), api.bindings()]);
     if (disposed || mine !== seq) return;
@@ -324,6 +330,15 @@ export const mount: MountView = (root, ctx) => {
   const onData = (): void => void load(true);
   document.addEventListener(DATA_CHANGED_EVENT, onData);
 
+  let unlistenIntegration: (() => void) | null = null;
+  void onIntegrationChanged((value) => {
+    state = { ...state, integration: { status: "ok", value } };
+    draw();
+  }).then((un) => {
+    if (disposed) un();
+    else unlistenIntegration = un;
+  });
+
   draw();
   void load(false);
 
@@ -331,5 +346,6 @@ export const mount: MountView = (root, ctx) => {
     disposed = true;
     document.removeEventListener(DATA_CHANGED_EVENT, onData);
     body.removeEventListener("click", onClick);
+    unlistenIntegration?.();
   };
 };

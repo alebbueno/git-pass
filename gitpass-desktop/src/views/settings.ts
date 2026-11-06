@@ -1,12 +1,35 @@
 import "./settings.css";
 import { api, type OauthConfigStatus } from "../lib/api";
-import { esc, showToast, withBusy } from "../lib/dom";
+import {
+  integrationApi,
+  onIntegrationChanged,
+  type CheckState,
+  type ComponentStatus,
+  type IntegrationReport,
+  type IntegrationStatus,
+} from "../lib/api-integration";
+import { errMessage, esc, showToast, withBusy } from "../lib/dom";
 import { brandSymbol, icon } from "../lib/icons";
 import { setTheme, storedTheme, type ThemeMode } from "../lib/theme";
 import type { MountView } from "../lib/view";
 
-const START_CMD = "cargo run -p gitpassd --bin gitpassd";
 const THEME_EVENT = "gitpass:theme-changed";
+
+const CHECK_BADGES: Record<CheckState, { cls: string; sym: "check" | "alert" | "x"; label: string }> = {
+  ok: { cls: "success", sym: "check", label: "Ativo" },
+  missing: { cls: "error", sym: "x", label: "Em falta" },
+  outdated: { cls: "warning", sym: "alert", label: "Desatualizado" },
+  conflict: { cls: "warning", sym: "alert", label: "Conflito" },
+  error: { cls: "error", sym: "x", label: "Erro" },
+};
+
+type CheckId = "credentials" | "hooks" | "daemon";
+
+const CHECKS: { id: CheckId; label: string; current: string; previous: string }[] = [
+  { id: "credentials", label: "Credenciais GitHub", current: "Configurado agora", previous: "Substituído (guardado para repor)" },
+  { id: "hooks", label: "Hooks do Git", current: "Hooks globais atuais", previous: "Também corre os hooks em" },
+  { id: "daemon", label: "Daemon gitpassd", current: "Atual", previous: "Anterior" },
+];
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: "monitor" | "sun" | "moon" }[] = [
   { mode: "system", label: "Auto", icon: "monitor" },
@@ -83,48 +106,26 @@ export const mount: MountView = (root) => {
       </section>
 
       <section aria-labelledby="settings-h-oauth">
-        <h2 class="section-label settings-group-label" id="settings-h-oauth">GitHub OAuth</h2>
+        <h2 class="section-label settings-group-label" id="settings-h-oauth">GitHub</h2>
         <div class="panel settings-group">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-label">Estado</div>
-              <div class="settings-row-desc">Necessário para ligar contas GitHub.</div>
+              <div class="settings-row-label">Ligação ao GitHub</div>
+              <div class="settings-row-desc" id="settings-oauth-desc">A verificar…</div>
             </div>
             <div class="settings-row-control" id="settings-oauth-badge"><span class="spinner" role="status" aria-label="A carregar"></span></div>
-          </div>
-          <div class="settings-row settings-row-stack" id="settings-oauth-message" hidden></div>
-          <div class="settings-row settings-row-stack">
-            <div class="settings-row-label">Ficheiro oauth.env</div>
-            <div id="settings-oauth-path"><span class="muted small">A carregar…</span></div>
-          </div>
-          <div class="settings-row settings-row-stack">
-            <p class="settings-note small muted">
-              Só é preciso um <strong>client_id</strong> público. O GitPass usa o Device Flow do GitHub, por isso não há <code>client_secret</code>.
-              Defina-o na compilação com <code>GITPASS_GITHUB_OAUTH_CLIENT_ID</code> ou no ficheiro <code>oauth.env</code> indicado acima.
-            </p>
           </div>
         </div>
       </section>
 
-      <section aria-labelledby="settings-h-daemon">
-        <h2 class="section-label settings-group-label" id="settings-h-daemon">Daemon gitpassd</h2>
-        <div class="panel settings-group">
+      <section aria-labelledby="settings-h-integration">
+        <h2 class="section-label settings-group-label" id="settings-h-integration">Integração com o Git</h2>
+        <div class="panel settings-group" id="settings-integration" aria-live="polite">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-label">Estado</div>
-              <div class="settings-row-desc" id="settings-daemon-detail">A testar…</div>
+              <div class="settings-row-desc">A verificar a integração…</div>
             </div>
-            <div class="settings-row-control settings-row-control-inline">
-              <span id="settings-daemon-badge"><span class="spinner" role="status" aria-label="A testar"></span></span>
-              <button type="button" class="btn" id="settings-daemon-retest">${icon("refresh", 14)}Testar novamente</button>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack" id="settings-daemon-start" hidden>
-            <div class="settings-row-desc">Só é necessário para os hooks Git validarem via daemon. Para o iniciar:</div>
-            <div class="settings-code">
-              <pre class="settings-code-block mono small"><code>${esc(START_CMD)}</code></pre>
-              ${copyButton(START_CMD, "comando")}
-            </div>
+            <span class="spinner" role="status" aria-label="A verificar"></span>
           </div>
         </div>
       </section>
@@ -221,48 +222,131 @@ export const mount: MountView = (root) => {
     }
   });
 
-  // ----- GitHub OAuth -----
-  const renderOauth = (st: OauthConfigStatus) => {
-    $("settings-oauth-badge").innerHTML = st.ok
-      ? `<span class="badge success">${icon("check", 12)}Configurado</span>`
-      : `<span class="badge error">${icon("alert", 12)}Em falta</span>`;
-    const msg = $("settings-oauth-message");
-    msg.hidden = !st.message;
-    msg.innerHTML = st.message ? `<p class="settings-message small">${esc(st.message)}</p>` : "";
-    $("settings-oauth-path").innerHTML = pathBox(st.oauth_env_path, "caminho");
+  // ----- GitHub -----
+  const renderOauth = (st: OauthConfigStatus | null) => {
+    const ready = st?.ok === true;
+    $("settings-oauth-badge").innerHTML = ready
+      ? `<span class="badge success">${icon("check", 12)}Pronta</span>`
+      : `<span class="badge error">${icon("x", 12)}Indisponível</span>`;
+    $("settings-oauth-desc").textContent = ready
+      ? "Ligação ao GitHub pronta."
+      : "Esta build não tem o GitHub configurado.";
   };
   api
     .oauthStatus()
     .then((st) => alive && renderOauth(st))
-    .catch((e) => {
-      if (!alive) return;
-      $("settings-oauth-badge").innerHTML = `<span class="badge error">${icon("alert", 12)}Em falta</span>`;
-      const msg = $("settings-oauth-message");
-      msg.hidden = false;
-      msg.innerHTML = `<p class="settings-message small">${esc(String(e))}</p>`;
-      $("settings-oauth-path").innerHTML = `<span class="muted small">Indisponível.</span>`;
-    });
+    .catch(() => alive && renderOauth(null));
 
-  // ----- Daemon -----
-  const retest = $<HTMLButtonElement>("settings-daemon-retest");
-  const testDaemon = async () => {
+  // ----- Integração com o Git -----
+  const intPanel = $("settings-integration");
+  let intStatus: IntegrationStatus | null = null;
+  let intError: string | null = null;
+  let intBusy = false;
+
+  const renderIntegration = () => {
+    if (!alive) return;
+    intPanel.setAttribute("aria-busy", String(intBusy));
+    if (!intStatus) {
+      intPanel.innerHTML = `
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <div class="settings-row-label">Não foi possível verificar a integração</div>
+            <div class="settings-row-desc">${esc(intError ?? "Erro desconhecido.")}</div>
+          </div>
+          <button type="button" class="btn" data-int="refresh">${icon("refresh", 14)}Tentar novamente</button>
+        </div>`;
+      return;
+    }
+    intPanel.innerHTML = renderIntegrationBody(intStatus, intBusy);
+  };
+
+  const loadIntegration = async () => {
     try {
-      const msg = await api.pingDaemon();
-      if (!alive) return;
-      $("settings-daemon-badge").innerHTML = `<span class="badge success">${icon("check", 12)}Ativo</span>`;
-      $("settings-daemon-detail").textContent = msg;
-      $("settings-daemon-start").hidden = true;
-    } catch {
-      if (!alive) return;
-      $("settings-daemon-badge").innerHTML = `<span class="badge warning">${icon("alert", 12)}Parado</span>`;
-      $("settings-daemon-detail").textContent = "Só é necessário para os hooks Git validarem via daemon.";
-      $("settings-daemon-start").hidden = false;
+      intStatus = await integrationApi.status();
+      intError = null;
+    } catch (e) {
+      intError = errMessage(e);
+    }
+    renderIntegration();
+  };
+
+  const reportResult = (r: IntegrationReport, okMessage: string) => {
+    if (r.warnings.length) showToast(r.warnings.join("\n"));
+    else showToast(r.changes.length ? `${okMessage}\n${r.changes.join("\n")}` : "Tudo em ordem, nada a alterar.", "ok");
+  };
+
+  const runIntegration = async (btn: HTMLButtonElement, busyLabel: string, task: () => Promise<void>) => {
+    if (intBusy) return;
+    intBusy = true;
+    for (const b of intPanel.querySelectorAll<HTMLButtonElement>("[data-int]")) b.disabled = true;
+    try {
+      await withBusy(btn, busyLabel, task);
+    } catch (e) {
+      showToast(errMessage(e));
+    } finally {
+      intBusy = false;
+      await loadIntegration();
     }
   };
-  void testDaemon();
-  retest.addEventListener("click", () => {
-    void withBusy(retest, "A testar…", testDaemon);
+
+  const onIntegrationClick = (ev: MouseEvent) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-int]");
+    if (!btn || btn.disabled) return;
+    const action = btn.dataset.int;
+    if (action === "refresh") {
+      void withBusy(btn, "A verificar…", loadIntegration);
+    } else if (action === "repair") {
+      void runIntegration(btn, "A reparar…", async () => {
+        reportResult(await integrationApi.apply(false), "Integração reparada.");
+      });
+    } else if (action === "chain-hooks") {
+      void (async () => {
+        const path = intStatus?.hooks.current_value ?? "";
+        const ok = await confirmDialog(btn, {
+          title: "Encadear os teus hooks?",
+          body: `O Git passa a usar os hooks do GitPass, que validam a conta e depois correm os teus hooks em ${path}. Podes repor a configuração anterior com Desfazer integração.`,
+          confirm: "Encadear hooks",
+        });
+        if (ok) {
+          await runIntegration(btn, "A aplicar…", async () => {
+            reportResult(await integrationApi.apply(true), "Hooks encadeados.");
+          });
+        }
+      })();
+    } else if (action === "daemon-restart") {
+      void runIntegration(btn, "A reiniciar…", async () => {
+        await integrationApi.daemonRestart();
+        showToast("Daemon reiniciado.", "ok");
+      });
+    } else if (action === "undo") {
+      void (async () => {
+        const ok = await confirmDialog(btn, {
+          title: "Desfazer a integração com o Git?",
+          body: "O GitPass deixa de fornecer as credenciais do GitHub e de validar commits e pushes. A configuração do Git que tinhas antes é reposta e o daemon é removido. As contas e os vínculos ficam guardados e podes voltar a ativar quando quiseres.",
+          confirm: "Desfazer integração",
+          danger: true,
+        });
+        if (ok) {
+          await runIntegration(btn, "A desfazer…", async () => {
+            reportResult(await integrationApi.undo(), "Integração desfeita.");
+          });
+        }
+      })();
+    }
+  };
+  intPanel.addEventListener("click", onIntegrationClick);
+
+  let unlistenIntegration: (() => void) | null = null;
+  void onIntegrationChanged((st) => {
+    if (intBusy) return;
+    intStatus = st;
+    intError = null;
+    renderIntegration();
+  }).then((un) => {
+    if (alive) unlistenIntegration = un;
+    else un();
   });
+  void loadIntegration();
 
   // ----- Dados e segurança -----
   api
@@ -289,5 +373,114 @@ export const mount: MountView = (root) => {
   return () => {
     alive = false;
     document.removeEventListener(THEME_EVENT, syncTheme);
+    intPanel.removeEventListener("click", onIntegrationClick);
+    unlistenIntegration?.();
   };
 };
+
+// ----- Integração: renderização -----
+
+function checkBadge(state: CheckState): string {
+  const b = CHECK_BADGES[state];
+  return `<span class="badge ${b.cls}">${icon(b.sym, 12)}${b.label}</span>`;
+}
+
+function checkValue(label: string, value: string | null): string {
+  if (!value) return "";
+  return `<div class="settings-check-value small"><span class="muted">${esc(label)}:</span> <span class="mono">${esc(value)}</span></div>`;
+}
+
+function checkRow(id: CheckId, c: ComponentStatus, s: IntegrationStatus, busy: boolean): string {
+  const def = CHECKS.find((x) => x.id === id)!;
+  const dis = busy ? " disabled" : "";
+  let action = "";
+  if (id === "hooks" && c.state === "conflict") {
+    action = `<button type="button" class="btn" data-int="chain-hooks"${dis}>Encadear hooks</button>`;
+  } else if (id === "daemon" && s.enabled && c.state !== "missing" && s.binaries.state !== "error") {
+    action = `<button type="button" class="btn ghost" data-int="daemon-restart"${dis}>${icon("refresh", 14)}Reiniciar</button>`;
+  }
+  return `
+    <div class="settings-row settings-check" role="group" aria-label="${esc(def.label)}">
+      <div class="settings-row-text">
+        <div class="settings-row-label">${esc(def.label)}</div>
+        <div class="settings-row-desc">${esc(c.summary)}</div>
+        ${checkValue(def.current, c.current_value)}
+        ${checkValue(def.previous, c.previous_value)}
+      </div>
+      <div class="settings-row-control settings-row-control-inline">${action}${checkBadge(c.state)}</div>
+    </div>`;
+}
+
+function renderIntegrationBody(s: IntegrationStatus, busy: boolean): string {
+  const dis = busy ? " disabled" : "";
+  const callouts: string[] = [];
+  if (!s.enabled) {
+    callouts.push(
+      `<div class="callout warning">${icon("alert", 16)}<span>A integração está desativada: o Git funciona como antes de instalares o GitPass. Ativa-a para voltar a usar a conta certa em cada repositório.</span></div>`
+    );
+  }
+  if (!s.git_found) {
+    callouts.push(`<div class="callout error">${icon("x", 16)}<span>${esc(s.credentials.summary)}</span></div>`);
+  } else if (s.binaries.state === "error") {
+    callouts.push(`<div class="callout error">${icon("x", 16)}<span>${esc(s.binaries.summary)}</span></div>`);
+  }
+  const intro = s.ready
+    ? "O Git usa automaticamente a conta vinculada a cada repositório."
+    : "O GitPass configura o Git sozinho ao abrir. Se algo mudar, escolhe Reparar.";
+  return `
+    ${callouts.length ? `<div class="settings-row settings-row-stack">${callouts.join("")}</div>` : ""}
+    ${checkRow("credentials", s.credentials, s, busy)}
+    ${checkRow("hooks", s.hooks, s, busy)}
+    ${checkRow("daemon", s.daemon, s, busy)}
+    <div class="settings-row settings-int-actions">
+      <div class="settings-row-desc">${esc(intro)}</div>
+      <div class="settings-row-control settings-row-control-inline">
+        ${s.enabled ? `<button type="button" class="btn ghost settings-int-undo" data-int="undo"${dis}>Desfazer integração</button>` : ""}
+        <button type="button" class="btn${s.ready && s.enabled ? "" : " primary"}" data-int="repair"${dis}>${icon("refresh", 14)}${s.enabled ? "Reparar" : "Ativar integração"}</button>
+      </div>
+    </div>`;
+}
+
+// ----- Diálogo de confirmação -----
+
+type ConfirmOptions = { title: string; body: string; confirm: string; danger?: boolean };
+
+function confirmDialog(opener: HTMLElement, o: ConfirmOptions): Promise<boolean> {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="modal settings-dialog" role="alertdialog" aria-modal="true" aria-labelledby="settings-dialog-title" aria-describedby="settings-dialog-body">
+        <h2 class="settings-dialog-title" id="settings-dialog-title">${esc(o.title)}</h2>
+        <p class="settings-dialog-body" id="settings-dialog-body">${esc(o.body)}</p>
+        <div class="settings-dialog-actions">
+          <button type="button" class="btn" data-dialog="cancel">Cancelar</button>
+          <button type="button" class="btn ${o.danger ? "settings-btn-danger" : "primary"}" data-dialog="confirm">${esc(o.confirm)}</button>
+        </div>
+      </div>`;
+    const buttons = [...backdrop.querySelectorAll<HTMLButtonElement>("[data-dialog]")];
+    const close = (result: boolean) => {
+      backdrop.remove();
+      if (opener.isConnected) opener.focus();
+      resolve(result);
+    };
+    backdrop.addEventListener("click", (ev) => {
+      const t = ev.target as HTMLElement;
+      if (t === backdrop) return close(false);
+      const b = t.closest<HTMLButtonElement>("[data-dialog]");
+      if (b) close(b.dataset.dialog === "confirm");
+    });
+    backdrop.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        close(false);
+      } else if (ev.key === "Tab") {
+        ev.preventDefault();
+        const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        buttons[(i + (ev.shiftKey ? buttons.length - 1 : 1)) % buttons.length].focus();
+      }
+    });
+    document.body.appendChild(backdrop);
+    buttons[0].focus();
+  });
+}

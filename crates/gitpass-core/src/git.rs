@@ -51,6 +51,9 @@ pub fn git_log_lines(root: &Path, limit: usize) -> Result<Vec<String>, String> {
         .map_err(|e| format!("git log: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("does not have any commits yet") {
+            return Ok(Vec::new());
+        }
         return Err(format!("git log failed ({})", err.trim()));
     }
     let s = String::from_utf8_lossy(&out.stdout);
