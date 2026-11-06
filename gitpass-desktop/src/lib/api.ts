@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/** Resposta de `accounts_list` (campos usados pelo shell e pelas vistas); `AccountInfo` em api-accounts.ts tem o tipo completo. */
 export type AccountRow = {
   id: string;
   login: string | null;
@@ -20,15 +21,6 @@ export type BindingRow = {
   github_repo: string | null;
 };
 
-export type GithubRepoSummary = {
-  full_name: string;
-  name: string;
-  private: boolean;
-  html_url: string;
-  pushed_at: string | null;
-  default_branch: string | null;
-};
-
 export type OauthConfigStatus = {
   ok: boolean;
   message: string;
@@ -44,11 +36,6 @@ export type DeviceCodeStart = {
   interval_secs: number;
   expires_in_secs: number;
 };
-
-export type DevicePollUi =
-  | { status: "pending" }
-  | { status: "slow_down"; interval_secs: number }
-  | { status: "done"; message: string };
 
 export const api = {
   configPath: () => invoke<string>("get_config_path"),

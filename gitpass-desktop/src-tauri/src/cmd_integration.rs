@@ -79,3 +79,48 @@ pub fn spawn_autostart(app: AppHandle) {
         notify(&app, &status);
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract_tests::{expect, keys};
+    use gitpass_core::integration::{CheckState, ComponentStatus};
+
+    fn component() -> ComponentStatus {
+        ComponentStatus {
+            state: CheckState::Ok,
+            summary: String::new(),
+            current_value: None,
+            previous_value: None,
+        }
+    }
+
+    /// api-integration.ts: ComponentStatus, IntegrationStatus, IntegrationReport, CheckState.
+    #[test]
+    fn response_keys_match_typescript() {
+        assert_eq!(keys(&component()), expect(&["state", "summary", "current_value", "previous_value"]));
+        let status = IntegrationStatus {
+            enabled: true,
+            git_found: true,
+            binaries: component(),
+            credentials: component(),
+            hooks: component(),
+            daemon: component(),
+            has_backup: false,
+            ready: true,
+        };
+        assert_eq!(
+            keys(&status),
+            expect(&["enabled", "git_found", "binaries", "credentials", "hooks", "daemon", "has_backup", "ready"])
+        );
+        assert_eq!(
+            keys(&IntegrationReport { status, changes: vec![], warnings: vec![] }),
+            expect(&["status", "changes", "warnings"])
+        );
+        let states: Vec<_> = [CheckState::Ok, CheckState::Missing, CheckState::Outdated, CheckState::Conflict, CheckState::Error]
+            .iter()
+            .map(|s| serde_json::to_value(s).unwrap())
+            .collect();
+        assert_eq!(states, ["ok", "missing", "outdated", "conflict", "error"]);
+    }
+}

@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 const CONFIG_CHANGED_EVENT: &str = "gitpass-config-changed";
 const OAUTH_UNAVAILABLE: &str = "A ligação ao GitHub não está disponível nesta versão da app.";
+/// accounts.ts matches the substring «contactar o GitHub» to keep polling through transient network errors.
 const NETWORK_ERROR: &str =
     "Não foi possível contactar o GitHub. Verifique a ligação à Internet e tente novamente.";
 const LABEL_MAX_CHARS: usize = 64;
@@ -657,4 +658,86 @@ pub async fn accounts_check(account_id: String) -> Result<AccountCheck, String> 
         }
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract_tests::{expect, keys};
+
+    fn info() -> AccountInfo {
+        AccountInfo {
+            id: String::new(),
+            login: None,
+            label: None,
+            name: None,
+            email: None,
+            avatar_url: None,
+            auth: String::new(),
+            has_token: false,
+            token_ok: None,
+            scopes: vec![],
+            missing_scopes: vec![],
+            repos_count: 0,
+        }
+    }
+
+    /// api-accounts.ts: AccountInfo, AccountDevicePoll, AccountCheck, EmailOption, AccountEmails, IdentityUpdate.
+    #[test]
+    fn response_keys_match_typescript() {
+        assert_eq!(
+            keys(&info()),
+            expect(&[
+                "id", "login", "label", "name", "email", "avatar_url", "auth", "has_token", "token_ok", "scopes",
+                "missing_scopes", "repos_count"
+            ])
+        );
+        assert_eq!(
+            keys(&AccountCheck {
+                account_id: String::new(),
+                state: TokenState::Ok,
+                scopes: vec![],
+                missing_scopes: vec![],
+                needs_reconnect: false,
+                message: String::new(),
+            }),
+            expect(&["account_id", "state", "scopes", "missing_scopes", "needs_reconnect", "message"])
+        );
+        assert_eq!(
+            keys(&EmailOption { email: String::new(), primary: false, noreply: false, selected: false }),
+            expect(&["email", "primary", "noreply", "selected"])
+        );
+        assert_eq!(
+            keys(&AccountEmails { emails: vec![], current: None, needs_reconnect: false }),
+            expect(&["emails", "current", "needs_reconnect"])
+        );
+        assert_eq!(
+            keys(&IdentityUpdate { account: info(), repos_updated: 0, repos_failed: vec![] }),
+            expect(&["account", "repos_updated", "repos_failed"])
+        );
+        assert_eq!(keys(&RemoveResult { removed_bindings: 0 }), expect(&["removed_bindings"]));
+    }
+
+    #[test]
+    fn device_poll_variants_match_typescript() {
+        assert_eq!(keys(&DevicePollResult::Pending), expect(&["status"]));
+        assert_eq!(keys(&DevicePollResult::SlowDown { interval_secs: 10 }), expect(&["status", "interval_secs"]));
+        let done = DevicePollResult::Done {
+            message: String::new(),
+            account_id: String::new(),
+            login: String::new(),
+            reconnected: false,
+            warning: None,
+        };
+        assert_eq!(keys(&done), expect(&["status", "message", "account_id", "login", "reconnected", "warning"]));
+        assert_eq!(serde_json::to_value(&done).unwrap()["status"], "done");
+        assert_eq!(serde_json::to_value(&DevicePollResult::SlowDown { interval_secs: 1 }).unwrap()["status"], "slow_down");
+    }
+
+    #[test]
+    fn token_states_match_typescript() {
+        let all = [TokenState::Ok, TokenState::Revoked, TokenState::Missing, TokenState::Offline, TokenState::Error];
+        let json: Vec<_> = all.iter().map(|s| serde_json::to_value(s).unwrap()).collect();
+        assert_eq!(json, ["ok", "revoked", "missing", "offline", "error"]);
+    }
 }

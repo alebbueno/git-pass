@@ -200,8 +200,12 @@ export const mount: MountView = (root, ctx) => {
     renderBody();
   }
 
-  /** Carrega contas e vínculos; as listas já carregadas ficam visíveis enquanto atualizam. */
-  async function loadAll(): Promise<void> {
+  /**
+   * Carrega contas e vínculos; as listas já carregadas ficam visíveis enquanto atualizam.
+   * `refetch = false` (mudanças de configuração) só vai ao GitHub por contas sem lista válida: os vínculos
+   * novos chegam por `api.bindings()` e `clonedKeys`, sem repetir centenas de pedidos à API.
+   */
+  async function loadAll(refetch = true): Promise<void> {
     const gen = ++generation;
     try {
       const [accs, binds] = await Promise.all([api.accounts(), api.bindings()]);
@@ -225,7 +229,8 @@ export const mount: MountView = (root, ctx) => {
       else if (!repoStates.has(a.id)) repoStates.set(a.id, { status: "loading" });
     }
     renderAll();
-    await Promise.all(accounts.filter((a) => a.has_token).map((a) => fetchRepos(a, gen, true)));
+    const toFetch = accounts.filter((a) => a.has_token && (refetch || repoStates.get(a.id)?.status !== "ok"));
+    await Promise.all(toFetch.map((a) => fetchRepos(a, gen, true)));
   }
 
   // ---------- Clonagem ----------
@@ -605,7 +610,7 @@ export const mount: MountView = (root, ctx) => {
     void withBusy(refreshBtn, "A atualizar…", loadAll).catch((e) => showToast(errMessage(e)));
   });
 
-  const onDataChanged = () => void loadAll();
+  const onDataChanged = () => void loadAll(false);
   document.addEventListener(DATA_CHANGED_EVENT, onDataChanged);
 
   sink = {

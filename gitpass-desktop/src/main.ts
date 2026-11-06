@@ -4,7 +4,7 @@ import logoLightUrl from "./assets/branding/RepoID-logo-fundo-claro.svg";
 import logoDarkUrl from "./assets/branding/RepoID-logo-fundo-escuro.svg";
 import { api } from "./lib/api";
 import { integrationApi, integrationHeadline, onIntegrationChanged, type IntegrationStatus } from "./lib/api-integration";
-import { esc, showToast } from "./lib/dom";
+import { errMessage, esc, showToast } from "./lib/dom";
 import { brandSymbol, icon, type IconName } from "./lib/icons";
 import { profileChip } from "./lib/profile";
 import { initTheme } from "./lib/theme";
@@ -64,9 +64,19 @@ const sidebarProfiles = document.getElementById("sidebar-profiles")!;
 let current: ViewId | null = null;
 let cleanup: (() => void) | void;
 
+/**
+ * Uma mutação costuma avisar duas vezes (a vista chama `notifyDataChanged` e o backend emite
+ * `gitpass-config-changed`); juntamos os avisos próximos para as vistas não recarregarem em duplicado.
+ */
+let dataChangedTimer: number | undefined;
+function notifyDataChanged(): void {
+  window.clearTimeout(dataChangedTimer);
+  dataChangedTimer = window.setTimeout(() => document.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT)), 120);
+}
+
 const ctx: ViewContext = {
   navigate,
-  notifyDataChanged: () => document.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT)),
+  notifyDataChanged,
 };
 
 function navigate(view: ViewId): void {
@@ -96,19 +106,23 @@ document.addEventListener("click", (ev) => {
   const a = (ev.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
   if (!a || !/^https?:\/\//.test(a.href)) return;
   ev.preventDefault();
-  api.openExternal(a.href).catch((e) => showToast(String(e), "err"));
+  api.openExternal(a.href).catch((e) => showToast(errMessage(e), "err"));
 });
 
+let sidebarSeq = 0;
 async function refreshSidebar(): Promise<void> {
+  const seq = ++sidebarSeq;
   try {
     const [accounts, bindings] = await Promise.all([api.accounts(), api.bindings()]);
+    if (seq !== sidebarSeq) return;
     setCount("repos", bindings.length);
     setCount("accounts", accounts.length);
     sidebarProfiles.innerHTML = accounts.length
       ? accounts.map((a) => `<div class="sidebar-profile">${profileChip(a)}</div>`).join("")
       : `<p class="muted small">Nenhum perfil ligado.</p>`;
   } catch (e) {
-    sidebarProfiles.innerHTML = `<p class="err small">${esc(String(e))}</p>`;
+    if (seq !== sidebarSeq) return;
+    sidebarProfiles.innerHTML = `<p class="err small">${esc(errMessage(e))}</p>`;
   }
 }
 
@@ -134,7 +148,7 @@ async function refreshDaemon(): Promise<void> {
 }
 
 document.addEventListener(DATA_CHANGED_EVENT, () => void refreshSidebar());
-void listen("gitpass-config-changed", () => ctx.notifyDataChanged());
+void listen("gitpass-config-changed", () => ctx.notifyDataChanged()).catch(() => {});
 void onIntegrationChanged(renderIntegration);
 
 const initial = location.hash.replace("#", "") as ViewId;
@@ -142,3 +156,6 @@ navigate(VIEWS.some((v) => v.id === initial) ? initial : "overview");
 void refreshSidebar();
 void refreshDaemon();
 window.setInterval(() => void refreshDaemon(), 30_000);
+/* A instalação automática da integração corre no arranque e pode terminar antes de o WebView ouvir
+   `gitpass-integration-changed`; estas verificações extra evitam mostrar «Reparar» durante 30 s. */
+for (const ms of [3_000, 8_000]) window.setTimeout(() => void refreshDaemon(), ms);
