@@ -1,0 +1,338 @@
+/* Estilos da tela Definições */
+
+.settings-page {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-2);
+  padding-bottom: var(--rid-space-5);
+}
+
+.settings-group-label {
+  margin-top: var(--rid-space-4);
+  padding-left: var(--rid-space-1);
+}
+
+.settings-page > section:first-child .settings-group-label {
+  margin-top: 0;
+}
+
+/* Grupo: painel opaco com linhas separadas */
+.settings-group {
+  padding: 0 var(--rid-space-5);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-4);
+  min-height: 56px;
+  padding: var(--rid-space-3) 0;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid var(--rid-separator);
+}
+
+.settings-row[hidden] {
+  display: none;
+}
+
+.settings-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--rid-space-2);
+}
+
+.settings-row-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-row-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.settings-row-desc {
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  color: var(--rid-muted-text);
+}
+
+.settings-row-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.settings-row-control-inline {
+  gap: var(--rid-space-3);
+}
+
+.settings-row-stack .settings-row-desc {
+  margin-top: 0;
+}
+
+.settings-note {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.settings-message {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-row-control .segmented button {
+  min-height: 32px;
+}
+
+/* Caminhos e comandos */
+.settings-path,
+.settings-code {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-2);
+  padding: var(--rid-space-1) var(--rid-space-1) var(--rid-space-1) var(--rid-space-3);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-canvas);
+}
+
+.settings-path-text {
+  flex: 1;
+  min-width: 0;
+  padding: var(--rid-space-1) 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-code-block {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: var(--rid-space-2) 0;
+  overflow-x: auto;
+  user-select: text;
+}
+
+.settings-code-block code {
+  padding: 0;
+  background: transparent;
+  color: var(--rid-text);
+  font-size: inherit;
+}
+
+.settings-copy {
+  flex-shrink: 0;
+}
+
+.settings-copy.settings-copied {
+  color: var(--rid-feedback-success-foreground);
+}
+
+/* Keychain */
+.settings-keychain {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rid-space-3);
+}
+
+.settings-keychain-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-selection);
+  color: var(--rid-accent);
+}
+
+.settings-keychain-body {
+  min-width: 0;
+}
+
+.settings-keychain-body .settings-note {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* Sobre */
+.settings-about {
+  justify-content: flex-start;
+}
+
+.settings-about-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--rid-radius-md);
+  background: var(--rid-selection);
+  color: var(--rid-accent);
+}
+
+.settings-about-mark svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* Pré-visualizações de tema */
+.settings-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--rid-space-4);
+}
+
+.settings-preview-btn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-2);
+  min-height: 32px;
+  padding: var(--rid-space-2);
+  border: 2px solid transparent;
+  border-radius: var(--rid-radius-md);
+  background: transparent;
+  color: var(--rid-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s var(--rid-ease), background 0.16s var(--rid-ease);
+}
+
+.settings-preview-btn:hover {
+  background: color-mix(in srgb, var(--rid-selection) 50%, transparent);
+}
+
+.settings-preview-btn[aria-pressed="true"] {
+  border-color: var(--rid-accent);
+  background: var(--rid-selection);
+}
+
+.settings-preview-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.settings-preview-btn[aria-pressed="true"] .settings-preview-caption {
+  color: var(--rid-on-selection);
+}
+
+.settings-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-2);
+  padding: var(--rid-space-3);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-canvas);
+  color: var(--rid-text);
+  pointer-events: none;
+}
+
+/* Valores fixos copiados de repoid-tokens.css para cada tema */
+.settings-preview-light {
+  --rid-canvas: #F3F5FC;
+  --rid-surface: #FFFFFF;
+  --rid-text: #13182B;
+  --rid-muted-text: #4F5870;
+  --rid-separator: #D9DFEE;
+  --rid-accent: #5545D6;
+  --rid-selection: #EEEAFE;
+  --rid-material-tint: #FFFFFFBD;
+  --rid-account-iris-background: #EDE8FF;
+  --rid-account-iris-foreground: #4931A3;
+  --rid-account-aqua-background: #DAF5FA;
+  --rid-account-aqua-foreground: #005A6A;
+}
+
+.settings-preview-dark {
+  --rid-canvas: #0D1123;
+  --rid-surface: #171D34;
+  --rid-text: #F3F5FF;
+  --rid-muted-text: #AAB5CF;
+  --rid-separator: #303A56;
+  --rid-accent: #B3A5FF;
+  --rid-selection: #2B2451;
+  --rid-material-tint: #253051B8;
+  --rid-account-iris-background: #33265A;
+  --rid-account-iris-foreground: #D9CCFF;
+  --rid-account-aqua-background: #133841;
+  --rid-account-aqua-foreground: #9BE8F4;
+}
+
+.settings-preview-header {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-2);
+  margin: calc(-1 * var(--rid-space-1)) calc(-1 * var(--rid-space-2)) 0;
+  padding: var(--rid-space-1) var(--rid-space-2);
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-material-tint);
+  border: 1px solid var(--rid-separator);
+}
+
+.settings-preview-mark {
+  display: grid;
+  place-items: center;
+  color: var(--rid-accent);
+}
+
+.settings-preview-mark svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-preview-brand {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.settings-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-2);
+  padding: var(--rid-space-2) var(--rid-space-3);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-surface);
+}
+
+.settings-preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.settings-preview .profile-chip {
+  font-size: 0.6875rem;
+  padding: 2px 8px 2px 2px;
+}
+
+.settings-preview .profile-chip-initials {
+  width: 16px;
+  height: 16px;
+  font-size: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .settings-row {
+    flex-wrap: wrap;
+  }
+  .settings-previews {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,316 @@
+/* Estilos da tela Repositórios */
+
+
+.repos-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 2fr) minmax(0, 3fr);
+  gap: var(--rid-space-5);
+  align-items: start;
+}
+
+/* ---------- Lista ---------- */
+
+.repos-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-3);
+  min-width: 0;
+}
+
+.repos-search {
+  position: relative;
+  display: block;
+}
+
+.repos-search .icon {
+  position: absolute;
+  left: var(--rid-space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--rid-muted-text);
+  pointer-events: none;
+}
+
+.repos-search .input {
+  padding-left: calc(var(--rid-space-3) + 24px);
+}
+
+.repos-row {
+  cursor: pointer;
+  justify-content: space-between;
+  min-height: 56px;
+}
+
+.repos-row:hover {
+  border-color: var(--rid-control-outline);
+}
+
+.repos-row[aria-selected="true"]:hover {
+  border-color: var(--rid-accent);
+}
+
+.repos-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.repos-row-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.repos-row-path {
+  font-size: 0.75rem;
+}
+
+.repos-row[aria-selected="true"] .repos-row-path {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.repos-row .profile-chip {
+  flex-shrink: 0;
+  max-width: 45%;
+}
+
+.repos-no-results {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-2);
+  padding: var(--rid-space-4);
+}
+
+.repos-skeleton-row {
+  height: 56px;
+}
+
+.repos-skeleton-title {
+  height: 28px;
+  width: 60%;
+}
+
+/* ---------- Detalhe ---------- */
+
+.repos-detail {
+  min-width: 0;
+  position: sticky;
+  top: 112px;
+}
+
+.repos-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--rid-space-3);
+  padding-bottom: var(--rid-space-4);
+  border-bottom: 1px solid var(--rid-separator);
+}
+
+.repos-detail-title {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-3);
+  min-width: 0;
+}
+
+.repos-detail-title .panel-title {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.repos-detail-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-selection);
+  color: var(--rid-accent);
+}
+
+.repos-meta {
+  display: grid;
+  gap: var(--rid-space-4);
+  margin: var(--rid-space-4) 0 0;
+}
+
+.repos-meta-item dd {
+  margin: 0;
+}
+
+.repos-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-2);
+}
+
+.repos-path {
+  flex: 1;
+  min-width: 0;
+  padding: var(--rid-space-2) var(--rid-space-3);
+  font-size: 0.8125rem;
+  background: var(--rid-canvas);
+  color: var(--rid-text);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-sm);
+  word-break: break-all;
+}
+
+.repos-gh-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 0.8125rem;
+  color: var(--rid-accent);
+  text-decoration: none;
+  border-radius: 6px;
+  transition: opacity 0.16s var(--rid-ease);
+}
+
+.repos-gh-link:hover {
+  text-decoration: underline;
+}
+
+.repos-log-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--rid-space-5);
+}
+
+.repos-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-2);
+}
+
+.repos-skeleton-commit {
+  height: 20px;
+  border-radius: 6px;
+}
+
+.repos-log-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-2);
+  margin: 0;
+}
+
+.repos-commits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 440px;
+  overflow-y: auto;
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-md);
+}
+
+.repos-commit {
+  display: flex;
+  align-items: baseline;
+  gap: var(--rid-space-3);
+  min-height: 32px;
+  padding: 6px var(--rid-space-3);
+  font-size: 0.8125rem;
+  border-bottom: 1px solid var(--rid-separator);
+}
+
+.repos-commit:last-child {
+  border-bottom: 0;
+}
+
+.repos-hash {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--rid-accent);
+}
+
+.repos-msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Seletor de conta (vidro: seletor de perfis) ---------- */
+
+.repos-menu-host {
+  position: relative;
+}
+
+.empty-state .repos-menu-host .repos-menu {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
+
+.repos-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--rid-z-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  max-width: 320px;
+  padding: var(--rid-space-2);
+  border-radius: var(--rid-radius-md);
+  box-shadow: var(--rid-shadow-elevated);
+  text-align: left;
+  animation: repos-pop 0.18s var(--rid-ease);
+}
+
+.repos-menu-title {
+  margin: 2px var(--rid-space-2) var(--rid-space-1);
+}
+
+.repos-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-2);
+  min-height: 36px;
+  padding: 4px var(--rid-space-2);
+  border: 0;
+  border-radius: var(--rid-radius-sm);
+  background: transparent;
+  color: var(--rid-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.16s var(--rid-ease);
+}
+
+.repos-menu-item:hover,
+.repos-menu-item:focus-visible {
+  background: var(--rid-selection);
+  color: var(--rid-on-selection);
+}
+
+@keyframes repos-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.empty-state .repos-menu {
+  animation-name: none;
+}
+
+/* ---------- Responsivo ---------- */
+
+@media (max-width: 1000px) {
+  .repos-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .repos-detail {
+    position: static;
+  }
+}

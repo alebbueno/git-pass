@@ -1,0 +1,201 @@
+/* Estilos da tela Na cloud */
+
+.cloud-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rid-space-3);
+  margin-bottom: var(--rid-space-4);
+}
+
+.cloud-toolbar[hidden],
+.cloud-toolbar .segmented[hidden] {
+  display: none;
+}
+
+.cloud-search {
+  position: relative;
+  display: block;
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.cloud-search .input {
+  padding-left: calc(var(--rid-space-3) + 22px);
+}
+
+.cloud-search-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--rid-space-3);
+  display: grid;
+  transform: translateY(-50%);
+  color: var(--rid-muted-text);
+  pointer-events: none;
+}
+
+.cloud-toolbar .segmented {
+  flex-wrap: wrap;
+}
+
+.cloud-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-6);
+}
+
+.cloud-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-3);
+}
+
+.cloud-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rid-space-3);
+}
+
+.cloud-count {
+  margin-left: auto;
+}
+
+.cloud-head-spinner {
+  color: var(--rid-muted-text);
+}
+
+.cloud-section-head .badge {
+  margin-left: auto;
+}
+
+.cloud-skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-2);
+}
+
+.cloud-skeleton-row {
+  height: 48px;
+}
+
+.cloud-notoken {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-3);
+  padding: var(--rid-space-3) var(--rid-space-4);
+  border: 1px dashed var(--rid-separator);
+  border-radius: var(--rid-radius-md);
+  background: var(--rid-surface);
+}
+
+.cloud-notoken p {
+  margin: 0;
+}
+
+.cloud-error-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cloud-error-msg {
+  margin-top: var(--rid-space-1);
+  font-family: var(--rid-font-code);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.callout.error > .btn {
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.cloud-empty {
+  margin: 0;
+  padding: var(--rid-space-2) var(--rid-space-1);
+}
+
+/* Linhas de repositório */
+
+.cloud-row {
+  text-decoration: none;
+  color: var(--rid-text);
+  transition: border-color 0.16s var(--rid-ease), background 0.16s var(--rid-ease);
+}
+
+a.cloud-row:hover {
+  background: var(--rid-selection);
+}
+
+.cloud-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.cloud-row-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--rid-space-2);
+}
+
+.cloud-badge-private .icon {
+  flex-shrink: 0;
+}
+
+.cloud-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 140px;
+}
+
+.cloud-pushed {
+  flex-shrink: 0;
+  min-width: 7ch;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cloud-external {
+  display: grid;
+  flex-shrink: 0;
+  transition: color 0.16s var(--rid-ease), transform 0.16s var(--rid-ease);
+}
+
+a.cloud-row:hover .cloud-external {
+  color: var(--rid-accent);
+  transform: translate(1px, -1px);
+}
+
+.cloud-more {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--rid-space-1);
+}
+
+@media (max-width: 720px) {
+  .cloud-row {
+    flex-wrap: wrap;
+  }
+
+  .cloud-row-name {
+    flex-basis: 100%;
+  }
+
+  .cloud-pushed {
+    margin-left: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-row,
+  .cloud-external {
+    transition: none;
+  }
+}

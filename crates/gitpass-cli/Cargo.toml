@@ -1,0 +1,21 @@
+[package]
+name = "gitpass-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GitPass CLI (hooks, doctor, ping)"
+
+[[bin]]
+name = "gitpass"
+path = "src/main.rs"
+
+[[bin]]
+name = "git-credential-gitpass"
+path = "src/bin/git-credential-gitpass.rs"
+
+[dependencies]
+gitpass-core = { path = "../gitpass-core" }
+clap.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "macros", "rt"] }
+uuid.workspace = true

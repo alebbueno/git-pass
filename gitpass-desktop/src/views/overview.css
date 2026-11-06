@@ -1,0 +1,355 @@
+/* Estilos da tela Painel · só tokens RepoID, superfícies opacas */
+
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-5);
+}
+
+.overview-eyebrow {
+  font-family: var(--rid-font-code);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rid-muted-text);
+}
+
+/* ---------- Faixa de prontidão ---------- */
+
+.overview-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--rid-space-3);
+}
+
+.overview-tile {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-3);
+  min-height: 72px;
+  padding: var(--rid-space-3) var(--rid-space-4);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-lg);
+  background: var(--rid-surface);
+  box-shadow: var(--rid-shadow-soft);
+  color: var(--rid-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.18s var(--rid-ease),
+    background 0.18s var(--rid-ease),
+    transform 0.18s var(--rid-ease);
+}
+
+.overview-tile:hover {
+  border-color: var(--rid-control-outline);
+  transform: translateY(-1px);
+}
+
+.overview-tile:active {
+  transform: translateY(0);
+}
+
+.overview-tile-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--rid-radius-sm);
+  background: var(--rid-selection);
+  color: var(--rid-accent);
+  transition: background 0.18s var(--rid-ease);
+}
+
+.overview-tile-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.overview-tile-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.overview-tile-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-tile .badge {
+  flex-shrink: 0;
+}
+
+.overview-badge-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+/* ---------- Primeiros passos ---------- */
+
+.overview-onboarding-sub {
+  margin: 0 0 var(--rid-space-4);
+}
+
+.overview-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--rid-space-3);
+}
+
+.overview-step {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-3);
+  width: 100%;
+  min-height: 72px;
+  padding: var(--rid-space-3) var(--rid-space-4);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-md);
+  background: var(--rid-surface);
+  color: var(--rid-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.18s var(--rid-ease),
+    background 0.18s var(--rid-ease);
+}
+
+.overview-step:hover {
+  border-color: var(--rid-control-outline);
+}
+
+.overview-step.next {
+  border-color: color-mix(in srgb, var(--rid-accent) 55%, transparent);
+  background: var(--rid-selection);
+  color: var(--rid-on-selection);
+}
+
+.overview-step.next .muted,
+.overview-step.next .overview-eyebrow {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.overview-step-marker {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--rid-control-outline);
+  border-radius: 50%;
+  font-family: var(--rid-font-code);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--rid-muted-text);
+  transition:
+    background 0.18s var(--rid-ease),
+    color 0.18s var(--rid-ease);
+}
+
+.overview-step.next .overview-step-marker {
+  border-color: var(--rid-accent);
+  background: var(--rid-accent);
+  color: var(--rid-on-accent);
+}
+
+.overview-step-marker.done {
+  border-color: transparent;
+  background: var(--rid-feedback-success-background);
+  color: var(--rid-feedback-success-foreground);
+}
+
+.overview-step-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.overview-step-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.overview-step.done .overview-step-title {
+  color: var(--rid-muted-text);
+}
+
+.overview-step-go {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--rid-accent);
+}
+
+.overview-step.next .overview-step-go {
+  color: inherit;
+}
+
+/* ---------- Secções ---------- */
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--rid-space-5);
+  align-items: start;
+}
+
+.overview-section {
+  min-width: 0;
+}
+
+.overview-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-3);
+  min-height: 32px;
+  margin: 0 0 var(--rid-space-2);
+}
+
+.overview-section-title {
+  margin: 0;
+}
+
+/* ---------- Linhas de repositório ---------- */
+
+.overview-repo-row {
+  min-height: 62px;
+  justify-content: space-between;
+}
+
+.overview-repo-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.overview-repo-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.overview-repo-chip {
+  flex-shrink: 0;
+  max-width: 45%;
+  min-width: 0;
+  display: flex;
+}
+
+/* ---------- Cartões de perfil ---------- */
+
+.overview-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--rid-space-3);
+}
+
+.overview-profile {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-3);
+  width: 100%;
+  min-height: 68px;
+  padding: var(--rid-space-3) var(--rid-space-4);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-md);
+  background: var(--rid-surface);
+  color: var(--rid-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s var(--rid-ease);
+}
+
+.overview-profile:hover {
+  border-color: var(--rid-control-outline);
+}
+
+.overview-profile-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.overview-profile-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.overview-profile-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.overview-profile-num {
+  font-family: var(--rid-font-code);
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-profiles-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-4);
+}
+
+.overview-profiles-empty p {
+  margin: 0;
+}
+
+/* ---------- Esqueletos (mesmas alturas do conteúdo final) ---------- */
+
+.overview-sk-row {
+  height: 62px;
+}
+
+.overview-sk-profile {
+  height: 68px;
+}
+
+.overview-error {
+  align-items: flex-start;
+}
+
+/* ---------- Responsivo ---------- */
+
+@media (min-width: 1200px) {
+  /* Repositórios (largos) + perfis em coluna lateral */
+  .overview-grid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  }
+
+  .overview-grid .overview-profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .overview-tiles,
+  .overview-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-profiles-empty {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

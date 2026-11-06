@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>GitPass</title>
+    <style>
+      /* Estado inicial antes do bundle (tokens alinhados ao kit RepoID) */
+      html,
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #f3f5fc;
+        color: #13182b;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background: #0d1123;
+          color: #f3f5ff;
+        }
+      }
+      .shell-loading {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+      }
+      .shell-loading-inner {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+      .shell-loading-spinner {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid rgba(79, 88, 112, 0.35);
+        border-top-color: #5545d6;
+        animation: rid-spin-boot 0.85s linear infinite;
+      }
+      @keyframes rid-spin-boot {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .shell-loading-spinner {
+          animation: none;
+          border-top-color: #b3a5ff;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="shell-loading" role="status" aria-live="polite">
+        <div class="shell-loading-inner">
+          <span class="shell-loading-spinner" aria-hidden="true"></span>
+          <p style="margin: 0">A carregar GitPass…</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

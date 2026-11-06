@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+.claude/
+.DS_Store
+node_modules
+dist
+gitpass-desktop/dist
+*.log
+.env
+.env.*

@@ -1,0 +1,110 @@
+{
+  "brand": {
+    "midnight": "#0D1123",
+    "mist": "#F3F5FC",
+    "indigo": "#5545D6",
+    "iris": "#B3A5FF",
+    "profileIris": "#CBB7FF",
+    "profileAqua": "#86E3F1"
+  },
+  "theme": {
+    "light": {
+      "canvas": "#F3F5FC",
+      "surface": "#FFFFFF",
+      "text": "#13182B",
+      "mutedText": "#4F5870",
+      "separator": "#D9DFEE",
+      "controlOutline": "#78839D",
+      "accent": "#5545D6",
+      "onAccent": "#FFFFFF",
+      "selection": "#EEEAFE",
+      "onSelection": "#393082",
+      "material": {
+        "tint": "#FFFFFFBD",
+        "edge": "#FFFFFF",
+        "fallback": "#FFFFFF"
+      },
+      "account": {
+        "iris": {
+          "background": "#EDE8FF",
+          "foreground": "#4931A3"
+        },
+        "aqua": {
+          "background": "#DAF5FA",
+          "foreground": "#005A6A"
+        },
+        "blue": {
+          "background": "#E4EDFF",
+          "foreground": "#1C4CA0"
+        },
+        "rose": {
+          "background": "#FBE7F1",
+          "foreground": "#832956"
+        }
+      },
+      "feedback": {
+        "success": {
+          "background": "#DBF6E9",
+          "foreground": "#146445"
+        },
+        "warning": {
+          "background": "#FFF1D6",
+          "foreground": "#754700"
+        },
+        "error": {
+          "background": "#FDE7E8",
+          "foreground": "#912E39"
+        }
+      }
+    },
+    "dark": {
+      "canvas": "#0D1123",
+      "surface": "#171D34",
+      "text": "#F3F5FF",
+      "mutedText": "#AAB5CF",
+      "separator": "#303A56",
+      "controlOutline": "#78839D",
+      "accent": "#B3A5FF",
+      "onAccent": "#181234",
+      "selection": "#2B2451",
+      "onSelection": "#E8DFFF",
+      "material": {
+        "tint": "#253051B8",
+        "edge": "#495579",
+        "fallback": "#202741"
+      },
+      "account": {
+        "iris": {
+          "background": "#33265A",
+          "foreground": "#D9CCFF"
+        },
+        "aqua": {
+          "background": "#133841",
+          "foreground": "#9BE8F4"
+        },
+        "blue": {
+          "background": "#1B345D",
+          "foreground": "#BFD7FF"
+        },
+        "rose": {
+          "background": "#48263D",
+          "foreground": "#FFC8E5"
+        }
+      },
+      "feedback": {
+        "success": {
+          "background": "#133B30",
+          "foreground": "#9CE6C0"
+        },
+        "warning": {
+          "background": "#483315",
+          "foreground": "#FFD58C"
+        },
+        "error": {
+          "background": "#482531",
+          "foreground": "#FFB6C0"
+        }
+      }
+    }
+  }
+}
