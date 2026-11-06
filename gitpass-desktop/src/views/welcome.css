@@ -1,0 +1,422 @@
+/* Boas-vindas · só tokens RepoID, superfícies opacas (o vidro fica na navegação) */
+
+.welcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-5);
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.welcome-boot {
+  display: grid;
+  place-items: center;
+  min-height: 40vh;
+  color: var(--rid-muted-text);
+}
+
+.welcome-eyebrow {
+  margin: 0;
+  font-family: var(--rid-font-code);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rid-muted-text);
+}
+
+/* ---------- Herói ---------- */
+
+.welcome-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-5);
+  padding: var(--rid-space-6);
+  overflow: hidden;
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-lg);
+  background:
+    radial-gradient(circle at 88% 50%, color-mix(in srgb, var(--rid-accent) 16%, transparent), transparent 55%),
+    var(--rid-surface);
+  box-shadow: var(--rid-shadow-soft);
+}
+
+.welcome-hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-3);
+  min-width: 0;
+  max-width: 460px;
+}
+
+.welcome-hero-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+}
+
+.welcome-hero-sub {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--rid-muted-text);
+}
+
+.welcome-hero-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 132px;
+  height: 132px;
+  border-radius: 32px;
+  color: var(--rid-accent);
+  background: var(--rid-selection);
+  box-shadow:
+    0 0 0 14px color-mix(in srgb, var(--rid-accent) 8%, transparent),
+    0 0 0 30px color-mix(in srgb, var(--rid-accent) 4%, transparent);
+}
+
+.welcome-hero-mark svg {
+  width: 84px;
+  height: 84px;
+}
+
+/* ---------- Passos ---------- */
+
+.welcome-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.welcome-step {
+  padding: var(--rid-space-4) var(--rid-space-5);
+  border: 1px solid var(--rid-separator);
+  border-radius: var(--rid-radius-lg);
+  background: var(--rid-surface);
+  transition:
+    border-color 0.18s var(--rid-ease),
+    box-shadow 0.18s var(--rid-ease);
+}
+
+.welcome-step.is-current {
+  border-color: color-mix(in srgb, var(--rid-accent) 55%, var(--rid-separator));
+  box-shadow: var(--rid-shadow-soft);
+}
+
+.welcome-step.is-locked {
+  background: transparent;
+  border-style: dashed;
+}
+
+.welcome-step.is-locked .welcome-step-title {
+  color: var(--rid-muted-text);
+}
+
+.welcome-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-3);
+}
+
+.welcome-step-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.welcome-step-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  outline: none;
+}
+
+.welcome-step-title:focus-visible {
+  box-shadow: var(--rid-focus-ring);
+  border-radius: 4px;
+}
+
+.welcome-step-marker {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--rid-separator);
+  background: var(--rid-canvas);
+  color: var(--rid-muted-text);
+  font-family: var(--rid-font-code);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.is-current .welcome-step-marker {
+  border-color: transparent;
+  background: var(--rid-accent);
+  color: var(--rid-on-accent);
+}
+
+.is-done .welcome-step-marker {
+  border-color: transparent;
+  background: var(--rid-feedback-success-background);
+  color: var(--rid-feedback-success-foreground);
+}
+
+.welcome-step-body-wrap:empty {
+  display: none;
+}
+
+.welcome-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-3);
+  padding: var(--rid-space-4) 0 var(--rid-space-1) calc(32px + var(--rid-space-3));
+}
+
+.is-done .welcome-step-body {
+  padding-top: var(--rid-space-3);
+}
+
+.welcome-lead {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.welcome-hint {
+  margin: 0;
+  max-width: 62ch;
+}
+
+.welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rid-space-2);
+}
+
+.welcome-cta {
+  min-height: 48px;
+  padding: 0 var(--rid-space-5);
+  font-size: 1rem;
+  border-radius: var(--rid-radius-md);
+}
+
+.welcome-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--rid-space-2);
+  font-size: 0.875rem;
+  color: var(--rid-muted-text);
+}
+
+.welcome-summary {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.welcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--rid-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---------- Repositórios encontrados ---------- */
+
+.welcome-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-3);
+}
+
+.welcome-repos {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.welcome-repos[inert] {
+  opacity: 0.6;
+}
+
+.welcome-repo {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 260px);
+  align-items: center;
+  gap: var(--rid-space-3);
+  padding: var(--rid-space-3) var(--rid-space-4);
+  border-bottom: 1px solid var(--rid-separator);
+}
+
+.welcome-repo:last-child {
+  border-bottom: 0;
+}
+
+.welcome-repo:has(input:checked) {
+  background: var(--rid-selection);
+  color: var(--rid-on-selection);
+}
+
+.welcome-check {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--rid-accent);
+  cursor: pointer;
+}
+
+.welcome-check:disabled {
+  cursor: not-allowed;
+}
+
+.welcome-repo-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.welcome-repo-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.welcome-repo-account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.welcome-select {
+  min-height: 32px;
+  font-size: 0.8125rem;
+}
+
+.welcome-sk-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rid-space-2);
+}
+
+.welcome-sk-row {
+  height: 52px;
+}
+
+.welcome-empty {
+  padding: var(--rid-space-4) var(--rid-space-3);
+}
+
+.welcome-empty-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--rid-text);
+}
+
+/* ---------- Integração ---------- */
+
+.welcome-integration-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rid-space-2) var(--rid-space-3);
+}
+
+.welcome-checks {
+  margin: 0;
+}
+
+.welcome-check-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--rid-space-3);
+  padding: var(--rid-space-2) var(--rid-space-4);
+  border-bottom: 1px solid var(--rid-separator);
+}
+
+.welcome-check-row:last-child {
+  border-bottom: 0;
+}
+
+.welcome-check-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.welcome-check-summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Responsivo e movimento ---------- */
+
+@media (max-width: 860px) {
+  .welcome-hero {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    padding: var(--rid-space-5);
+  }
+
+  .welcome-hero-mark {
+    width: 96px;
+    height: 96px;
+    border-radius: 24px;
+  }
+
+  .welcome-hero-mark svg {
+    width: 60px;
+    height: 60px;
+  }
+
+  .welcome-step {
+    padding: var(--rid-space-4);
+  }
+
+  .welcome-step-body {
+    padding-left: 0;
+  }
+
+  .welcome-repo,
+  .welcome-check-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .welcome-repo-account {
+    grid-column: 2;
+  }
+
+  .welcome-check-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .welcome-check-summary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-step {
+    transition: none;
+  }
+}
