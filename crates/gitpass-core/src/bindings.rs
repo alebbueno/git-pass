@@ -35,7 +35,7 @@ fn git_config_set(root: &Path, key: &str, value: &str) -> Result<(), String> {
         .arg(root)
         .args(["config", "--local", "--", key, value])
         .output()
-        .map_err(|e| format!("git config: {e}"))?;
+        .map_err(|e| format!("Não foi possível rodar o Git: {e}"))?;
     if out.status.success() {
         Ok(())
     } else {
@@ -75,9 +75,9 @@ pub fn create_binding(cfg: &mut AppConfig, account_id: Uuid, root: &Path) -> Res
     let canon: PathBuf = root.canonicalize().map_err(|e| format!("Caminho inválido: {e}"))?;
 
     let url = git_remote_url(&canon, "origin")
-        .map_err(|e| format!("{e}. Adiciona o remote `origin` ou escolhe outro clone."))?;
+        .map_err(|e| format!("{e}. Adicione o remoto `origin` ou escolha outro clone."))?;
     let gh = parse_github_remote(&url)
-        .ok_or_else(|| format!("O origin não aponta para github.com (`{}`).", redact_remote_url(&url)))?;
+        .ok_or_else(|| format!("O `origin` não aponta para github.com (`{}`).", redact_remote_url(&url)))?;
 
     if cfg.repos.iter().any(|r| r.root_path == canon) {
         return Err("Esta pasta já está vinculada.".to_string());
@@ -146,7 +146,7 @@ fn git_config_unset(root: &Path, key: &str) -> Result<(), String> {
         .arg(root)
         .args(["config", "--local", "--unset-all", "--", key])
         .output()
-        .map_err(|e| format!("git config: {e}"))?;
+        .map_err(|e| format!("Não foi possível rodar o Git: {e}"))?;
     // Exit code 5: key was not set.
     if out.status.success() || out.status.code() == Some(5) {
         Ok(())
@@ -193,11 +193,11 @@ pub fn remove_binding(cfg: &mut AppConfig, binding_id: Uuid, reset_identity: boo
         .iter()
         .find(|r| r.id == binding_id)
         .cloned()
-        .ok_or_else(|| "Vínculo desconhecido. Atualiza a lista e tenta novamente.".to_string())?;
+        .ok_or_else(|| "Vínculo desconhecido. Atualize a lista e tente de novo.".to_string())?;
     if reset_identity && binding.root_path.is_dir() {
         if let Some(acc) = cfg.accounts.iter().find(|a| a.id == binding.account_id) {
             clear_repo_identity(&binding.root_path, acc)
-                .map_err(|e| format!("Não foi possível repor a identidade Git: {e}"))?;
+                .map_err(|e| format!("Não foi possível restaurar a identidade do Git: {e}"))?;
         }
     }
     remove_binding_in(cfg, binding_id);
@@ -211,13 +211,13 @@ fn binding_and_account(cfg: &AppConfig, binding_id: Uuid) -> Result<(RepoBinding
         .iter()
         .find(|r| r.id == binding_id)
         .cloned()
-        .ok_or_else(|| "Vínculo desconhecido. Atualiza a lista e tenta novamente.".to_string())?;
+        .ok_or_else(|| "Vínculo desconhecido. Atualize a lista e tente de novo.".to_string())?;
     let account = cfg
         .accounts
         .iter()
         .find(|a| a.id == binding.account_id)
         .cloned()
-        .ok_or_else(|| "A conta deste vínculo já não existe. Muda o vínculo para outra conta.".to_string())?;
+        .ok_or_else(|| "A conta deste vínculo não existe mais. Troque o vínculo para outra conta.".to_string())?;
     Ok((binding, account))
 }
 
@@ -226,7 +226,7 @@ fn ensure_repo_dir(binding: &RepoBinding) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "A pasta {} já não existe. Desvincula-a ou volta a cloná-la.",
+            "A pasta {} não existe mais. Desvincule-a ou clone de novo.",
             binding.root_path.display()
         ))
     }
@@ -244,7 +244,7 @@ pub fn change_binding_account(cfg: &mut AppConfig, binding_id: Uuid, account_id:
         .repos
         .iter_mut()
         .find(|r| r.id == binding_id)
-        .ok_or_else(|| "Vínculo desconhecido. Atualiza a lista e tenta novamente.".to_string())?;
+        .ok_or_else(|| "Vínculo desconhecido. Atualize a lista e tente de novo.".to_string())?;
     binding.account_id = account_id;
     let binding = binding.clone();
     cfg.save().map_err(|e| e.to_string())?;

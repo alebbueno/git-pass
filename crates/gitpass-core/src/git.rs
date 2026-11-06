@@ -10,13 +10,13 @@ pub fn git_work_tree_root(cwd: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(d) = cwd {
         cmd.current_dir(d);
     }
-    let out = cmd.output().map_err(|e| format!("git rev-parse: {e}"))?;
+    let out = cmd.output().map_err(|e| format!("Não foi possível rodar o Git: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("not a git repository ({})", err.trim()));
+        return Err(format!("Esta pasta não é um repositório Git ({})", err.trim()));
     }
     let s = String::from_utf8_lossy(&out.stdout);
-    let line = s.lines().next().ok_or_else(|| "empty rev-parse".to_string())?;
+    let line = s.lines().next().ok_or_else(|| "O Git não informou a pasta do repositório.".to_string())?;
     Ok(PathBuf::from(line.trim()))
 }
 
@@ -26,10 +26,10 @@ pub fn git_remote_url(cwd: &Path, remote: &str) -> Result<String, String> {
         .current_dir(cwd)
         .args(["remote", "get-url", remote])
         .output()
-        .map_err(|e| format!("git remote get-url: {e}"))?;
+        .map_err(|e| format!("Não foi possível rodar o Git: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("no remote `{remote}` ({})", err.trim()));
+        return Err(format!("O repositório não tem o remoto `{remote}` ({})", err.trim()));
     }
     let s = String::from_utf8_lossy(&out.stdout);
     Ok(s.trim().to_string())
@@ -48,13 +48,13 @@ pub fn git_log_lines(root: &Path, limit: usize) -> Result<Vec<String>, String> {
             "--pretty=format:%h — %s — %an — %ad",
         ])
         .output()
-        .map_err(|e| format!("git log: {e}"))?;
+        .map_err(|e| format!("Não foi possível rodar o Git: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("does not have any commits yet") {
             return Ok(Vec::new());
         }
-        return Err(format!("git log failed ({})", err.trim()));
+        return Err(format!("Não foi possível ler o histórico do Git ({})", err.trim()));
     }
     let s = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<String> = s

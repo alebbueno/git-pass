@@ -61,7 +61,7 @@ pub fn integration_env() -> io::Result<IntegrationEnv> {
 fn state_label(s: CheckState) -> &'static str {
     match s {
         CheckState::Ok => "ok",
-        CheckState::Missing => "em falta",
+        CheckState::Missing => "faltando",
         CheckState::Outdated => "desatualizado",
         CheckState::Conflict => "em conflito",
         CheckState::Error => "erro",
@@ -70,10 +70,10 @@ fn state_label(s: CheckState) -> &'static str {
 
 fn components(s: &IntegrationStatus) -> [(&'static str, &ComponentStatus); 4] {
     [
-        ("Componentes", &s.binaries),
+        ("Peças da integração", &s.binaries),
         ("Credenciais GitHub", &s.credentials),
-        ("Hooks do Git", &s.hooks),
-        ("Serviço gitpassd", &s.daemon),
+        ("Verificações do Git", &s.hooks),
+        ("Serviço em segundo plano", &s.daemon),
     ]
 }
 
@@ -106,10 +106,10 @@ pub fn run() -> io::Result<i32> {
                     None => r.warn("não foi possível ler a versão do macOS"),
                 }
             }
-            _ => r.warn("não foi possível correr sw_vers"),
+            _ => r.warn("não foi possível rodar o sw_vers"),
         }
     } else {
-        r.warn("o GitPass foi feito para macOS 14 ou posterior");
+        r.warn("o GitPass foi feito para o macOS 14 ou mais novo");
     }
 
     match integration::find_git() {
@@ -120,19 +120,19 @@ pub fn run() -> io::Result<i32> {
             }
             _ => r.err(format!("o Git em {} não respondeu", git.display())),
         },
-        None => r.err("Git não encontrado (instala as ferramentas de linha de comandos da Apple ou o Git)"),
+        None => r.err("Git não encontrado (instale as Xcode Command Line Tools ou o Git)"),
     }
 
     match config_file_path() {
         Ok(p) => match AppConfig::load_or_default() {
             Ok(cfg) if p.exists() => r.ok(format!(
-                "configuração: {} contas, {} repositórios ({})",
+                "configurações: {} contas, {} repositórios ({})",
                 cfg.accounts.len(),
                 cfg.repos.len(),
                 p.display()
             )),
-            Ok(_) => r.warn("ainda não há configuração: abre a app GitPass e liga uma conta"),
-            Err(e) => r.err(format!("configuração inválida em {}: {e}", p.display())),
+            Ok(_) => r.warn("ainda não há configurações: abra o app GitPass e conecte uma conta"),
+            Err(e) => r.err(format!("configurações inválidas em {}: {e}", p.display())),
         },
         Err(e) => r.err(format!("pasta de dados do GitPass: {e}")),
     }
@@ -141,7 +141,7 @@ pub fn run() -> io::Result<i32> {
         Ok(env) => {
             let status = integration::status(&env);
             if !status.enabled {
-                r.warn("integração desativada (foi desfeita); para a reativar: gitpass hooks install");
+                r.warn("integração desativada (foi desfeita); para ativar de novo: gitpass hooks install");
             }
             for (label, c) in components(&status) {
                 let line = format!("{label}: {}", component_detail(c));
@@ -152,7 +152,7 @@ pub fn run() -> io::Result<i32> {
                 }
             }
             if !status.ready && status.enabled {
-                r.lines.push("Para reparar: gitpass hooks install (ou «Reparar» em Definições na app GitPass).".into());
+                r.lines.push("Para reparar: gitpass hooks install (ou «Reparar» em Configurações no app GitPass).".into());
             }
         }
         Err(e) => r.err(format!("pasta de dados do GitPass: {e}")),

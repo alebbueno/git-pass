@@ -100,7 +100,7 @@ fn resolve(input: &Fields) -> Target {
     let cfg = match AppConfig::load_or_default() {
         Ok(c) => c,
         Err(_) => {
-            eprintln!("GitPass: não foi possível ler a configuração do GitPass; a usar as credenciais anteriores. Abre a app GitPass.");
+            eprintln!("GitPass: não foi possível ler as configurações do GitPass; usando as credenciais anteriores. Abra o app GitPass.");
             return Target::Unbound;
         }
     };
@@ -164,7 +164,7 @@ fn account_handle(acc: &Account) -> String {
 
 fn needs_reconnect(acc: &Account) {
     eprintln!(
-        "GitPass: a conta {} precisa de ser ligada de novo. Abre a app GitPass.",
+        "GitPass: a conta {} precisa ser conectada de novo. Abra o app GitPass.",
         account_handle(acc)
     );
     quit();
@@ -174,7 +174,7 @@ fn get_bound(acc: Result<Account, Uuid>) {
     let acc = match acc {
         Ok(a) => a,
         Err(_) => {
-            eprintln!("GitPass: este repositório está associado a uma conta que já não existe. Escolhe outra conta na app GitPass (Repositórios).");
+            eprintln!("GitPass: este repositório está vinculado a uma conta que não existe mais. Escolha outra conta no app GitPass (Repositórios).");
             return quit();
         }
     };
@@ -186,7 +186,7 @@ fn get_bound(acc: Result<Account, Uuid>) {
         Ok(None) => return needs_reconnect(&acc),
         Err(()) => {
             eprintln!(
-                "GitPass: não foi possível ler o acesso da conta {} no Porta-chaves. Abre a app GitPass e, se o macOS pedir, permite o acesso.",
+                "GitPass: não foi possível ler o acesso da conta {} nas Chaves do macOS. Abra o app GitPass e, se o macOS pedir, permita o acesso.",
                 account_handle(&acc)
             );
             return quit();

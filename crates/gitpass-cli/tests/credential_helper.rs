@@ -222,7 +222,7 @@ fn bound_repo_without_token_quits_without_falling_back() {
     assert!(!o.status.success());
     assert!(!out(&o).contains("password="), "{}", out(&o));
     assert!(
-        err(&o).contains("GitPass: a conta @stale precisa de ser ligada de novo. Abre a app GitPass."),
+        err(&o).contains("GitPass: a conta @stale precisa ser conectada de novo. Abra o app GitPass."),
         "{}",
         err(&o)
     );
@@ -236,7 +236,7 @@ fn token_rejected_by_github_quits_until_reconnected() {
     integration::mark_token_rejected(&f.app_support, f.octo_id, TOKEN).unwrap();
     let o = f.credential(&f.bound, "fill", "octo/bound.git", "");
     assert!(!o.status.success());
-    assert!(err(&o).contains("a conta @octo precisa de ser ligada de novo"), "{}", err(&o));
+    assert!(err(&o).contains("a conta @octo precisa ser conectada de novo"), "{}", err(&o));
     assert_eq!(f.log("previous"), None);
 
     // Reconnecting stores a new token, which no longer matches the rejected one.

@@ -58,7 +58,7 @@ pub fn split_full_name(full_name: &str) -> Result<(String, String), String> {
     }
     let (owner, repo) = full_name
         .split_once('/')
-        .ok_or_else(|| format!("Nome de repositório inválido: `{full_name}` (esperado dono/repositório)."))?;
+        .ok_or_else(|| format!("Nome de repositório inválido: `{full_name}` (o formato é dono/repositório)."))?;
     if !valid(owner) || !valid(repo) {
         return Err(format!("Nome de repositório inválido: `{full_name}`."));
     }
@@ -67,7 +67,7 @@ pub fn split_full_name(full_name: &str) -> Result<(String, String), String> {
 
 /// Default clone location: `~/GitHub/<owner>/<repo>`.
 pub fn default_clone_dir(owner: &str, repo: &str) -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Não foi possível determinar a pasta pessoal.".to_string())?;
+    let home = dirs::home_dir().ok_or_else(|| "Não foi possível encontrar a sua pasta pessoal.".to_string())?;
     Ok(home.join("GitHub").join(owner).join(repo))
 }
 
@@ -124,7 +124,7 @@ pub fn validate_clone_parent(parent: &Path, home: Option<&Path>) -> Result<PathB
 
     let forbidden = || {
         format!(
-            "Não é possível clonar para `{}`. Escolhe uma pasta tua, por exemplo ~/GitHub.",
+            "Não é possível clonar para `{}`. Escolha uma pasta sua, por exemplo ~/GitHub.",
             parent.display()
         )
     };
@@ -164,7 +164,7 @@ fn is_github_https(url: &str) -> bool {
     url.starts_with("https://github.com/") && !url.contains('@') && !url.contains(char::is_whitespace)
 }
 
-/// Turns raw `git clone` stderr into an actionable pt-PT message.
+/// Turns raw `git clone` stderr into an actionable pt-BR message.
 pub fn friendly_clone_error(stderr: &str) -> String {
     let lower = stderr.to_lowercase();
     let last = stderr
@@ -174,7 +174,7 @@ pub fn friendly_clone_error(stderr: &str) -> String {
         .find(|l| !l.is_empty())
         .unwrap_or("erro desconhecido");
     if lower.contains("repository not found") || (lower.contains("not found") && lower.contains("fatal")) {
-        "Repositório não encontrado, ou esta conta não tem acesso. Confirma as permissões da conta GitHub.".to_string()
+        "Repositório não encontrado, ou esta conta não tem acesso. Confira as permissões da conta do GitHub.".to_string()
     } else if lower.contains("authentication failed")
         || lower.contains("invalid username or password")
         || lower.contains("could not read username")
@@ -182,17 +182,17 @@ pub fn friendly_clone_error(stderr: &str) -> String {
         || lower.contains("requested url returned error: 401")
         || lower.contains("requested url returned error: 403")
     {
-        "A autenticação no GitHub falhou. Volta a ligar a conta em «Contas» e tenta de novo.".to_string()
+        "A autenticação no GitHub falhou. Reconecte a conta em «Contas» e tente de novo.".to_string()
     } else if lower.contains("could not resolve host")
         || lower.contains("failed to connect")
         || lower.contains("connection timed out")
         || lower.contains("network is unreachable")
     {
-        "Sem ligação ao GitHub. Verifica a tua ligação à internet e tenta de novo.".to_string()
+        "Sem conexão com o GitHub. Veja se você está online e tente de novo.".to_string()
     } else if lower.contains("no space left") {
         "Sem espaço em disco para clonar este repositório.".to_string()
     } else {
-        format!("Falha ao clonar: {last}")
+        format!("Não foi possível clonar: {last}")
     }
 }
 
@@ -217,15 +217,15 @@ pub fn clone_repo(
     mut progress_cb: impl FnMut(CloneProgress),
 ) -> Result<(), String> {
     if !is_github_https(clone_url) {
-        return Err(format!("URL de clonagem não suportado: `{clone_url}` (só https://github.com/…)."));
+        return Err(format!("Endereço de clonagem não aceito: `{clone_url}` (só https://github.com/…)."));
     }
     if token.trim().is_empty() {
-        return Err("Esta conta não tem token. Liga a conta GitHub em «Contas».".to_string());
+        return Err("Esta conta não tem acesso salvo. Conecte a conta do GitHub em «Contas».".to_string());
     }
 
     if std::fs::symlink_metadata(dest_dir).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(format!(
-            "`{}` é um atalho (symlink). Escolhe outro destino.",
+            "`{}` é um atalho (symlink). Escolha outro destino.",
             dest_dir.display()
         ));
     }
@@ -236,7 +236,7 @@ pub fn clone_repo(
                 .unwrap_or(false);
         if !empty_dir {
             return Err(format!(
-                "A pasta `{}` já existe. Escolhe outro destino ou remove-a primeiro.",
+                "A pasta `{}` já existe. Escolha outro destino ou remova a pasta primeiro.",
                 dest_dir.display()
             ));
         }
@@ -270,13 +270,13 @@ pub fn clone_repo(
         .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                "O Git não está instalado. Instala as Xcode Command Line Tools (`xcode-select --install`).".to_string()
+                "O Git não está instalado. Instale as Xcode Command Line Tools (`xcode-select --install`).".to_string()
             } else {
-                format!("Não foi possível executar o git: {e}")
+                format!("Não foi possível rodar o Git: {e}")
             }
         })?;
 
-    let mut stderr = child.stderr.take().ok_or_else(|| "Sem acesso à saída do git.".to_string())?;
+    let mut stderr = child.stderr.take().ok_or_else(|| "Não foi possível ler a saída do Git.".to_string())?;
 
     let mut other_lines: Vec<String> = Vec::new();
     let mut last: Option<CloneProgress> = None;
@@ -319,7 +319,7 @@ pub fn clone_repo(
     }
     handle_line(&pending, &mut progress_cb);
 
-    let status = child.wait().map_err(|e| format!("Falha ao aguardar o git: {e}"))?;
+    let status = child.wait().map_err(|e| format!("Algo deu errado ao esperar o Git terminar: {e}"))?;
     if status.success() {
         Ok(())
     } else {
@@ -408,8 +408,8 @@ mod tests {
     fn errors_are_friendly() {
         assert!(friendly_clone_error("remote: Repository not found.\nfatal: repository 'x' not found").contains("não encontrado"));
         assert!(friendly_clone_error("fatal: Authentication failed for 'https://github.com/o/r.git/'").contains("autenticação"));
-        assert!(friendly_clone_error("fatal: unable to access: Could not resolve host: github.com").contains("ligação"));
-        assert!(friendly_clone_error("something odd").starts_with("Falha ao clonar: something odd"));
+        assert!(friendly_clone_error("fatal: unable to access: Could not resolve host: github.com").contains("conexão"));
+        assert!(friendly_clone_error("something odd").starts_with("Não foi possível clonar: something odd"));
     }
 
     #[test]

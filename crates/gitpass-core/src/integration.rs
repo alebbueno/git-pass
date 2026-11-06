@@ -42,7 +42,7 @@ const DAEMON_PATH_ENV: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/u
 const DAEMON_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 const GIT_NOT_FOUND: &str =
-    "O Git não foi encontrado neste Mac. Instala as ferramentas de linha de comandos da Apple (abre o Terminal e escreve git) ou o Git, e depois escolhe Reparar.";
+    "O Git não foi encontrado neste Mac. Instale as Xcode Command Line Tools (abra o Terminal e digite git) ou o Git, e depois escolha Reparar.";
 
 /// A binary shipped inside `GitPass.app/Contents/MacOS` and copied to Application Support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,7 +273,7 @@ pub fn load_backup(env: &IntegrationEnv) -> Result<Option<IntegrationBackup>, St
     match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|e| {
             format!(
-                "A cópia de segurança da integração está corrompida ({}): {e}",
+                "O backup da integração está corrompido ({}): {e}",
                 path.display()
             )
         }),
@@ -285,7 +285,7 @@ pub fn load_backup(env: &IntegrationEnv) -> Result<Option<IntegrationBackup>, St
 fn save_backup(env: &IntegrationEnv, b: &IntegrationBackup) -> Result<(), String> {
     let raw = serde_json::to_vec_pretty(b).map_err(|e| e.to_string())?;
     write_atomic(&env.backup_file(), &raw, 0o600)
-        .map_err(|e| format!("Não foi possível guardar a cópia de segurança: {e}"))
+        .map_err(|e| format!("Não foi possível salvar o backup: {e}"))
 }
 
 /// Helpers the user had for github.com before GitPass (for a credential helper fallback on unbound repos).
@@ -434,7 +434,7 @@ if [ -n "$gitpass_top" ] && [ -f "$gitpass_config" ] && { grep -qF "root_path = 
   if [ -x "$gitpass_bin" ]; then
     GITPASS_HOOK=1 "$gitpass_bin" hook --phase "$gitpass_phase" </dev/null || exit $?
   else
-    echo "GitPass: componente em falta ($gitpass_bin). Abre a app GitPass e escolhe Reparar em Definições." >&2
+    echo "GitPass: falta uma peça da integração ($gitpass_bin). Abra o app GitPass e escolha Reparar em Configurações." >&2
   fi
 fi
 "#
@@ -443,7 +443,7 @@ fi
     };
     format!(
         r#"#!/bin/sh
-# {HOOK_MARKER} — do not edit by hand. Managed by the GitPass app (Definições › Integração com o Git).
+# {HOOK_MARKER} — do not edit by hand. Managed by the GitPass app (Configurações › Integração com o Git).
 gitpass_bin={bin}
 gitpass_config={config}
 gitpass_next_dir={next}
@@ -643,7 +643,7 @@ impl<'a> GitConfig<'a> {
             .args(args)
             .stdin(Stdio::null())
             .output()
-            .map_err(|e| format!("Não foi possível executar o Git: {e}"))
+            .map_err(|e| format!("Não foi possível rodar o Git: {e}"))
     }
 
     fn fail(args: &[&str], out: &Output) -> String {
@@ -721,28 +721,28 @@ pub fn ping_daemon(socket: &Path, timeout: Duration) -> Result<String, String> {
     use std::os::unix::net::UnixStream;
 
     if !socket.exists() {
-        return Err("O serviço não está a correr.".into());
+        return Err("O serviço em segundo plano não está rodando.".into());
     }
-    let mut stream = UnixStream::connect(socket).map_err(|e| format!("Sem resposta do serviço: {e}"))?;
+    let mut stream = UnixStream::connect(socket).map_err(|e| format!("O serviço em segundo plano não respondeu: {e}"))?;
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
     let req = crate::encode_line(&crate::IpcRequest::Ping).map_err(|e| e.to_string())?;
     stream
         .write_all(req.as_bytes())
-        .map_err(|e| format!("Sem resposta do serviço: {e}"))?;
+        .map_err(|e| format!("O serviço em segundo plano não respondeu: {e}"))?;
     let mut line = String::new();
     BufReader::new(stream)
         .read_line(&mut line)
-        .map_err(|e| format!("Sem resposta do serviço: {e}"))?;
+        .map_err(|e| format!("O serviço em segundo plano não respondeu: {e}"))?;
     match crate::decode_response_line(&line) {
         Ok(crate::IpcResponse::Pong { gitpassd_version }) => Ok(gitpassd_version),
-        _ => Err("Resposta inesperada do serviço.".into()),
+        _ => Err("O serviço em segundo plano enviou uma resposta que não entendemos.".into()),
     }
 }
 
 #[cfg(not(unix))]
 pub fn ping_daemon(_socket: &Path, _timeout: Duration) -> Result<String, String> {
-    Err("O serviço só está disponível no macOS.".into())
+    Err("O serviço em segundo plano só funciona no macOS.".into())
 }
 
 fn wait_for_daemon(socket: &Path, within: Duration) -> Result<String, String> {
@@ -761,17 +761,17 @@ fn launchctl(args: &[&str]) -> Result<Output, String> {
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("Não foi possível contactar o launchd: {e}"))
+        .map_err(|e| format!("Não foi possível falar com o launchd: {e}"))
 }
 
 fn gui_domain() -> Result<String, String> {
     let out = Command::new("/usr/bin/id")
         .arg("-u")
         .output()
-        .map_err(|e| format!("Não foi possível obter o utilizador atual: {e}"))?;
+        .map_err(|e| format!("Não foi possível descobrir o usuário atual: {e}"))?;
     let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if uid.is_empty() || !uid.bytes().all(|b| b.is_ascii_digit()) {
-        return Err("Não foi possível obter o utilizador atual.".into());
+        return Err("Não foi possível descobrir o usuário atual.".into());
     }
     Ok(format!("gui/{uid}"))
 }
@@ -787,7 +787,7 @@ fn agent_loaded() -> bool {
 }
 
 const BACKGROUND_BLOCKED: &str =
-    "O macOS não deixou arrancar o serviço do GitPass. Em Definições do Sistema › Geral › Itens de início de sessão, permite o GitPass em segundo plano e escolhe Reparar.";
+    "O macOS não deixou o serviço do GitPass iniciar. Em Ajustes do Sistema › Geral › Itens de Login, permita o GitPass em segundo plano e escolha Reparar.";
 
 fn agent_bootstrap(plist: &Path) -> Result<(), String> {
     let target = service_target()?;
@@ -856,16 +856,16 @@ fn binaries_status(env: &IntegrationEnv) -> ComponentStatus {
         let names: Vec<&str> = missing.iter().map(|(s, _)| s.name).collect();
         return ComponentStatus::new(
             CheckState::Error,
-            "Esta instalação do GitPass não inclui os componentes de integração. Reinstala a app.",
+            "Esta instalação do GitPass não inclui as peças da integração. Instale o app de novo.",
         )
         .current(Some(names.join(", ")));
     }
     if !missing.is_empty() {
-        ComponentStatus::new(CheckState::Missing, "Componentes ainda não instalados.")
+        ComponentStatus::new(CheckState::Missing, "As peças da integração ainda não foram instaladas.")
     } else if outdated {
-        ComponentStatus::new(CheckState::Outdated, "Há uma versão mais recente dos componentes.")
+        ComponentStatus::new(CheckState::Outdated, "Há uma versão mais nova das peças da integração.")
     } else {
-        ComponentStatus::new(CheckState::Ok, "Componentes instalados.")
+        ComponentStatus::new(CheckState::Ok, "Peças da integração instaladas.")
     }
 }
 
@@ -881,7 +881,7 @@ fn credentials_status(env: &IntegrationEnv, g: &GitConfig, backup: &IntegrationB
     Ok(match credential_state(&values, use_http_path.as_deref(), &credential_helper_value(&helper)) {
         CredentialState::Ok if !is_executable(&helper) => ComponentStatus::new(
             CheckState::Error,
-            "O Git aponta para o GitPass, mas o componente de credenciais não existe. Escolhe Reparar.",
+            "O Git aponta para o GitPass, mas a peça de credenciais não existe. Escolha Reparar.",
         ),
         CredentialState::Ok => ComponentStatus::new(
             CheckState::Ok,
@@ -889,12 +889,12 @@ fn credentials_status(env: &IntegrationEnv, g: &GitConfig, backup: &IntegrationB
         )
         .previous(previous),
         CredentialState::Outdated => {
-            ComponentStatus::new(CheckState::Outdated, "Configuração antiga ou incompleta. Escolhe Reparar.")
+            ComponentStatus::new(CheckState::Outdated, "Configuração antiga ou incompleta. Escolha Reparar.")
         }
         CredentialState::Missing => ComponentStatus::new(CheckState::Missing, "Ainda não configurado."),
         CredentialState::Conflict(v) => ComponentStatus::new(
             CheckState::Conflict,
-            "Outro gestor de credenciais responde pelo GitHub. Reparar substitui-o só para github.com e guarda uma cópia.",
+            "Outro gerenciador de credenciais cuida do GitHub. Reparar o substitui só para github.com e guarda um backup.",
         )
         .current(Some(v)),
     })
@@ -925,23 +925,23 @@ fn hooks_up_to_date(env: &IntegrationEnv, next: Option<&Path>) -> bool {
 fn hooks_status(env: &IntegrationEnv, g: &GitConfig, backup: &IntegrationBackup) -> Result<ComponentStatus, String> {
     let current = g.get(HOOKS_PATH_KEY)?;
     Ok(match classify_hooks_path(current.as_deref(), &env.hooks_dir(), env.home.as_deref()) {
-        HooksPathState::NotSet => ComponentStatus::new(CheckState::Missing, "Ainda não instalados."),
+        HooksPathState::NotSet => ComponentStatus::new(CheckState::Missing, "Ainda não instaladas."),
         HooksPathState::Foreign(p) => ComponentStatus::new(
             CheckState::Conflict,
-            "Já tens hooks globais próprios, por isso o GitPass não os substituiu. Podes encadeá-los: o GitPass valida primeiro e depois corre os teus.",
+            "Você já tem verificações globais do Git, então o GitPass não as substituiu. Você pode encadeá-las: o GitPass confere a conta primeiro e depois roda as suas.",
         )
         .current(Some(p)),
         HooksPathState::Managed => {
             let next = chain_dir(env, g, backup);
             let prev = next.as_ref().map(|p| p.display().to_string());
             if !hooks_up_to_date(env, next.as_deref()) {
-                ComponentStatus::new(CheckState::Outdated, "Os scripts dos hooks estão desatualizados. Escolhe Reparar.")
+                ComponentStatus::new(CheckState::Outdated, "As verificações do GitPass estão desatualizadas. Escolha Reparar.")
             } else if !is_executable(&env.bin_path(SIDECAR_CLI)) {
-                ComponentStatus::new(CheckState::Error, "Os hooks estão ativos, mas falta o componente do GitPass. Escolhe Reparar.")
+                ComponentStatus::new(CheckState::Error, "As verificações estão ativas, mas falta uma peça do GitPass. Escolha Reparar.")
             } else {
                 ComponentStatus::new(
                     CheckState::Ok,
-                    "Ativos: confirmam a conta antes de cada commit e push nos repositórios vinculados.",
+                    "Ativas: conferem a conta antes de cada commit e push nos repositórios vinculados.",
                 )
                 .previous(prev)
             }
@@ -953,23 +953,23 @@ fn daemon_status(env: &IntegrationEnv) -> ComponentStatus {
     let ping = ping_daemon(&env.socket_path(), Duration::from_secs(2));
     let Some(plist) = env.launch_agent_plist() else {
         return match ping {
-            Ok(v) => ComponentStatus::new(CheckState::Ok, format!("Em execução (gitpassd {v}).")),
-            Err(_) => ComponentStatus::new(CheckState::Missing, "Não está a correr."),
+            Ok(v) => ComponentStatus::new(CheckState::Ok, format!("Rodando (versão {v}).")),
+            Err(_) => ComponentStatus::new(CheckState::Missing, "Não está rodando."),
         };
     };
     let expected = launch_agent_plist(&env.bin_path(SIDECAR_DAEMON), &env.daemon_log());
     let installed = fs::read_to_string(&plist).ok();
     match (installed, ping) {
-        (Some(p), Ok(v)) if p == expected => ComponentStatus::new(CheckState::Ok, format!("Em execução (gitpassd {v}).")),
+        (Some(p), Ok(v)) if p == expected => ComponentStatus::new(CheckState::Ok, format!("Rodando (versão {v}).")),
         (Some(_), Ok(_)) => {
-            ComponentStatus::new(CheckState::Outdated, "A configuração do serviço está desatualizada. Escolhe Reparar.")
+            ComponentStatus::new(CheckState::Outdated, "A configuração do serviço está desatualizada. Escolha Reparar.")
         }
         (Some(_), Err(_)) => {
-            ComponentStatus::new(CheckState::Error, "Instalado, mas não responde. Escolhe Reparar ou Reiniciar.")
+            ComponentStatus::new(CheckState::Error, "Instalado, mas não responde. Escolha Reparar ou Reiniciar.")
         }
         (None, Ok(v)) => ComponentStatus::new(
             CheckState::Outdated,
-            format!("Em execução (gitpassd {v}), mas não arranca sozinho. Escolhe Reparar."),
+            format!("Rodando (versão {v}), mas não inicia sozinho. Escolha Reparar."),
         ),
         (None, Err(_)) => ComponentStatus::new(CheckState::Missing, "Não instalado."),
     }
@@ -1023,7 +1023,7 @@ fn sync_binaries(env: &IntegrationEnv, changes: &mut Vec<String>) -> Result<bool
                     write_atomic(&dest, &bytes, 0o755).map_err(|e| {
                         format!("Não foi possível instalar {} em {}: {e}", s.name, env.bin_dir().display())
                     })?;
-                    changes.push(format!("Componente {} instalado.", s.name));
+                    changes.push(format!("Peça da integração instalada: {}.", s.name));
                     daemon_updated |= s == SIDECAR_DAEMON;
                 }
             }
@@ -1035,7 +1035,7 @@ fn sync_binaries(env: &IntegrationEnv, changes: &mut Vec<String>) -> Result<bool
         Ok(daemon_updated)
     } else {
         Err(format!(
-            "Esta instalação do GitPass não inclui os componentes de integração ({}). Reinstala a app a partir do ficheiro original.",
+            "Esta instalação do GitPass não inclui as peças da integração ({}). Instale o app de novo a partir do arquivo original.",
             missing.join(", ")
         ))
     }
@@ -1067,7 +1067,7 @@ fn apply_credentials(
     g.set(CREDENTIAL_USE_HTTP_PATH_KEY, "true")?;
     changes.push(match state {
         CredentialState::Conflict(prev) => {
-            format!("Credenciais do GitHub passam a vir do GitPass (substituído: {prev}; guardado para repor).")
+            format!("As credenciais do GitHub agora vêm do GitPass (substituído: {prev}; salvo para restaurar).")
         }
         _ => "Credenciais do GitHub configuradas.".to_string(),
     });
@@ -1079,7 +1079,7 @@ fn write_hooks(env: &IntegrationEnv, next: Option<&Path>) -> Result<bool, String
         return Ok(false);
     }
     let dir = env.hooks_dir();
-    let fail = |e: io::Error| format!("Não foi possível escrever os hooks em {}: {e}", dir.display());
+    let fail = |e: io::Error| format!("Não foi possível gravar as verificações do Git em {}: {e}", dir.display());
     fs::create_dir_all(&dir).map_err(fail)?;
     #[cfg(unix)]
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).map_err(fail)?;
@@ -1110,7 +1110,7 @@ fn apply_hooks(
                 save_backup(env, backup)?;
             }
             if write_hooks(env, chain_dir(env, g, backup).as_deref())? {
-                changes.push("Hooks do Git atualizados.".into());
+                changes.push("Verificações do Git atualizadas.".into());
             }
         }
         HooksPathState::NotSet => {
@@ -1120,7 +1120,7 @@ fn apply_hooks(
             }
             write_hooks(env, chain_dir(env, g, backup).as_deref())?;
             g.set(HOOKS_PATH_KEY, &managed_str)?;
-            changes.push("Hooks do Git instalados.".into());
+            changes.push("Verificações do Git instaladas.".into());
         }
         HooksPathState::Foreign(prev) if take_over => {
             backup.hooks = Some(HooksBackup {
@@ -1129,11 +1129,11 @@ fn apply_hooks(
             save_backup(env, backup)?;
             write_hooks(env, chain_dir(env, g, backup).as_deref())?;
             g.set(HOOKS_PATH_KEY, &managed_str)?;
-            changes.push(format!("Hooks do GitPass ativos; os teus hooks em {prev} continuam a correr a seguir."));
+            changes.push(format!("Verificações do GitPass ativas; as suas verificações em {prev} continuam rodando depois."));
         }
         HooksPathState::Foreign(prev) => {
             warnings.push(format!(
-                "Os hooks não foram instalados porque o Git já usa hooks globais em {prev}. Em Definições podes encadeá-los."
+                "As verificações do GitPass não foram instaladas porque o Git já usa verificações globais em {prev}. Em Configurações, você pode encadeá-las."
             ));
         }
     }
@@ -1150,7 +1150,7 @@ fn apply_daemon(env: &IntegrationEnv, binary_updated: bool, changes: &mut Vec<St
     let plist_changed = fs::read_to_string(&plist).ok().as_deref() != Some(expected.as_str());
     if plist_changed {
         write_atomic(&plist, expected.as_bytes(), 0o644)
-            .map_err(|e| format!("Não foi possível registar o serviço em {}: {e}", plist.display()))?;
+            .map_err(|e| format!("Não foi possível registrar o serviço em {}: {e}", plist.display()))?;
     }
     let loaded = agent_loaded();
     if loaded && plist_changed {
@@ -1164,11 +1164,11 @@ fn apply_daemon(env: &IntegrationEnv, binary_updated: bool, changes: &mut Vec<St
         return Ok(());
     }
     wait_for_daemon(&env.socket_path(), Duration::from_secs(3))
-        .map_err(|_| "O serviço do GitPass foi iniciado mas ainda não responde. Tenta Reiniciar daqui a pouco.".to_string())?;
+        .map_err(|_| "O serviço do GitPass foi iniciado, mas ainda não responde. Tente Reiniciar daqui a pouco.".to_string())?;
     changes.push(if plist_changed {
-        "Serviço gitpassd registado e iniciado.".into()
+        "Serviço em segundo plano registrado e iniciado.".into()
     } else {
-        "Serviço gitpassd reiniciado.".into()
+        "Serviço em segundo plano reiniciado.".into()
     });
     Ok(())
 }
@@ -1218,10 +1218,10 @@ pub fn autostart(env: &IntegrationEnv) -> Result<Option<IntegrationReport>, Stri
 pub fn daemon_restart(env: &IntegrationEnv) -> Result<IntegrationStatus, String> {
     let _g = lock();
     let Some(plist) = env.launch_agent_plist() else {
-        return Err("O serviço só pode ser gerido no macOS.".into());
+        return Err("O serviço em segundo plano só pode ser gerenciado no macOS.".into());
     };
     if !plist.exists() || !is_executable(&env.bin_path(SIDECAR_DAEMON)) {
-        return Err("O serviço ainda não está instalado. Escolhe Reparar.".into());
+        return Err("O serviço em segundo plano ainda não está instalado. Escolha Reparar.".into());
     }
     if agent_loaded() {
         agent_kickstart()?;
@@ -1229,7 +1229,7 @@ pub fn daemon_restart(env: &IntegrationEnv) -> Result<IntegrationStatus, String>
         agent_bootstrap(&plist)?;
     }
     wait_for_daemon(&env.socket_path(), Duration::from_secs(3))
-        .map_err(|_| "O serviço foi reiniciado mas ainda não responde. Tenta de novo daqui a pouco.".to_string())?;
+        .map_err(|_| "O serviço foi reiniciado, mas ainda não responde. Tente de novo daqui a pouco.".to_string())?;
     Ok(status_unlocked(env))
 }
 
@@ -1237,7 +1237,7 @@ pub fn daemon_restart(env: &IntegrationEnv) -> Result<IntegrationStatus, String>
 pub fn daemon_stop(env: &IntegrationEnv) -> Result<IntegrationStatus, String> {
     let _g = lock();
     if env.launch_agent_plist().is_none() {
-        return Err("O serviço só pode ser gerido no macOS.".into());
+        return Err("O serviço em segundo plano só pode ser gerenciado no macOS.".into());
     }
     agent_bootout()?;
     Ok(status_unlocked(env))
@@ -1266,9 +1266,9 @@ fn undo_credentials(g: &GitConfig, backup: Option<&CredentialBackup>, changes: &
     }
     g.remove_section_if_empty(CREDENTIAL_SECTION, CREDENTIAL_SECTION_REGEX);
     changes.push(if restore.iter().any(|h| !h.is_empty()) {
-        "Credenciais do GitHub repostas como estavam.".into()
+        "Credenciais do GitHub restauradas como estavam.".into()
     } else {
-        "Credenciais do GitHub deixaram de passar pelo GitPass.".into()
+        "As credenciais do GitHub não passam mais pelo GitPass.".into()
     });
     Ok(())
 }
@@ -1285,8 +1285,8 @@ fn undo_hooks(env: &IntegrationEnv, g: &GitConfig, backup: Option<&HooksBackup>,
             None => g.unset_all(HOOKS_PATH_KEY)?,
         }
         changes.push(match previous {
-            Some(p) => format!("Hooks globais repostos para {p}."),
-            None => "Hooks do GitPass removidos.".into(),
+            Some(p) => format!("Verificações globais restauradas para {p}."),
+            None => "Verificações do GitPass removidas.".into(),
         });
     }
     g.unset_all(LEGACY_HOOKS_BACKUP_KEY)?;
@@ -1318,7 +1318,7 @@ pub fn undo(env: &IntegrationEnv) -> Result<IntegrationReport, String> {
                 warnings.push(e);
             }
             let _ = fs::remove_file(&plist);
-            changes.push("Serviço gitpassd removido.".into());
+            changes.push("Serviço em segundo plano removido.".into());
         }
     }
 

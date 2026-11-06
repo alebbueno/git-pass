@@ -58,7 +58,7 @@ enum Commands {
     },
     /// Check Git, the GitPass integration (credentials, hooks, daemon) and the config.
     Doctor,
-    /// Install or undo the Git integration (same as Definições › Integração com o Git in the app).
+    /// Install or undo the Git integration (same as Configurações › Integração com o Git in the app).
     Hooks(HooksCmd),
     /// Internal: invoked by hook scripts (validates repo against config.toml).
     Hook(HookCmd),
@@ -220,7 +220,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         }
         Commands::Daemon => {
             eprintln!(
-                "O serviço gitpassd é gerido pela app GitPass (Definições › Integração com o Git). Para depurar, corre o binário gitpassd diretamente."
+                "O serviço em segundo plano é gerenciado pelo app GitPass (Configurações › Integração com o Git). Para depurar, rode o binário gitpassd diretamente."
             );
             Ok(0)
         }
@@ -505,9 +505,9 @@ fn print_report(r: &IntegrationReport, nothing_changed: &str) -> i32 {
 fn integration_apply(chain: bool) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     let env = integration_env()?;
     let report = integration::apply(&env, ApplyOptions { take_over_hooks: chain })?;
-    let code = print_report(&report, "a integração com o Git já estava em vigor.");
+    let code = print_report(&report, "a integração com o Git já estava ativa.");
     if report.status.hooks.state == CheckState::Conflict {
-        println!("\nPara encadear os teus hooks globais (o GitPass valida primeiro e depois corre os teus): gitpass hooks install --chain");
+        println!("\nPara manter as suas verificações globais do Git (o GitPass confere a conta primeiro e depois roda as suas): gitpass hooks install --chain");
     }
     Ok(code)
 }
@@ -515,9 +515,9 @@ fn integration_apply(chain: bool) -> Result<i32, Box<dyn std::error::Error + Sen
 fn integration_undo() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     let env = integration_env()?;
     let report = integration::undo(&env)?;
-    let code = print_report(&report, "não havia nada a desfazer.");
+    let code = print_report(&report, "não havia nada para desfazer.");
     println!(
-        "\nA app GitPass não volta a ativar a integração sozinha. Para a reativar: gitpass hooks install ou «Ativar integração» em Definições."
+        "\nO app GitPass não ativa a integração de novo sozinho. Para ativar: gitpass hooks install ou «Ativar integração» em Configurações."
     );
     Ok(code)
 }
@@ -635,7 +635,7 @@ fn run_hook(phase: &str) -> Result<i32, Box<dyn std::error::Error + Send + Sync>
     if ci_bypass_from_env() {
         let quiet = std::env::var("GITPASS_QUIET_HOOK").ok().as_deref() == Some("1");
         if !quiet {
-            eprintln!("GitPass: ambiente de CI autorizado — verificações ignoradas no hook {phase}.");
+            eprintln!("GitPass: ambiente de CI autorizado — verificações ignoradas em {phase}.");
         }
         return Ok(0);
     }
@@ -662,7 +662,7 @@ fn run_hook(phase: &str) -> Result<i32, Box<dyn std::error::Error + Send + Sync>
                 }
                 Err(_) => {
                     if !quiet {
-                        eprintln!("GitPass: aviso: o serviço do GitPass não respondeu; a validar sem ele.");
+                        eprintln!("GitPass: aviso: o serviço do GitPass não respondeu; conferindo sem ele.");
                     }
                 }
             }
@@ -723,7 +723,7 @@ fn handle_validate_outcome(v: IpcResponse, quiet: bool) -> i32 {
                 1
             } else {
                 if !quiet {
-                    eprintln!("GitPass [GP-IPC] O serviço do GitPass deu uma resposta inválida. Abre a app GitPass e escolhe «Reparar» em Definições.");
+                    eprintln!("GitPass [GP-IPC] O serviço do GitPass enviou uma resposta inválida. Abra o app GitPass e escolha «Reparar» em Configurações.");
                 }
                 1
             }
@@ -736,7 +736,7 @@ fn handle_validate_outcome(v: IpcResponse, quiet: bool) -> i32 {
         }
         _ => {
             if !quiet {
-                eprintln!("GitPass [GP-IPC] Resposta inesperada do serviço do GitPass. Abre a app GitPass e escolhe «Reparar» em Definições.");
+                eprintln!("GitPass [GP-IPC] O serviço do GitPass enviou uma resposta que não entendemos. Abra o app GitPass e escolha «Reparar» em Configurações.");
             }
             1
         }
