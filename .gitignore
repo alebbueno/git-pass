@@ -8,3 +8,4 @@ gitpass-desktop/dist
 *.log
 .env
 .env.*
+*.zip
