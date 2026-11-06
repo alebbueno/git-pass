@@ -9,7 +9,7 @@ import { brandSymbol, icon, type IconName } from "./lib/icons";
 import { profileChip } from "./lib/profile";
 import { initTheme } from "./lib/theme";
 import { DATA_CHANGED_EVENT, type MountView, type ViewContext, type ViewId } from "./lib/view";
-import { mount as mountOverview } from "./views/overview";
+import { mountHome } from "./views/welcome";
 import { mount as mountRepos } from "./views/repos";
 import { mount as mountAccounts } from "./views/accounts";
 import { mount as mountCloud } from "./views/cloud";
@@ -18,7 +18,7 @@ import { mount as mountSettings } from "./views/settings";
 initTheme();
 
 const VIEWS: { id: ViewId; label: string; icon: IconName; mount: MountView }[] = [
-  { id: "overview", label: "Painel", icon: "dashboard", mount: mountOverview },
+  { id: "overview", label: "Painel", icon: "dashboard", mount: mountHome },
   { id: "repos", label: "Repositórios", icon: "repo", mount: mountRepos },
   { id: "accounts", label: "Contas", icon: "user", mount: mountAccounts },
   { id: "cloud", label: "Na cloud", icon: "cloud", mount: mountCloud },

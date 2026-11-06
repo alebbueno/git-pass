@@ -92,7 +92,33 @@
   border-width: 1.5px;
 }
 
+/* ---------- Aviso de identidades ---------- */
+
+.overview-identity {
+  align-items: center;
+  white-space: normal;
+}
+
+.overview-identity-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.overview-identity-btn {
+  flex-shrink: 0;
+}
+
 /* ---------- Primeiros passos ---------- */
+
+.overview-onboarding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rid-space-3);
+}
 
 .overview-onboarding-sub {
   margin: 0 0 var(--rid-space-4);

@@ -1,8 +1,10 @@
 import "./overview.css";
 import { api, type AccountRow, type BindingRow } from "../lib/api";
 import { integrationApi, integrationHeadline, onIntegrationChanged, type IntegrationStatus } from "../lib/api-integration";
-import { esc, withBusy, shortenPath } from "../lib/dom";
+import { reposApi, type RepoRow } from "../lib/api-repos";
+import { errMessage, esc, withBusy, shortenPath, showToast } from "../lib/dom";
 import { icon } from "../lib/icons";
+import { getOnboarding, WELCOME_REQUEST_EVENT } from "../lib/onboarding";
 import { profileAvatar, profileChip, profileName } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView, type ViewId } from "../lib/view";
 
@@ -15,6 +17,8 @@ type State = {
   accounts: Loadable<AccountRow[]>;
   bindings: Loadable<BindingRow[]>;
   integration: Loadable<IntegrationStatus>;
+  /** Repositórios vinculados cuja identidade Git local difere da esperada. */
+  mismatched: RepoRow[];
 };
 
 const escAttr = esc;
@@ -103,13 +107,34 @@ function step(n: string, eyebrow: string, title: string, desc: string, done: boo
     </li>`;
 }
 
+function renderIdentityAlert(rows: RepoRow[]): string {
+  if (rows.length === 0) return "";
+  const shown = rows.slice(0, 3).map((r) => (r.github_owner && r.github_repo ? `${r.github_owner}/${r.github_repo}` : shortenPath(r.root_path)));
+  const rest = rows.length - shown.length;
+  const names = shown.map((n) => `<span class="mono">${esc(n)}</span>`).join(", ") + (rest > 0 ? ` e mais ${rest}` : "");
+  const title =
+    rows.length === 1 ? "1 repositório com identidade diferente" : `${rows.length} repositórios com identidade diferente`;
+  return `
+    <div class="callout warning overview-identity" role="status">
+      ${icon("alert", 16)}
+      <div class="overview-identity-text">
+        <strong>${esc(title)}</strong>
+        <span>O nome ou o email do Git neste repositório não corresponde à conta vinculada: ${names}. Os próximos commits sairiam com a identidade errada.</span>
+      </div>
+      <button type="button" class="btn overview-identity-btn" data-action="fix-all">${icon("check", 14)}<span>Corrigir todos</span></button>
+    </div>`;
+}
+
 function renderOnboarding(accounts: AccountRow[], bindings: BindingRow[]): string {
   if (accounts.length > 0 && bindings.length > 0) return "";
   const hasAcc = accounts.length > 0;
   const hasBind = bindings.length > 0;
   return `
     <section class="panel overview-onboarding" aria-labelledby="overview-onboarding-title">
-      <h2 class="panel-title" id="overview-onboarding-title">Primeiros passos</h2>
+      <div class="overview-onboarding-head">
+        <h2 class="panel-title" id="overview-onboarding-title">Primeiros passos</h2>
+        ${getOnboarding() === "skipped" ? `<button type="button" class="btn ghost" data-action="welcome">Abrir guia de boas-vindas</button>` : ""}
+      </div>
       <p class="muted small overview-onboarding-sub">Duas etapas até o Git usar sempre a identidade certa.</p>
       <ol class="list overview-steps">
         ${step("1", "01 / Conta", "Ligar conta GitHub", "Autorize uma conta para criar um perfil.", hasAcc, !hasAcc, "accounts")}
@@ -241,6 +266,7 @@ function renderBody(s: State): string {
   const bindings = s.bindings.value;
   return `
     ${tiles}
+    ${renderIdentityAlert(s.mismatched)}
     ${renderOnboarding(accounts, bindings)}
     <div class="overview-grid">
       ${renderRepos(accounts, bindings)}
@@ -271,6 +297,7 @@ export const mount: MountView = (root, ctx) => {
     accounts: { status: "loading" },
     bindings: { status: "loading" },
     integration: { status: "loading" },
+    mismatched: [],
   };
 
   const draw = (): void => {
@@ -288,9 +315,20 @@ export const mount: MountView = (root, ctx) => {
         accounts: { status: "loading" },
         bindings: { status: "loading" },
         integration: { status: "loading" },
+        mismatched: [],
       };
       draw();
     }
+
+    // A verificação de identidades toca no disco (git config): não bloqueia o resto do Painel.
+    void reposApi.list().then(
+      (rows) => {
+        if (disposed || mine !== seq) return;
+        state = { ...state, mismatched: rows.filter((r) => r.exists && r.identity.state === "different") };
+        draw();
+      },
+      () => undefined
+    );
 
     // O estado da integração contacta o Git e o daemon: atualiza o tile à parte.
     void integrationApi.status().then(
@@ -317,7 +355,37 @@ export const mount: MountView = (root, ctx) => {
     draw();
   }
 
+  async function fixAll(btn: HTMLButtonElement): Promise<void> {
+    const targets = state.mismatched;
+    if (!targets.length) return;
+    let fixed = 0;
+    const failed: string[] = [];
+    await withBusy(btn, "A corrigir…", async () => {
+      for (const r of targets) {
+        try {
+          await reposApi.fixIdentity(r.id);
+          fixed++;
+        } catch (e) {
+          failed.push(`${r.github_repo ?? shortenPath(r.root_path)}: ${errMessage(e)}`);
+        }
+      }
+    });
+    if (disposed) return;
+    if (fixed > 0) showToast(fixed === 1 ? "Identidade corrigida em 1 repositório." : `Identidade corrigida em ${fixed} repositórios.`, "ok");
+    if (failed.length) showToast(`Não foi possível corrigir:\n${failed.join("\n")}`);
+    ctx.notifyDataChanged();
+    await load(true);
+    // O botão desaparece quando tudo fica corrigido: devolve o foco à vista.
+    if (!disposed && !body.contains(document.activeElement)) root.focus({ preventScroll: true });
+  }
+
   const onClick = (ev: Event): void => {
+    const act = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-action]");
+    if (act && body.contains(act)) {
+      if (act.dataset.action === "fix-all") void fixAll(act);
+      else if (act.dataset.action === "welcome") document.dispatchEvent(new CustomEvent(WELCOME_REQUEST_EVENT));
+      return;
+    }
     const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-nav]");
     if (el && body.contains(el)) ctx.navigate(el.dataset.nav as ViewId);
   };
