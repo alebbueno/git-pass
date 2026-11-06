@@ -189,11 +189,11 @@ fn binding_remote_consistency(binding: &RepoBinding, remote: &GitHubRepoId) -> R
     let owner_ok = binding
         .github_owner
         .as_deref()
-        .map_or(true, |bo| normalize_owner(bo) == remote.owner);
+        .is_none_or(|bo| normalize_owner(bo) == remote.owner);
     let repo_ok = binding
         .github_repo
         .as_deref()
-        .map_or(true, |br| br.trim_end_matches(".git").eq_ignore_ascii_case(remote.repo.as_str()));
+        .is_none_or(|br| br.trim_end_matches(".git").eq_ignore_ascii_case(remote.repo.as_str()));
     if owner_ok && repo_ok {
         return Ok(());
     }
@@ -410,4 +410,165 @@ fn owner_mismatch_message(owner: &str, login: &str) -> String {
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn err_of(v: ValidateFail) -> (&'static str, String) {
+        match v {
+            ValidateFail::Err { code, message } => (code, message),
+            other => panic!("expected an error, got {other:?}"),
+        }
+    }
+
+    fn assert_user_facing(msg: &str) {
+        for jargon in ["GITPASS_", "config.toml", "[[repos]]", "gitpassd", "github_login", "Run:"] {
+            assert!(!msg.contains(jargon), "{jargon:?} in {msg:?}");
+        }
+    }
+
+    fn dev_overrides_set() -> bool {
+        ["GITPASS_ALLOW_PUSH_WITHOUT_DAEMON", "GITPASS_ALLOW_LOCAL_COMMIT"]
+            .iter()
+            .any(|k| std::env::var_os(k).is_some())
+    }
+
+    #[test]
+    fn daemon_off_messages_point_to_the_app() {
+        if dev_overrides_set() {
+            return;
+        }
+        let cfg = AppConfig::default();
+        let (code, msg) = err_of(policy_when_daemon_unreachable("pre-push", &cfg));
+        assert_eq!(code, "GP-DAEMON-OFF");
+        assert_eq!(
+            msg,
+            "O serviço do GitPass não está a responder, por isso o push foi bloqueado. Abre a app GitPass e escolhe «Reparar» em Definições."
+        );
+        let (code, msg) = err_of(policy_when_daemon_unreachable("pre-commit", &cfg));
+        assert_eq!(code, "GP-DAEMON-OFF");
+        assert!(msg.contains("o commit foi bloqueado") && msg.contains("«Reparar»"), "{msg}");
+        assert_user_facing(&msg);
+        assert!(matches!(policy_when_daemon_unreachable("post-commit", &cfg), ValidateFail::Ok));
+    }
+
+    #[test]
+    fn origin_credentials_are_never_shown() {
+        assert_eq!(redact_url("https://octo:gho_secret@github.com/a/b.git"), "https://github.com/a/b.git");
+        assert_eq!(redact_url("https://x-access-token@gitlab.com/a/b"), "https://gitlab.com/a/b");
+        assert_eq!(redact_url("https://gitlab.com/a@b/c"), "https://gitlab.com/a@b/c");
+        assert_eq!(redact_url("git@github.com:a/b.git"), "git@github.com:a/b.git");
+    }
+
+    #[test]
+    fn owner_mismatch_message_names_owner_and_account() {
+        assert_eq!(
+            owner_mismatch_message("acme", "octo"),
+            "Este repositório pertence a acme, mas está associado à conta @octo. Muda a conta na app GitPass (Repositórios)."
+        );
+    }
+
+    struct Repo(PathBuf);
+
+    impl Drop for Repo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Temporary repository with `origin`; the user's Git config is neither read nor written.
+    fn repo_with_origin(origin: &str) -> Repo {
+        let dir = std::env::temp_dir().join(format!("gitpass-validate-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        for args in [&["init", "-q"][..], &["remote", "add", "origin", origin][..]] {
+            let o = Command::new("git")
+                .current_dir(&dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        }
+        Repo(dir)
+    }
+
+    fn cfg_for(root: &Path, login: &str, owner: Option<&str>, repo: Option<&str>) -> AppConfig {
+        let account_id = Uuid::new_v4();
+        AppConfig {
+            accounts: vec![Account {
+                id: account_id,
+                github_login: Some(login.into()),
+                ..Default::default()
+            }],
+            repos: vec![RepoBinding {
+                id: Uuid::new_v4(),
+                account_id,
+                root_path: root.to_path_buf(),
+                github_owner: owner.map(String::from),
+                github_repo: repo.map(String::from),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn check(repo: &Repo, cfg: &AppConfig) -> ValidateFail {
+        let ctx = HookContext {
+            phase: "pre-commit".into(),
+            cwd: repo.0.clone(),
+        };
+        validate_repo_for_hook(&ctx, cfg)
+    }
+
+    #[test]
+    fn bound_repo_of_the_account_passes() {
+        let repo = repo_with_origin("https://github.com/Octo/app.git");
+        let cfg = cfg_for(&repo.0, "octo", Some("octo"), Some("app"));
+        assert!(matches!(check(&repo, &cfg), ValidateFail::Ok));
+    }
+
+    #[test]
+    fn unbound_repo_is_reported_in_portuguese() {
+        let repo = repo_with_origin("https://github.com/octo/app.git");
+        let (code, msg) = err_of(check(&repo, &AppConfig::default()));
+        assert_eq!(code, "GP-BINDING");
+        assert!(msg.contains("não está associado a nenhuma conta"), "{msg}");
+        assert_user_facing(&msg);
+    }
+
+    #[test]
+    fn origin_changed_since_binding_is_gp_owner() {
+        let repo = repo_with_origin("https://octo:gho_secret@github.com/other/app.git");
+        let cfg = cfg_for(&repo.0, "octo", Some("octo"), Some("app"));
+        let (code, msg) = err_of(check(&repo, &cfg));
+        assert_eq!(code, "GP-OWNER");
+        assert_eq!(
+            msg,
+            "O remoto «origin» aponta para other/app, mas no GitPass este repositório está registado como octo/app. Associa-o de novo na app GitPass (Repositórios)."
+        );
+        assert!(!msg.contains("gho_secret"));
+    }
+
+    #[test]
+    fn org_repo_without_token_asks_to_reconnect() {
+        let repo = repo_with_origin("https://github.com/acme/app.git");
+        let cfg = cfg_for(&repo.0, "octo", Some("acme"), Some("app"));
+        let (code, msg) = err_of(check(&repo, &cfg));
+        assert_eq!(code, "GP-OAUTH");
+        assert!(msg.contains("pertence a acme") && msg.contains("@octo") && msg.contains("Liga-a de novo"), "{msg}");
+        assert_user_facing(&msg);
+    }
+
+    #[test]
+    fn non_github_origin_is_gp_remote_without_credentials() {
+        let repo = repo_with_origin("https://me:secret@gitlab.com/me/app.git");
+        let cfg = cfg_for(&repo.0, "octo", None, None);
+        let (code, msg) = err_of(check(&repo, &cfg));
+        assert_eq!(code, "GP-REMOTE");
+        assert!(msg.contains("https://gitlab.com/me/app.git") && !msg.contains("secret"), "{msg}");
+    }
 }

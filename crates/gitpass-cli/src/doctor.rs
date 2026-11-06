@@ -1,13 +1,11 @@
-//! `gitpass doctor` — environment checks (no daemon required for most checks).
+//! `gitpass doctor` — environment checks, using the same integration status as the app.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
-use gitpass_core::{
-    app_support_dir, config_file_path, hooks_dir, hooks_installed_ok, ipc_socket_path, AppConfig,
-    HOOKS_DIR_NAME,
-};
+use gitpass_core::integration::{self, CheckState, ComponentStatus, IntegrationEnv, IntegrationStatus};
+use gitpass_core::{config_file_path, AppConfig};
 
 #[derive(Default)]
 pub struct DoctorReport {
@@ -23,12 +21,12 @@ impl DoctorReport {
 
     fn warn(&mut self, msg: impl Into<String>) {
         self.warnings += 1;
-        self.lines.push(format!("warn: {}", msg.into()));
+        self.lines.push(format!("aviso: {}", msg.into()));
     }
 
     fn err(&mut self, msg: impl Into<String>) {
         self.errors += 1;
-        self.lines.push(format!("error: {}", msg.into()));
+        self.lines.push(format!("erro: {}", msg.into()));
     }
 
     pub fn print_and_status(&self) -> io::Result<i32> {
@@ -47,197 +45,119 @@ impl DoctorReport {
     }
 }
 
-/// Path to this `gitpass` executable (used in generated hook scripts).
+/// Path to this `gitpass` executable.
 pub fn current_exe() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gitpass"))
 }
 
+/// The real machine, with the binaries next to this executable as the source for `apply`
+/// (`GitPass.app/Contents/MacOS` or `target/<profile>`).
+pub fn integration_env() -> io::Result<IntegrationEnv> {
+    let exe = current_exe();
+    let exe = exe.canonicalize().unwrap_or(exe);
+    IntegrationEnv::system(exe.parent().map(PathBuf::from))
+}
+
+fn state_label(s: CheckState) -> &'static str {
+    match s {
+        CheckState::Ok => "ok",
+        CheckState::Missing => "em falta",
+        CheckState::Outdated => "desatualizado",
+        CheckState::Conflict => "em conflito",
+        CheckState::Error => "erro",
+    }
+}
+
+fn components(s: &IntegrationStatus) -> [(&'static str, &ComponentStatus); 4] {
+    [
+        ("Componentes", &s.binaries),
+        ("Credenciais GitHub", &s.credentials),
+        ("Hooks do Git", &s.hooks),
+        ("Serviço gitpassd", &s.daemon),
+    ]
+}
+
+fn component_detail(c: &ComponentStatus) -> String {
+    let mut s = c.summary.clone();
+    if let Some(v) = &c.current_value {
+        s.push_str(&format!(" (atual: {v})"));
+    }
+    if let Some(v) = &c.previous_value {
+        s.push_str(&format!(" (anterior: {v})"));
+    }
+    s
+}
+
+pub fn print_integration_status(s: &IntegrationStatus) {
+    for (label, c) in components(s) {
+        println!("  {label}: {} — {}", state_label(c.state), component_detail(c));
+    }
+}
+
 pub fn run() -> io::Result<i32> {
-    let gitpass_bin = current_exe();
     let mut r = DoctorReport::default();
 
-    // macOS version (sw_vers)
     if cfg!(target_os = "macos") {
         match Command::new("/usr/bin/sw_vers").arg("-productVersion").output() {
             Ok(out) if out.status.success() => {
                 let s = String::from_utf8_lossy(&out.stdout);
-                let ver = s.lines().next().unwrap_or("").trim();
-                if ver.is_empty() {
-                    r.warn("could not read macOS version (sw_vers)");
-                } else {
-                    r.ok(format!("macOS version {ver}"));
+                match s.lines().next().map(str::trim).filter(|v| !v.is_empty()) {
+                    Some(ver) => r.ok(format!("macOS {ver}")),
+                    None => r.warn("não foi possível ler a versão do macOS"),
                 }
             }
-            _ => r.warn("could not run sw_vers — not macOS?"),
+            _ => r.warn("não foi possível correr sw_vers"),
         }
     } else {
-        r.warn("not running on macOS — GitPass v1 targets macOS 14+");
+        r.warn("o GitPass foi feito para macOS 14 ou posterior");
     }
 
-    // Git on PATH
-    match Command::new("git").arg("--version").output() {
-        Ok(out) if out.status.success() => {
-            let s = String::from_utf8_lossy(&out.stdout);
-            let line = s.lines().next().unwrap_or("git").trim();
-            r.ok(line.to_string());
-        }
-        _ => r.err("git not found on PATH (install Xcode CLT or Git)"),
-    }
-
-    // Application Support
-    match app_support_dir() {
-        Ok(p) => {
-            if p.is_dir() {
-                r.ok(format!(
-                    "application support {}",
-                    p.display()
-                ));
-            } else {
-                r.warn(format!(
-                    "application support missing (will be created): {}",
-                    p.display()
-                ));
+    match integration::find_git() {
+        Some(git) => match Command::new(&git).arg("--version").output() {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout);
+                r.ok(format!("{} ({})", s.lines().next().unwrap_or("git").trim(), git.display()));
             }
-        }
-        Err(e) => r.err(format!("application support path: {e}")),
+            _ => r.err(format!("o Git em {} não respondeu", git.display())),
+        },
+        None => r.err("Git não encontrado (instala as ferramentas de linha de comandos da Apple ou o Git)"),
     }
 
-    // config.toml
     match config_file_path() {
         Ok(p) => match AppConfig::load_or_default() {
-            Ok(cfg) => {
-                if p.exists() {
-                    r.ok(format!(
-                        "{} ({} accounts, {} repos)",
-                        p.display(),
-                        cfg.accounts.len(),
-                        cfg.repos.len()
-                    ));
-                } else {
-                    r.warn(format!("{} — not created yet (run gitpassd once)", p.display()));
-                }
-            }
-            Err(e) => r.err(format!("{} invalid: {e}", p.display())),
+            Ok(cfg) if p.exists() => r.ok(format!(
+                "configuração: {} contas, {} repositórios ({})",
+                cfg.accounts.len(),
+                cfg.repos.len(),
+                p.display()
+            )),
+            Ok(_) => r.warn("ainda não há configuração: abre a app GitPass e liga uma conta"),
+            Err(e) => r.err(format!("configuração inválida em {}: {e}", p.display())),
         },
-        Err(e) => r.err(format!("config path: {e}")),
+        Err(e) => r.err(format!("pasta de dados do GitPass: {e}")),
     }
 
-    // hooks directory + files
-    match hooks_installed_ok(&gitpass_bin) {
-        Ok(true) => {
-            if let Ok(h) = hooks_dir() {
-                r.ok(format!("hooks installed and up to date under {}", h.display()));
+    match integration_env() {
+        Ok(env) => {
+            let status = integration::status(&env);
+            if !status.enabled {
+                r.warn("integração desativada (foi desfeita); para a reativar: gitpass hooks install");
             }
-        }
-        Ok(false) => {
-            if let Ok(h) = hooks_dir() {
-                if h.is_dir() {
-                    r.warn(format!(
-                        "hooks under {} — missing, not executable, or stale (run: gitpass hooks install)",
-                        h.display()
-                    ));
-                } else {
-                    r.warn("hooks not installed yet (run: gitpass hooks install)");
+            for (label, c) in components(&status) {
+                let line = format!("{label}: {}", component_detail(c));
+                match c.state {
+                    CheckState::Ok => r.ok(line),
+                    CheckState::Error => r.err(line),
+                    CheckState::Missing | CheckState::Outdated | CheckState::Conflict => r.warn(line),
                 }
             }
-        }
-        Err(e) => r.err(format!("hooks check: {e}")),
-    }
-
-    // credential helper for github.com (HTTPS)
-    match git_global_config("credential.https://github.com.helper") {
-        Ok(Some(v)) => {
-            let expect = "git-credential-gitpass";
-            if v.contains(expect) {
-                r.ok(format!("git global credential.https://github.com.helper = {v}"));
-            } else {
-                r.warn(format!(
-                    "credential.https://github.com.helper = {v} — expected !.../git-credential-gitpass (run: gitpass config install-credential-helper)"
-                ));
+            if !status.ready && status.enabled {
+                r.lines.push("Para reparar: gitpass hooks install (ou «Reparar» em Definições na app GitPass).".into());
             }
         }
-        Ok(None) => r.warn(
-            "HTTPS: credential helper for github.com not set (run: gitpass config install-credential-helper)",
-        ),
-        Err(e) => r.err(format!("git config credential helper: {e}")),
+        Err(e) => r.err(format!("pasta de dados do GitPass: {e}")),
     }
 
-    // core.hooksPath
-    match git_global_config("core.hooksPath") {
-        Ok(Some(v)) => {
-            let expect_suffix = format!("{}/{}", gitpass_core::APP_SUPPORT_DIR, HOOKS_DIR_NAME);
-            if v.contains(&expect_suffix) || v.ends_with(HOOKS_DIR_NAME) {
-                r.ok(format!("git global core.hooksPath = {v}"));
-            } else {
-                r.warn(format!(
-                    "core.hooksPath is set to {v} — expected .../{}/{} (run: gitpass hooks install)",
-                    gitpass_core::APP_SUPPORT_DIR,
-                    HOOKS_DIR_NAME
-                ));
-            }
-        }
-        Ok(None) => r.warn("git global core.hooksPath not set (run: gitpass hooks install)"),
-        Err(e) => r.err(format!("git config: {e}")),
-    }
-
-    // gitpassd socket
-    match ipc_socket_path() {
-        Ok(p) => {
-            if p.exists() {
-                r.ok(format!("gitpassd socket present {}", p.display()));
-            } else {
-                r.warn(format!(
-                    "gitpassd socket missing {} — start gitpassd (Login Item later)",
-                    p.display()
-                ));
-            }
-        }
-        Err(e) => r.err(format!("socket path: {e}")),
-    }
-
-    r.ok(format!(
-        "this gitpass binary (for hooks): {}",
-        gitpass_bin.display()
-    ));
-
+    r.ok(format!("este binário: {}", current_exe().display()));
     r.print_and_status()
-}
-
-pub fn git_global_config(key: &str) -> Result<Option<String>, String> {
-    let out = Command::new("git")
-        .args(["config", "--global", "--get", key])
-        .output()
-        .map_err(|e| format!("{e}"))?;
-    if !out.status.success() {
-        return Ok(None);
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    let v = s.trim();
-    if v.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(v.to_string()))
-}
-
-pub fn set_git_global_config(key: &str, value: &str) -> Result<(), String> {
-    let st = Command::new("git")
-        .args(["config", "--global", key, value])
-        .status()
-        .map_err(|e| format!("{e}"))?;
-    if st.success() {
-        Ok(())
-    } else {
-        Err(format!("git config --global {key} failed (status {st})"))
-    }
-}
-
-/// Backup existing `core.hooksPath` to `core.hooksPath.gitpass-backup` if set and different.
-pub fn backup_hooks_path_if_needed(new_path: &str) -> Result<(), String> {
-    match git_global_config("core.hooksPath")? {
-        Some(cur) if cur != new_path => {
-            set_git_global_config("core.hooksPath.gitpass-backup", &cur)?;
-            Ok(())
-        }
-        _ => Ok(()),
-    }
 }

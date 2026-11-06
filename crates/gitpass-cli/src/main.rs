@@ -9,21 +9,20 @@ use std::os::unix::net::UnixStream as StdUnixStream;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use doctor::{backup_hooks_path_if_needed, current_exe, run as doctor_run, set_git_global_config};
+use doctor::{integration_env, print_integration_status, run as doctor_run};
+use gitpass_core::integration::{self, ApplyOptions, CheckState, IntegrationReport};
 use gitpass_core::{
     ci_bypass_from_env, config_file_path, decode_response_line, encode_line, git_remote_url,
     git_work_tree_root,
     github_oauth_device_login, github_oauth_env_credentials, github_oauth_login, github_token_delete,
     github_token_save, resolve_oauth_client_id,
-    hooks_dir, ipc_socket_path, normalize_owner, parse_github_remote,
-    policy_when_daemon_unreachable, validate_repo_for_hook, write_hook_scripts, Account, AppConfig,
+    ipc_socket_path, normalize_owner, parse_github_remote,
+    policy_when_daemon_unreachable, validate_repo_for_hook, Account, AppConfig,
     AuthMode as CoreAuthMode,
     DEFAULT_GITHUB_SCOPES, DEFAULT_OAUTH_CALLBACK_PORT, KEYCHAIN_SERVICE,
     HookContext, HookPhase, IpcRequest, IpcResponse, RepoBinding, ValidateFail,
 };
 use uuid::Uuid;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::net::UnixStream as AsyncUnixStream;
 use tokio::time::timeout;
@@ -57,9 +56,9 @@ enum Commands {
         #[command(subcommand)]
         sub: UiCmd,
     },
-    /// Check git, hooks path, config, and daemon socket.
+    /// Check Git, the GitPass integration (credentials, hooks, daemon) and the config.
     Doctor,
-    /// Manage Git hook scripts (global `core.hooksPath`).
+    /// Install or undo the Git integration (same as Definições › Integração com o Git in the app).
     Hooks(HooksCmd),
     /// Internal: invoked by hook scripts (validates repo against config.toml).
     Hook(HookCmd),
@@ -77,8 +76,14 @@ struct HooksCmd {
 
 #[derive(Subcommand)]
 enum HooksSub {
-    /// Write hook scripts and set `git config --global core.hooksPath`.
-    Install,
+    /// Install or repair the whole integration: hooks, GitHub credential helper and gitpassd.
+    Install {
+        /// Replace an existing global `core.hooksPath`; your hooks keep running after GitPass's.
+        #[arg(long)]
+        chain: bool,
+    },
+    /// Undo the integration and restore the previous Git configuration.
+    Uninstall,
 }
 
 #[derive(Parser)]
@@ -162,8 +167,10 @@ struct RepoBindArgs {
 
 #[derive(Subcommand)]
 enum ConfigCmd {
-    /// Register `git-credential-gitpass` for `https://github.com` (global).
+    /// Install or repair the integration (includes `git-credential-gitpass` for `https://github.com`).
     InstallCredentialHelper,
+    /// Undo the integration (same as `gitpass hooks uninstall`).
+    UninstallCredentialHelper,
 }
 
 #[derive(Subcommand)]
@@ -194,12 +201,14 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         Commands::Account { sub } => account_cmd(sub),
         Commands::Repo { sub } => repo_cmd(sub),
         Commands::Config { sub } => match sub {
-            ConfigCmd::InstallCredentialHelper => install_credential_helper(),
+            ConfigCmd::InstallCredentialHelper => integration_apply(false),
+            ConfigCmd::UninstallCredentialHelper => integration_undo(),
         },
         Commands::Ui { sub } => ui_cmd(sub),
         Commands::Doctor => doctor_run().map_err(|e| e.into()),
         Commands::Hooks(h) => match h.sub {
-            HooksSub::Install => install_hooks(),
+            HooksSub::Install { chain } => integration_apply(chain),
+            HooksSub::Uninstall => integration_undo(),
         },
         Commands::Hook(h) => run_hook(&h.phase),
         Commands::Ping => {
@@ -210,7 +219,9 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
                 .block_on(ping_async())?)
         }
         Commands::Daemon => {
-            eprintln!("Use `cargo run -p gitpassd --bin gitpassd` to run the daemon.");
+            eprintln!(
+                "O serviço gitpassd é gerido pela app GitPass (Definições › Integração com o Git). Para depurar, corre o binário gitpassd diretamente."
+            );
             Ok(0)
         }
     }
@@ -470,23 +481,45 @@ fn ui_cmd(cmd: UiCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-fn install_credential_helper() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
-    let mut helper = current_exe();
-    helper.set_file_name("git-credential-gitpass");
-    if !helper.exists() {
-        return Err(format!(
-            "helper not found next to gitpass: {} (build with cargo build -p gitpass-cli)",
-            helper.display()
-        )
-        .into());
+fn print_report(r: &IntegrationReport, nothing_changed: &str) -> i32 {
+    for c in &r.changes {
+        println!("ok: {c}");
     }
-    let key = "credential.https://github.com.helper";
-    let val = format!("!{}", helper.display());
-    doctor::set_git_global_config(key, &val)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    println!("ok: git config --global {} \"{}\"", key, val);
-    println!("Use HTTPS remotes + OAuth (`gitpass account login`) + `repo bind` so the helper can find the right token.");
-    Ok(0)
+    if r.changes.is_empty() {
+        println!("ok: {nothing_changed}");
+    }
+    for w in &r.warnings {
+        eprintln!("aviso: {w}");
+    }
+    println!();
+    print_integration_status(&r.status);
+    if r.warnings.is_empty() {
+        0
+    } else {
+        2
+    }
+}
+
+/// Same as "Reparar" in the app: copies this build's binaries to Application Support and points
+/// Git (credentials, `core.hooksPath`) and launchd at those copies.
+fn integration_apply(chain: bool) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+    let env = integration_env()?;
+    let report = integration::apply(&env, ApplyOptions { take_over_hooks: chain })?;
+    let code = print_report(&report, "a integração com o Git já estava em vigor.");
+    if report.status.hooks.state == CheckState::Conflict {
+        println!("\nPara encadear os teus hooks globais (o GitPass valida primeiro e depois corre os teus): gitpass hooks install --chain");
+    }
+    Ok(code)
+}
+
+fn integration_undo() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+    let env = integration_env()?;
+    let report = integration::undo(&env)?;
+    let code = print_report(&report, "não havia nada a desfazer.");
+    println!(
+        "\nA app GitPass não volta a ativar a integração sozinha. Para a reativar: gitpass hooks install ou «Ativar integração» em Definições."
+    );
+    Ok(code)
 }
 
 fn repo_cmd(cmd: RepoCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
@@ -595,33 +628,6 @@ fn repo_cmd(cmd: RepoCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync
     }
 }
 
-fn install_hooks() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
-    let bin = current_exe();
-    write_hook_scripts(&bin)?;
-    let hooks_path = hooks_dir()?;
-    let hooks_str = hooks_path.to_string_lossy().to_string();
-
-    backup_hooks_path_if_needed(&hooks_str)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    set_git_global_config("core.hooksPath", &hooks_str)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-
-    #[cfg(unix)]
-    {
-        let mut perms = std::fs::metadata(&hooks_path)?.permissions();
-        perms.set_mode(0o700);
-        std::fs::set_permissions(&hooks_path, perms)?;
-    }
-
-    println!("ok: wrote hook scripts under {}", hooks_path.display());
-    println!("ok: git config --global core.hooksPath {}", hooks_str);
-    if let Ok(Some(prev)) = doctor::git_global_config("core.hooksPath.gitpass-backup") {
-        println!("note: previous core.hooksPath backed up as core.hooksPath.gitpass-backup = {prev}");
-    }
-    println!("Run `gitpass doctor` to verify.");
-    Ok(0)
-}
-
 fn run_hook(phase: &str) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     HookPhase::from_str(phase)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
@@ -629,9 +635,7 @@ fn run_hook(phase: &str) -> Result<i32, Box<dyn std::error::Error + Send + Sync>
     if ci_bypass_from_env() {
         let quiet = std::env::var("GITPASS_QUIET_HOOK").ok().as_deref() == Some("1");
         if !quiet {
-            eprintln!(
-                "GitPass: CI bypass (GITPASS_ALLOW_CI=1) — skipping checks for hook {phase}."
-            );
+            eprintln!("GitPass: ambiente de CI autorizado — verificações ignoradas no hook {phase}.");
         }
         return Ok(0);
     }
@@ -656,11 +660,9 @@ fn run_hook(phase: &str) -> Result<i32, Box<dyn std::error::Error + Send + Sync>
                     }
                     return Ok(code);
                 }
-                Err(e) => {
+                Err(_) => {
                     if !quiet {
-                        eprintln!(
-                            "GitPass: warning: could not reach gitpassd ({e}), using offline fallback."
-                        );
+                        eprintln!("GitPass: aviso: o serviço do GitPass não respondeu; a validar sem ele.");
                     }
                 }
             }
@@ -721,7 +723,7 @@ fn handle_validate_outcome(v: IpcResponse, quiet: bool) -> i32 {
                 1
             } else {
                 if !quiet {
-                    eprintln!("GitPass [GP-IPC] invalid validate response from gitpassd");
+                    eprintln!("GitPass [GP-IPC] O serviço do GitPass deu uma resposta inválida. Abre a app GitPass e escolhe «Reparar» em Definições.");
                 }
                 1
             }
@@ -734,7 +736,7 @@ fn handle_validate_outcome(v: IpcResponse, quiet: bool) -> i32 {
         }
         _ => {
             if !quiet {
-                eprintln!("GitPass [GP-IPC] unexpected response from gitpassd");
+                eprintln!("GitPass [GP-IPC] Resposta inesperada do serviço do GitPass. Abre a app GitPass e escolhe «Reparar» em Definições.");
             }
             1
         }
