@@ -49,10 +49,10 @@ export function onIntegrationChanged(cb: (status: IntegrationStatus) => void): P
 /** Resumo de uma linha para mosaicos e barras de estado. */
 export function integrationHeadline(s: IntegrationStatus): { kind: "success" | "warning" | "error"; label: string; detail: string } {
   if (!s.enabled) return { kind: "warning", label: "Desativada", detail: "O Git não usa o GitPass" };
-  if (s.ready) return { kind: "success", label: "Ativa", detail: "Credenciais, hooks e serviço prontos" };
+  if (s.ready) return { kind: "success", label: "Ativa", detail: "Tudo pronto para o Git usar o GitPass" };
   const parts = [s.credentials, s.hooks, s.daemon];
   if (parts.some((c) => c.state === "error" || c.state === "missing") || s.binaries.state === "error") {
-    return { kind: "error", label: "Reparar", detail: "Falta configurar uma peça" };
+    return { kind: "error", label: "Reparar", detail: "Falta configurar uma parte" };
   }
-  return { kind: "warning", label: "Atenção", detail: "Há uma peça por rever" };
+  return { kind: "warning", label: "Atenção", detail: "Uma parte precisa de revisão" };
 }

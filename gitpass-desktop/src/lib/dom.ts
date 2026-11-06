@@ -58,7 +58,7 @@ export function relativeTime(iso: string | null): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
   const diff = (Date.now() - t) / 1000;
-  const rtf = new Intl.RelativeTimeFormat("pt", { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat("pt-BR", { numeric: "auto" });
   const steps: [number, Intl.RelativeTimeFormatUnit][] = [
     [60, "second"],
     [3600, "minute"],

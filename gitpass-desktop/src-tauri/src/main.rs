@@ -55,7 +55,7 @@ fn tray_tooltip(cfg: &AppConfig) -> String {
     };
 
     let Some(b) = binding else {
-        return "GitPass — ligue contas e vincule repositórios".to_string();
+        return "GitPass — conecte contas e vincule repositórios".to_string();
     };
 
     let acc = cfg.accounts.iter().find(|a| a.id == b.account_id);
@@ -126,13 +126,13 @@ fn oauth_config_status() -> OauthConfigStatus {
         Ok(_) => OauthConfigStatus {
             ok: true,
             client_id_configured: true,
-            message: "Ligação ao GitHub pronta.".to_string(),
+            message: "Conexão com o GitHub pronta.".to_string(),
             oauth_env_path,
         },
         Err(_) => OauthConfigStatus {
             ok: false,
             client_id_configured: false,
-            message: "A ligação ao GitHub não está disponível nesta versão da app.".to_string(),
+            message: "A conexão com o GitHub não está disponível nesta versão do app.".to_string(),
             oauth_env_path,
         },
     }
@@ -140,7 +140,7 @@ fn oauth_config_status() -> OauthConfigStatus {
 
 #[tauri::command]
 fn list_bindings() -> Result<Vec<BindingRow>, String> {
-    let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
+    let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass ({e})."))?;
     let mut out = Vec::new();
     for r in &cfg.repos {
         let acc_login = cfg
@@ -168,7 +168,7 @@ async fn repo_commit_log(root_path: String, limit: Option<usize>) -> Result<Vec<
         git_log_lines(&root, limit.unwrap_or(30))
     })
     .await
-    .map_err(|e| format!("Erro interno da app: {e}"))?
+    .map_err(|e| format!("Algo deu errado no app: {e}"))?
 }
 
 #[cfg(unix)]
@@ -179,7 +179,7 @@ fn ipc_ping_gitpassd() -> Result<String, String> {
     let path = gitpass_core::ipc_socket_path().map_err(|e| e.to_string())?;
     if !path.exists() {
         return Err(format!(
-            "O serviço gitpassd não está a correr (sem socket em {}). Só os hooks do Git precisam dele; ligar contas e o painel funcionam sem ele. Abra as Definições e escolha «Reparar».",
+            "O serviço em segundo plano não está rodando (sem socket em {}). Só a integração com o Git precisa dele; conectar contas e usar o painel funcionam sem ele. Abra as Configurações e escolha «Reparar».",
             path.display()
         ));
     }
@@ -195,27 +195,27 @@ fn ipc_ping_gitpassd() -> Result<String, String> {
     let mut line = String::new();
     reader.read_line(&mut line).map_err(|e| e.to_string())?;
     if line.is_empty() {
-        return Err("O gitpassd não respondeu.".to_string());
+        return Err("O serviço em segundo plano não respondeu.".to_string());
     }
 
     match decode_response_line(&line).map_err(|e| e.to_string())? {
         IpcResponse::Pong {
             gitpassd_version,
-        } => Ok(format!("Ligado — gitpassd {}", gitpassd_version)),
+        } => Ok(format!("Conectado — serviço em segundo plano {}", gitpassd_version)),
         IpcResponse::Error { code, message } => Err(format!("{code}: {message}")),
-        _ => Err("Resposta inesperada do gitpassd.".to_string()),
+        _ => Err("O serviço em segundo plano enviou uma resposta que não entendemos.".to_string()),
     }
 }
 
 #[cfg(not(unix))]
 #[tauri::command]
 fn ipc_ping_gitpassd() -> Result<String, String> {
-    Err("A verificação do gitpassd só está disponível em macOS e Linux.".to_string())
+    Err("A verificação do serviço em segundo plano só funciona no macOS e no Linux.".to_string())
 }
 
 #[tauri::command]
 fn open_keychain_docs() -> String {
-    format!("Os tokens de acesso ficam guardados no Keychain do macOS (serviço `{KEYCHAIN_SERVICE}`, conta github.oauth.<id>). Nunca são escritos no ficheiro de configuração nem em URLs.")
+    format!("Os acessos às contas ficam salvos nas Chaves do macOS (Keychain), no serviço `{KEYCHAIN_SERVICE}`, conta github.oauth.<id>. Eles nunca são gravados no arquivo de configurações nem em endereços web.")
 }
 
 #[tauri::command]
@@ -232,7 +232,7 @@ fn open_application_support() -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = dir;
-        Err("Abrir a pasta só está disponível no macOS.".to_string())
+        Err("Abrir a pasta só funciona no macOS.".to_string())
     }
 }
 
@@ -257,7 +257,7 @@ fn checked_external_url(raw: &str) -> Result<tauri::Url, String> {
 fn open_external_url(url: String) -> Result<(), String> {
     let url = checked_external_url(&url)?;
     opener::open_browser(url.as_str())
-        .map_err(|e| format!("Não foi possível abrir o browser ({e}). Copia o endereço e abre-o manualmente."))
+        .map_err(|e| format!("Não foi possível abrir o navegador ({e}). Copie o endereço e abra manualmente."))
 }
 
 fn main() {

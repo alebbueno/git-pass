@@ -21,8 +21,8 @@ const VIEWS: { id: ViewId; label: string; icon: IconName; mount: MountView }[] =
   { id: "overview", label: "Painel", icon: "dashboard", mount: mountHome },
   { id: "repos", label: "Repositórios", icon: "repo", mount: mountRepos },
   { id: "accounts", label: "Contas", icon: "user", mount: mountAccounts },
-  { id: "cloud", label: "Na cloud", icon: "cloud", mount: mountCloud },
-  { id: "settings", label: "Definições", icon: "settings", mount: mountSettings },
+  { id: "cloud", label: "Na nuvem", icon: "cloud", mount: mountCloud },
+  { id: "settings", label: "Configurações", icon: "settings", mount: mountSettings },
 ];
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -39,7 +39,7 @@ app.innerHTML = `
             <div class="brand-sub">A conta certa em cada projeto.</div>
           </div>
         </div>
-        <nav class="nav" aria-label="Secções">
+        <nav class="nav" aria-label="Seções">
           ${VIEWS.map(
             (v) => `<button type="button" class="nav-item" data-view="${v.id}">${icon(v.icon, 18)}<span>${esc(v.label)}</span><span class="nav-count" data-count="${v.id}"></span></button>`
           ).join("")}
@@ -48,8 +48,8 @@ app.innerHTML = `
           <h2 class="eyebrow">Perfis</h2>
           <div id="sidebar-profiles" class="sidebar-profiles-list"></div>
         </section>
-        <button type="button" class="sidebar-footer" id="daemon-status" title="Integração com o Git (abre Definições)">
-          <span class="status-dot" aria-hidden="true"></span><span class="status-text">A verificar integração…</span>
+        <button type="button" class="sidebar-footer" id="daemon-status" title="Integração com o Git (abre as Configurações)">
+          <span class="status-dot" aria-hidden="true"></span><span class="status-text">Verificando a integração…</span>
         </button>
       </aside>
       <main class="main" id="view-root" tabindex="-1"></main>
@@ -119,7 +119,7 @@ async function refreshSidebar(): Promise<void> {
     setCount("accounts", accounts.length);
     sidebarProfiles.innerHTML = accounts.length
       ? accounts.map((a) => `<div class="sidebar-profile">${profileChip(a)}</div>`).join("")
-      : `<p class="muted small">Nenhum perfil ligado.</p>`;
+      : `<p class="muted small">Nenhum perfil conectado.</p>`;
   } catch (e) {
     if (seq !== sidebarSeq) return;
     sidebarProfiles.innerHTML = `<p class="err small">${esc(errMessage(e))}</p>`;
@@ -134,7 +134,7 @@ function setCount(view: ViewId, n: number): void {
 function renderIntegration(st: IntegrationStatus): void {
   const h = integrationHeadline(st);
   daemonBtn.dataset.state = h.kind === "success" ? "ok" : "off";
-  daemonBtn.querySelector<HTMLElement>(".status-text")!.textContent = `Integração Git · ${h.label}`;
+  daemonBtn.querySelector<HTMLElement>(".status-text")!.textContent = `Integração com o Git · ${h.label}`;
   daemonBtn.title = h.detail;
 }
 
@@ -143,7 +143,7 @@ async function refreshDaemon(): Promise<void> {
     renderIntegration(await integrationApi.status());
   } catch {
     daemonBtn.dataset.state = "off";
-    daemonBtn.querySelector<HTMLElement>(".status-text")!.textContent = "Integração Git · indisponível";
+    daemonBtn.querySelector<HTMLElement>(".status-text")!.textContent = "Integração com o Git · indisponível";
   }
 }
 

@@ -50,13 +50,13 @@ fn now_epoch() -> i64 {
 
 fn load_bundle(id: Uuid) -> Result<GithubTokenBundle, String> {
     github_token_load(id)
-        .map_err(|e| format!("Não foi possível ler o token do Keychain: {e}"))?
-        .ok_or_else(|| "Esta conta não tem token. Liga a conta GitHub em «Contas».".to_string())
+        .map_err(|e| format!("Não foi possível ler o acesso nas Chaves do macOS: {e}"))?
+        .ok_or_else(|| "Esta conta não tem acesso salvo. Conecte a conta do GitHub em «Contas».".to_string())
 }
 
 /// Exchanges the stored refresh token for a new bundle and saves it.
 fn refresh_bundle(id: Uuid, bundle: &GithubTokenBundle) -> Result<GithubTokenBundle, String> {
-    let expired_msg = "A sessão do GitHub expirou. Volta a ligar a conta em «Contas».".to_string();
+    let expired_msg = "O acesso ao GitHub expirou. Reconecte a conta em «Contas».".to_string();
     let refresh = bundle.refresh_token.as_deref().ok_or_else(|| expired_msg.clone())?;
     let new_bundle = if bundle.oauth_via_device {
         let cid = bundle
@@ -71,7 +71,7 @@ fn refresh_bundle(id: Uuid, bundle: &GithubTokenBundle) -> Result<GithubTokenBun
         github_oauth_refresh(&cid, Some(secret.as_str()), refresh, false)
     }
     .map_err(|_| expired_msg)?;
-    github_token_save(id, &new_bundle).map_err(|e| format!("Não foi possível guardar o token no Keychain: {e}"))?;
+    github_token_save(id, &new_bundle).map_err(|e| format!("Não foi possível salvar o acesso nas Chaves do macOS: {e}"))?;
     Ok(new_bundle)
 }
 
@@ -90,18 +90,18 @@ fn current_token(id: Uuid) -> Result<String, String> {
 fn api_error_message(e: GithubApiError) -> String {
     match e {
         GithubApiError::Http { status: 401, .. } => {
-            "O GitHub recusou o token (sessão expirada ou revogada). Volta a ligar a conta em «Contas».".to_string()
+            "O GitHub recusou o acesso (ele expirou ou foi cancelado). Reconecte a conta em «Contas».".to_string()
         }
         GithubApiError::Http { status: 403, body } if body.to_lowercase().contains("rate limit") => {
-            "Limite de pedidos do GitHub atingido. Tenta de novo dentro de alguns minutos.".to_string()
+            "O GitHub limitou os pedidos por um tempo. Tente de novo em alguns minutos.".to_string()
         }
         GithubApiError::Http { status: 403, .. } => {
-            "O GitHub negou o acesso. Verifica as permissões concedidas à app GitPass (SSO/organizações).".to_string()
+            "O GitHub negou o acesso. Veja as permissões dadas ao app GitPass (SSO e organizações).".to_string()
         }
-        GithubApiError::Http { status, .. } => format!("O GitHub respondeu com erro (HTTP {status}). Tenta de novo."),
-        GithubApiError::Reqwest(_) => "Sem ligação ao GitHub. Verifica a tua ligação à internet.".to_string(),
-        GithubApiError::Json(_) => "Resposta inesperada do GitHub.".to_string(),
-        GithubApiError::Keychain(m) => format!("Erro do Keychain: {m}"),
+        GithubApiError::Http { status, .. } => format!("O GitHub respondeu com um erro (HTTP {status}). Tente de novo."),
+        GithubApiError::Reqwest(_) => "Sem conexão com o GitHub. Veja se você está online.".to_string(),
+        GithubApiError::Json(_) => "O GitHub enviou uma resposta que não entendemos.".to_string(),
+        GithubApiError::Keychain(m) => format!("Erro nas Chaves do macOS: {m}"),
     }
 }
 
@@ -124,7 +124,7 @@ fn list_repos_blocking(id: Uuid) -> Result<Vec<GithubRepoSummary>, String> {
 pub async fn cloud_repos(account_id: String) -> Result<Vec<CloudRepo>, String> {
     let id = parse_account(&account_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
+        let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass ({e})."))?;
         if !cfg.accounts.iter().any(|a| a.id == id) {
             return Err("Conta desconhecida.".to_string());
         }
@@ -147,7 +147,7 @@ pub async fn cloud_repos(account_id: String) -> Result<Vec<CloudRepo>, String> {
             .collect())
     })
     .await
-    .map_err(|e| format!("Tarefa interrompida: {e}"))?
+    .map_err(|e| format!("A tarefa foi interrompida: {e}"))?
 }
 
 fn in_flight() -> &'static Mutex<HashSet<String>> {
@@ -199,9 +199,9 @@ pub async fn cloud_clone(
     };
 
     {
-        let mut set = in_flight().lock().map_err(|_| "Estado interno inconsistente.".to_string())?;
+        let mut set = in_flight().lock().map_err(|_| "Algo deu errado no app. Tente de novo.".to_string())?;
         if !set.insert(full_name.to_lowercase()) {
-            return Err(format!("`{full_name}` já está a ser clonado."));
+            return Err(format!("`{full_name}` já está sendo clonado."));
         }
     }
     let guard = InFlightGuard(full_name.to_lowercase());
@@ -219,7 +219,7 @@ pub async fn cloud_clone(
             );
         };
 
-        let mut cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
+        let mut cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass ({e})."))?;
         if !cfg.accounts.iter().any(|a| a.id == id) {
             return Err("Conta desconhecida.".to_string());
         }
@@ -238,10 +238,10 @@ pub async fn cloud_clone(
 
         emit("binding", 100);
         // Reload: the config may have changed during a long clone.
-        cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass ({e})."))?;
+        cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass ({e})."))?;
         gitpass_core::bindings::create_binding(&mut cfg, id, &dest).map_err(|e| {
             format!(
-                "Clonado em `{}`, mas não foi possível vincular à conta: {e}. Podes vinculá-lo em «Repositórios».",
+                "Clonado em `{}`, mas não foi possível vincular à conta: {e}. Você pode vincular em «Repositórios».",
                 dest.display()
             )
         })?;
@@ -249,7 +249,7 @@ pub async fn cloud_clone(
         Ok(dest.display().to_string())
     })
     .await
-    .map_err(|e| format!("Tarefa interrompida: {e}"))?;
+    .map_err(|e| format!("A tarefa foi interrompida: {e}"))?;
 
     result
 }
@@ -265,7 +265,7 @@ pub async fn cloud_choose_folder() -> Result<Option<String>, String> {
                 .arg(
                     r#"tell application "System Events"
   activate
-  set f to choose folder with prompt "Escolhe a pasta onde clonar o repositório"
+  set f to choose folder with prompt "Escolha a pasta onde clonar o repositório"
   POSIX path of f
 end tell"#,
                 )
@@ -283,11 +283,11 @@ end tell"#,
             Ok((!path.is_empty()).then_some(path))
         })
         .await
-        .map_err(|e| format!("Tarefa interrompida: {e}"))?
+        .map_err(|e| format!("A tarefa foi interrompida: {e}"))?
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err("O seletor de pastas só está disponível no macOS por agora.".to_string())
+        Err("O seletor de pastas só funciona no macOS por enquanto.".to_string())
     }
 }
 

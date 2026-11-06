@@ -36,8 +36,8 @@ type ProfileRef = Pick<AccountRow, "id" | "login" | "label">;
 
 const REASON_TEXT: Record<SuggestionReason, string> = {
   owner_login: "conta dona do repositório",
-  same_owner_binding: "já usada noutros repositórios deste dono",
-  only_account: "única conta ligada",
+  same_owner_binding: "já usada em outros repositórios deste dono",
+  only_account: "única conta conectada",
   push_access: "única conta com permissão de push",
 };
 
@@ -190,7 +190,7 @@ export const mount: MountView = (root, ctx) => {
 
   const bindButton = (extra = ""): string =>
     accounts.length === 0
-      ? `<button type="button" class="btn primary ${extra}" data-action="go-accounts">${icon("user")}<span>Ligar uma conta primeiro</span></button>`
+      ? `<button type="button" class="btn primary ${extra}" data-action="go-accounts">${icon("user")}<span>Conecte uma conta primeiro</span></button>`
       : `<button type="button" class="btn primary ${extra}" data-action="bind">${icon("plus")}<span>Vincular repositório</span></button>`;
 
   const subtitle = (): string => {
@@ -206,7 +206,7 @@ export const mount: MountView = (root, ctx) => {
       <header class="view-header">
         <div>
           <h1 class="view-title">Repositórios</h1>
-          <p class="view-sub">A carregar…</p>
+          <p class="view-sub">Carregando…</p>
         </div>
       </header>
       <div class="repos-layout" aria-busy="true">
@@ -222,7 +222,7 @@ export const mount: MountView = (root, ctx) => {
       <header class="view-header">
         <div><h1 class="view-title">Repositórios</h1></div>
         <div class="view-actions">
-          <button type="button" class="btn" data-action="retry">${icon("refresh")}<span>Tentar novamente</span></button>
+          <button type="button" class="btn" data-action="retry">${icon("refresh")}<span>Tentar de novo</span></button>
         </div>
       </header>
       <div class="callout error" role="alert">${icon("alert")}<span>Não foi possível carregar os repositórios: ${esc(message)}</span></div>`;
@@ -247,11 +247,11 @@ export const mount: MountView = (root, ctx) => {
         <section class="panel">
           <div class="empty-state">
             <div class="empty-icon">${icon(accounts.length === 0 ? "user" : "repo", 26)}</div>
-            <h3>${accounts.length === 0 ? "Ligue primeiro uma conta GitHub" : "Nenhum repositório vinculado"}</h3>
+            <h3>${accounts.length === 0 ? "Conecte primeiro uma conta do GitHub" : "Nenhum repositório vinculado"}</h3>
             <p>${
               accounts.length === 0
-                ? "Depois de ligar uma conta, o GitPass encontra os seus clones e passa a usar a conta certa em cada um."
-                : "Escolha a pasta de um clone e o GitPass escolhe a conta certa. A partir daí, commits e pushes usam essa conta automaticamente."
+                ? "Depois de conectar uma conta, o GitPass encontra seus clones e usa a conta certa em cada um."
+                : "Escolha a pasta de um clone e o GitPass indica a conta certa. Depois disso, commits e pushes usam essa conta automaticamente."
             }</p>
             <div class="repos-actions">${bindButton("lg")}</div>
           </div>
@@ -316,7 +316,7 @@ export const mount: MountView = (root, ctx) => {
     if (!list) return;
     const items = filtered();
     if (items.length === 0) {
-      list.innerHTML = `<li class="repos-no-results muted small">${icon("search")} Nenhum resultado para «${esc(query.trim())}».</li>`;
+      list.innerHTML = `<li class="repos-no-results muted small">${icon("search")} Nenhum resultado para “${esc(query.trim())}”.</li>`;
       return;
     }
     const selectedVisible = items.some((b) => b.id === rememberedSelection);
@@ -400,10 +400,10 @@ export const mount: MountView = (root, ctx) => {
   function identityCallout(b: RepoRow): string {
     const id = b.identity;
     if (!b.exists) {
-      return `<div class="callout error" role="alert">${icon("alert")}<span>A pasta já não existe neste Mac. Se a moveu, desvincule-a e volte a vinculá-la no novo local.</span></div>`;
+      return `<div class="callout error" role="alert">${icon("alert")}<span>A pasta não existe mais neste Mac. Se você a moveu, desvincule o repositório e vincule de novo na nova pasta.</span></div>`;
     }
     if (b.account_missing) {
-      return `<div class="callout error" role="alert">${icon("alert")}<span>A conta deste vínculo foi removida. Escolha «Mudar conta» para continuar a usar o GitPass neste repositório.</span></div>`;
+      return `<div class="callout error" role="alert">${icon("alert")}<span>A conta deste vínculo foi removida. Clique em “Mudar conta” para continuar usando o GitPass neste repositório.</span></div>`;
     }
     const expected = esc(identityText(id.expected_name, id.expected_email));
     switch (id.state) {
@@ -411,11 +411,11 @@ export const mount: MountView = (root, ctx) => {
         return `<div class="callout success">${icon("check")}<span><strong>Identidade correta.</strong> Os commits usam <span class="mono">${esc(
           identityText(id.local_name, id.local_email)
         )}</span>.${
-          id.expected_email ? "" : " A conta não tem email de commit definido; escolha um em Contas."
+          id.expected_email ? "" : " A conta não tem e-mail de commit definido. Escolha um em Contas."
         }</span></div>`;
       case "different":
         return `<div class="callout warning repos-identity-callout">${icon("alert")}<div>
-          <p><strong>Identidade diferente da conta.</strong> Os próximos commits não vão ficar associados a ${esc(who(b.account_id))}.</p>
+          <p><strong>Identidade diferente da conta.</strong> Os próximos commits não serão associados a ${esc(who(b.account_id))}.</p>
           <dl class="repos-identity-diff">
             <dt>Aplicada</dt><dd class="mono">${esc(identityText(id.local_name, id.local_email))}</dd>
             <dt>Da conta</dt><dd class="mono">${expected}</dd>
@@ -436,13 +436,13 @@ export const mount: MountView = (root, ctx) => {
     if (!panel) return;
     const b = repos.find((x) => x.id === rememberedSelection);
     if (!b) {
-      panel.innerHTML = `<p class="muted small">Selecione um repositório.</p>`;
+      panel.innerHTML = `<p class="muted small">Escolha um repositório.</p>`;
       return;
     }
     const head = b.branch
       ? `<span class="mono">${esc(b.branch)}</span>`
       : b.detached_at
-        ? `<span class="mono">HEAD desanexado em ${esc(b.detached_at)}</span>`
+        ? `<span class="mono">HEAD solto em ${esc(b.detached_at)}</span>`
         : `<span class="muted">—</span>`;
     panel.innerHTML = `
       <div class="repos-detail-head">
@@ -456,7 +456,7 @@ export const mount: MountView = (root, ctx) => {
         ${identityCallout(b)}
         ${
           b.remote_has_credentials
-            ? `<div class="callout error" role="alert">${icon("lock")}<span>O <span class="mono">origin</span> deste repositório tem uma palavra-passe ou token escrito no URL. Substitua-o por <span class="mono">${esc(
+            ? `<div class="callout error" role="alert">${icon("lock")}<span>O <span class="mono">origin</span> deste repositório tem uma senha ou token escrito na URL. Troque por <span class="mono">${esc(
                 b.remote_url ?? ""
               )}</span> — o GitPass fornece as credenciais automaticamente.</span></div>`
             : ""
@@ -556,7 +556,7 @@ export const mount: MountView = (root, ctx) => {
   async function loadLog(b: RepoRow, box: HTMLElement): Promise<void> {
     const token = ++logToken;
     box.setAttribute("aria-busy", "true");
-    box.innerHTML = `<span class="sr-only">A carregar commits…</span>${Array.from(
+    box.innerHTML = `<span class="sr-only">Carregando commits…</span>${Array.from(
       { length: 6 },
       (_, i) => `<div class="skeleton repos-skeleton-commit" style="width:${92 - (i % 3) * 14}%"></div>`
     ).join("")}`;
@@ -683,7 +683,7 @@ export const mount: MountView = (root, ctx) => {
   async function bindWithDialog(btn: HTMLButtonElement): Promise<void> {
     let outcome: BindOutcome;
     try {
-      outcome = await withBusy(btn, "À espera da pasta…", () => reposApi.bindDialog(null));
+      outcome = await withBusy(btn, "Aguardando a pasta…", () => reposApi.bindDialog(null));
     } catch (e) {
       showToast(errMessage(e) || "Não foi possível vincular o repositório.", "err");
       return;
@@ -696,7 +696,7 @@ export const mount: MountView = (root, ctx) => {
     const accountId = await confirmAccount(outcome);
     if (!accountId || disposed) return;
     try {
-      const row = await withBusy(btn, "A vincular…", () => reposApi.bindPath(outcome.root_path, accountId));
+      const row = await withBusy(btn, "Vinculando…", () => reposApi.bindPath(outcome.root_path, accountId));
       if (!disposed) afterBound(row, null);
     } catch (e) {
       showToast(errMessage(e) || "Não foi possível vincular o repositório.", "err");
@@ -737,14 +737,14 @@ export const mount: MountView = (root, ctx) => {
 
   async function fixIdentity(btn: HTMLButtonElement, id: string): Promise<void> {
     try {
-      const row = await withBusy(btn, "A corrigir…", () => reposApi.fixIdentity(id));
+      const row = await withBusy(btn, "Corrigindo…", () => reposApi.fixIdentity(id));
       if (disposed) return;
       upsertRepo(row);
       const st = rowStatus(row);
       showToast(
         st.kind === "success"
           ? `Identidade aplicada: ${identityText(row.identity.local_name, row.identity.local_email)}.`
-          : "Identidade aplicada, mas a conta não tem email de commit. Escolha um em Contas.",
+          : "Identidade aplicada, mas a conta não tem e-mail de commit. Escolha um em Contas.",
         st.kind === "success" ? "ok" : "err"
       );
       render();
@@ -755,10 +755,10 @@ export const mount: MountView = (root, ctx) => {
 
   async function changeAccount(btn: HTMLButtonElement, b: RepoRow, accountId: string): Promise<void> {
     try {
-      const row = await withBusy(btn, "A mudar…", () => reposApi.changeAccount(b.id, accountId));
+      const row = await withBusy(btn, "Mudando…", () => reposApi.changeAccount(b.id, accountId));
       if (disposed) return;
       upsertRepo(row);
-      showToast(`${repoName(row)} passa a usar ${who(accountId)}. Identidade atualizada.`, "ok");
+      showToast(`${repoName(row)} agora usa ${who(accountId)}. Identidade atualizada.`, "ok");
       render();
     } catch (e) {
       showToast(errMessage(e), "err");
@@ -770,7 +770,7 @@ export const mount: MountView = (root, ctx) => {
     const reset = await openModal<boolean>({
       title: `Desvincular ${repoName(b)}?`,
       body: `
-        <p class="repos-modal-lead">O GitPass deixa de escolher a conta neste repositório. A pasta, os ficheiros e o histórico não são alterados.</p>
+        <p class="repos-modal-lead">O GitPass deixa de escolher a conta neste repositório. A pasta, os arquivos e o histórico não mudam.</p>
         ${
           b.exists && (b.identity.local_name || b.identity.local_email)
             ? `<label class="repos-check">
@@ -818,7 +818,7 @@ export const mount: MountView = (root, ctx) => {
 
     let body: string;
     if (scanning && discovery.items.length === 0) {
-      body = `<div class="repos-discover-list" aria-busy="true"><span class="sr-only">A procurar repositórios…</span>${Array.from(
+      body = `<div class="repos-discover-list" aria-busy="true"><span class="sr-only">Procurando repositórios…</span>${Array.from(
         { length: 3 },
         () => `<div class="skeleton repos-skeleton-row"></div>`
       ).join("")}</div>`;
@@ -827,7 +827,7 @@ export const mount: MountView = (root, ctx) => {
     } else if (discovery.items.length === 0) {
       body = `<p class="muted small repos-discover-empty">${icon("check")} ${
         discovery.status === "done"
-          ? "Não há clones do GitHub por vincular nas pastas habituais (Developer, Projects, GitHub, Code, src, Documentos/GitHub, Secretária)."
+          ? "Não há clones do GitHub sem vínculo nas pastas de sempre (Developer, Projects, GitHub, Code, src, Documentos/GitHub, Mesa)."
           : "Procure clones do GitHub que já existam neste Mac."
       }</p>`;
     } else {
@@ -862,7 +862,7 @@ export const mount: MountView = (root, ctx) => {
 
     const truncatedNote =
       discovery.truncated && discovery.status === "done"
-        ? `<p class="muted small repos-discover-note">Algumas pastas não foram vistas a tempo. Se o macOS pediu acesso a uma pasta (por exemplo a Secretária), responda ao pedido e escolha «Procurar novamente».</p>`
+        ? `<p class="muted small repos-discover-note">Algumas pastas demoraram demais e não foram verificadas. Se o macOS pediu acesso a uma pasta (como a Mesa), permita e clique em “Procurar de novo”.</p>`
         : "";
 
     sec.innerHTML = `
@@ -876,9 +876,9 @@ export const mount: MountView = (root, ctx) => {
           }</p>
         </div>
         <div class="repos-discover-actions">
-          <button type="button" class="btn ghost" data-action="discover-folder"${scanning ? " disabled" : ""}>${icon("folder")}<span>Procurar noutra pasta…</span></button>
+          <button type="button" class="btn ghost" data-action="discover-folder"${scanning ? " disabled" : ""}>${icon("folder")}<span>Procurar em outra pasta…</span></button>
           <button type="button" class="btn" data-action="discover"${scanning ? " disabled aria-busy=\"true\"" : ""}>${
-            scanning ? `<span class="spinner" aria-hidden="true"></span><span>A procurar…</span>` : `${icon("refresh")}<span>${discovery.status === "idle" ? "Procurar" : "Procurar novamente"}</span>`
+            scanning ? `<span class="spinner" aria-hidden="true"></span><span>Procurando…</span>` : `${icon("refresh")}<span>${discovery.status === "idle" ? "Procurar" : "Procurar de novo"}</span>`
           }</button>
           ${
             discovery.items.length > 1
@@ -957,7 +957,7 @@ export const mount: MountView = (root, ctx) => {
       const r = await reposApi.discover([path]);
       mergeDiscovered(r.repos);
       discovery.status = "done";
-      if (r.repos.length === 0) showToast(`Não foram encontrados clones do GitHub por vincular em ${shortPath(path)}.`, "err");
+      if (r.repos.length === 0) showToast(`Não encontramos clones do GitHub sem vínculo em ${shortPath(path)}.`, "err");
     } catch (e) {
       discovery.status = "error";
       discovery.error = errMessage(e);
@@ -970,7 +970,7 @@ export const mount: MountView = (root, ctx) => {
     const accountId = d && choiceFor(d);
     if (!d || !accountId) return;
     try {
-      const row = await withBusy(btn, "A vincular…", () => reposApi.bindPath(path, accountId));
+      const row = await withBusy(btn, "Vinculando…", () => reposApi.bindPath(path, accountId));
       if (disposed) return;
       upsertRepo(row);
       forgetDiscovered(path);
@@ -988,7 +988,7 @@ export const mount: MountView = (root, ctx) => {
       .filter((x): x is { path: string; account_id: string } => !!x.account_id);
     if (items.length === 0) return;
     try {
-      const results = await withBusy(btn, "A vincular…", () => reposApi.bindMany(items));
+      const results = await withBusy(btn, "Vinculando…", () => reposApi.bindMany(items));
       if (disposed) return;
       const ok = results.filter((r) => r.repo);
       const failed = results.filter((r) => r.error);

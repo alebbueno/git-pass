@@ -55,36 +55,36 @@ function renderTiles(s: State): string {
   // OAuth
   let oauth: string;
   if (s.oauth.status === "loading") {
-    oauth = tile("settings", "key", "GitHub", "A verificar…", badge("neutral", "A verificar"));
+    oauth = tile("settings", "key", "GitHub", "Verificando…", badge("neutral", "Verificando"));
   } else if (s.oauth.status === "ok" && s.oauth.value) {
-    oauth = tile("settings", "key", "GitHub", "Ligação ao GitHub pronta", badge("success", "Pronta", "check"));
+    oauth = tile("settings", "key", "GitHub", "Conexão com o GitHub pronta", badge("success", "Pronta", "check"));
   } else {
-    oauth = tile("settings", "key", "GitHub", "Esta build não tem o GitHub configurado", badge("error", "Indisponível", "x"));
+    oauth = tile("settings", "key", "GitHub", "Esta versão do app não tem o GitHub configurado", badge("error", "Indisponível", "x"));
   }
 
   // Contas
   let accounts: string;
   if (s.accounts.status === "loading") {
-    accounts = tile("accounts", "user", "Contas", "A carregar…", badge("neutral", "A verificar"));
+    accounts = tile("accounts", "user", "Contas", "Carregando…", badge("neutral", "Verificando"));
   } else if (s.accounts.status === "error") {
-    accounts = tile("accounts", "user", "Contas", "Não foi possível ler", badge("error", "Erro", "x"));
+    accounts = tile("accounts", "user", "Contas", "Não foi possível carregar", badge("error", "Erro", "x"));
   } else if (s.accounts.value.length === 0) {
-    accounts = tile("accounts", "user", "Contas", "Nenhuma conta ligada", badge("warning", "Nenhuma", "alert"));
+    accounts = tile("accounts", "user", "Contas", "Nenhuma conta conectada", badge("warning", "Nenhuma", "alert"));
   } else {
     const n = s.accounts.value.length;
-    accounts = tile("accounts", "user", "Contas", plural(n, "conta ligada", "contas ligadas"), badge("success", String(n), "check"));
+    accounts = tile("accounts", "user", "Contas", plural(n, "conta conectada", "contas conectadas"), badge("success", String(n), "check"));
   }
 
   // Integração Git
   let integration: string;
   if (s.integration.status === "loading") {
-    integration = tile("settings", "activity", "Integração Git", "A verificar…", badge("neutral", "A verificar"));
+    integration = tile("settings", "activity", "Integração com o Git", "Verificando…", badge("neutral", "Verificando"));
   } else if (s.integration.status === "error") {
-    integration = tile("settings", "activity", "Integração Git", "Não foi possível verificar", badge("error", "Erro", "x"));
+    integration = tile("settings", "activity", "Integração com o Git", "Não foi possível verificar", badge("error", "Erro", "x"));
   } else {
     const h = integrationHeadline(s.integration.value);
     const sym = h.kind === "success" ? "check" : h.kind === "warning" ? "alert" : "x";
-    integration = tile("settings", "activity", "Integração Git", h.detail, badge(h.kind, h.label, sym));
+    integration = tile("settings", "activity", "Integração com o Git", h.detail, badge(h.kind, h.label, sym));
   }
 
   return `<div class="overview-tiles">${oauth}${accounts}${integration}</div>`;
@@ -92,7 +92,7 @@ function renderTiles(s: State): string {
 
 function step(n: string, eyebrow: string, title: string, desc: string, done: boolean, next: boolean, view: ViewId): string {
   const marker = done ? icon("check", 16) : `<span aria-hidden="true">${esc(n)}</span>`;
-  const state = done ? `<span class="badge success">${icon("check", 12)}Concluído</span>` : `<span class="overview-step-go">${next ? "Começar" : "Abrir"}</span>`;
+  const state = done ? `<span class="badge success">${icon("check", 12)}Pronto</span>` : `<span class="overview-step-go">${next ? "Começar" : "Abrir"}</span>`;
   return `
     <li>
       <button type="button" class="overview-step${done ? " done" : ""}${next ? " next" : ""}" data-nav="${view}">
@@ -119,7 +119,7 @@ function renderIdentityAlert(rows: RepoRow[]): string {
       ${icon("alert", 16)}
       <div class="overview-identity-text">
         <strong>${esc(title)}</strong>
-        <span>O nome ou o email do Git neste repositório não corresponde à conta vinculada: ${names}. Os próximos commits sairiam com a identidade errada.</span>
+        <span>O nome ou o email do Git não bate com o da conta vinculada em: ${names}. Os próximos commits sairiam com a identidade errada.</span>
       </div>
       <button type="button" class="btn overview-identity-btn" data-action="fix-all">${icon("check", 14)}<span>Corrigir todos</span></button>
     </div>`;
@@ -137,8 +137,8 @@ function renderOnboarding(accounts: AccountRow[], bindings: BindingRow[]): strin
       </div>
       <p class="muted small overview-onboarding-sub">Duas etapas até o Git usar sempre a identidade certa.</p>
       <ol class="list overview-steps">
-        ${step("1", "01 / Conta", "Ligar conta GitHub", "Autorize uma conta para criar um perfil.", hasAcc, !hasAcc, "accounts")}
-        ${step("2", "02 / Repositório", "Vincular um repositório", "Escolha uma pasta e associe-a a um perfil.", hasBind, hasAcc && !hasBind, "repos")}
+        ${step("1", "01 / Conta", "Conectar conta GitHub", "Autorize uma conta para criar um perfil.", hasAcc, !hasAcc, "accounts")}
+        ${step("2", "02 / Repositório", "Vincular um repositório", "Escolha uma pasta e vincule a um perfil.", hasBind, hasAcc && !hasBind, "repos")}
       </ol>
     </section>`;
 }
@@ -202,8 +202,8 @@ function renderProfiles(accounts: AccountRow[], bindings: BindingRow[]): string 
       <section class="overview-section" aria-label="Perfis">
         ${header}
         <div class="panel overview-profiles-empty">
-          <p class="muted small">Ainda não há perfis. Ligue uma conta GitHub para criar o primeiro.</p>
-          <button type="button" class="btn" data-nav="accounts">${icon("plus", 14)}Ligar conta</button>
+          <p class="muted small">Ainda não há perfis. Conecte uma conta GitHub para criar o primeiro.</p>
+          <button type="button" class="btn" data-nav="accounts">${icon("plus", 14)}Conectar conta</button>
         </div>
       </section>`;
   }
@@ -360,7 +360,7 @@ export const mount: MountView = (root, ctx) => {
     if (!targets.length) return;
     let fixed = 0;
     const failed: string[] = [];
-    await withBusy(btn, "A corrigir…", async () => {
+    await withBusy(btn, "Corrigindo…", async () => {
       for (const r of targets) {
         try {
           await reposApi.fixIdentity(r.id);
@@ -392,7 +392,7 @@ export const mount: MountView = (root, ctx) => {
   body.addEventListener("click", onClick);
 
   refreshBtn.addEventListener("click", () => {
-    void withBusy(refreshBtn, "A atualizar…", () => load(false)).catch(() => undefined);
+    void withBusy(refreshBtn, "Atualizando…", () => load(false)).catch(() => undefined);
   });
 
   const onData = (): void => void load(true);

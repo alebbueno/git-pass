@@ -1,4 +1,4 @@
-//! Contas GitHub: listagem, Device Flow (ligar / voltar a ligar), perfil, email de commit, rótulo, remoção e estado do token.
+//! Contas GitHub: listagem, Device Flow (conectar / reconectar), perfil, email de commit, rótulo, remoção e estado do acesso.
 
 use gitpass_core::bindings::apply_repo_identity;
 use gitpass_core::github_user::{
@@ -17,10 +17,10 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 const CONFIG_CHANGED_EVENT: &str = "gitpass-config-changed";
-const OAUTH_UNAVAILABLE: &str = "A ligação ao GitHub não está disponível nesta versão da app.";
-/// accounts.ts matches the substring «contactar o GitHub» to keep polling through transient network errors.
+const OAUTH_UNAVAILABLE: &str = "A conexão com o GitHub não está disponível nesta versão do app.";
+/// accounts.ts matches the substring «conectar ao GitHub» to keep polling through transient network errors.
 const NETWORK_ERROR: &str =
-    "Não foi possível contactar o GitHub. Verifique a ligação à Internet e tente novamente.";
+    "Não foi possível conectar ao GitHub. Veja se você está online e tente de novo.";
 const LABEL_MAX_CHARS: usize = 64;
 /// GitHub device codes are 40 hex characters; leave room for format changes.
 const DEVICE_CODE_MAX_LEN: usize = 128;
@@ -117,7 +117,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(f)
         .await
-        .map_err(|e| format!("Erro interno da app: {e}"))?
+        .map_err(|e| format!("Algo deu errado no app: {e}"))?
 }
 
 fn notify(app: &AppHandle) {
@@ -125,29 +125,29 @@ fn notify(app: &AppHandle) {
 }
 
 fn config_err(e: ConfigError) -> String {
-    format!("Não foi possível ler ou guardar a configuração do GitPass ({e}).")
+    format!("Não foi possível ler ou salvar as configurações do GitPass ({e}).")
 }
 
 fn keychain_err(e: SecretError) -> String {
     format!(
-        "Não foi possível aceder ao Keychain ({e}). Confirme que o GitPass tem acesso ao Keychain e tente novamente."
+        "Não foi possível acessar as Chaves do macOS ({e}). Confirme que o GitPass tem permissão e tente de novo."
     )
 }
 
 fn api_err(e: GithubApiError) -> String {
     match e {
         GithubApiError::Http { status: 401, .. } => {
-            "O GitHub recusou o acesso desta conta (token revogado ou expirado). Use «Voltar a ligar» para autorizar de novo.".into()
+            "O GitHub recusou o acesso desta conta (o acesso foi cancelado ou expirou). Use «Reconectar» para autorizar de novo.".into()
         }
         GithubApiError::Http { status: 403, body } if body.to_ascii_lowercase().contains("rate limit") => {
-            "O GitHub limitou temporariamente os pedidos. Tente novamente daqui a alguns minutos.".into()
+            "O GitHub limitou os pedidos por um tempo. Tente de novo em alguns minutos.".into()
         }
         GithubApiError::Http { status, .. } => {
-            format!("O GitHub respondeu com um erro (HTTP {status}). Tente novamente mais tarde.")
+            format!("O GitHub respondeu com um erro (HTTP {status}). Tente de novo mais tarde.")
         }
         GithubApiError::Reqwest(_) => NETWORK_ERROR.into(),
-        GithubApiError::Json(_) => "Resposta inesperada do GitHub. Tente novamente mais tarde.".into(),
-        GithubApiError::Keychain(m) => format!("Não foi possível aceder ao Keychain ({m})."),
+        GithubApiError::Json(_) => "O GitHub enviou uma resposta que não entendemos. Tente de novo mais tarde.".into(),
+        GithubApiError::Keychain(m) => format!("Não foi possível acessar as Chaves do macOS ({m})."),
     }
 }
 
@@ -157,23 +157,23 @@ fn oauth_err(e: OauthError) -> String {
         OauthError::Msg(m) => {
             let code = m.split(':').next().unwrap_or("").trim();
             match code {
-                "expired_token" => "O código expirou. Peça um novo código para tentar outra vez.".into(),
+                "expired_token" => "O código expirou. Peça um novo código e tente de novo.".into(),
                 "access_denied" => {
-                    "A autorização foi recusada no GitHub. Pode tentar novamente quando quiser.".into()
+                    "A autorização foi recusada no GitHub. Você pode tentar de novo quando quiser.".into()
                 }
                 "incorrect_device_code" | "unsupported_grant_type" => {
-                    "Este código já não é válido. Peça um novo código.".into()
+                    "Este código não é mais válido. Peça um novo código.".into()
                 }
                 "device_flow_disabled" | "incorrect_client_credentials" | "unauthorized_client" => {
                     OAUTH_UNAVAILABLE.into()
                 }
                 _ if m.starts_with("device code:") => OAUTH_UNAVAILABLE.into(),
-                _ => "O GitHub não concluiu a autorização. Tente novamente.".into(),
+                _ => "O GitHub não terminou a autorização. Tente de novo.".into(),
             }
         }
-        OauthError::Json(_) => "Resposta inesperada do GitHub. Tente novamente mais tarde.".into(),
+        OauthError::Json(_) => "O GitHub enviou uma resposta que não entendemos. Tente de novo mais tarde.".into(),
         OauthError::Secret(e) => keychain_err(e),
-        OauthError::Url(_) => "O GitHub não concluiu a autorização. Tente novamente.".into(),
+        OauthError::Url(_) => "O GitHub não terminou a autorização. Tente de novo.".into(),
     }
 }
 
@@ -185,7 +185,7 @@ fn check_device_poll_input(client_id: &str, device_code: &str) -> Result<(), Str
         return Err(OAUTH_UNAVAILABLE.into());
     }
     if !is_plausible_device_code(device_code) {
-        return Err("Este código já não é válido. Peça um novo código.".into());
+        return Err("Este código não é mais válido. Peça um novo código.".into());
     }
     Ok(())
 }
@@ -215,12 +215,12 @@ fn account_index(cfg: &AppConfig, id: Uuid) -> Result<usize, String> {
     cfg.accounts
         .iter()
         .position(|a| a.id == id)
-        .ok_or_else(|| "Esta conta já não existe. Atualize a lista de contas.".to_string())
+        .ok_or_else(|| "Esta conta não existe mais. Atualize a lista de contas.".to_string())
 }
 
 fn load_bundle(id: Uuid) -> Result<GithubTokenBundle, String> {
     github_token_load(id).map_err(keychain_err)?.ok_or_else(|| {
-        "O token desta conta não está no Keychain. Use «Voltar a ligar» para autorizar de novo."
+        "O acesso desta conta não está nas Chaves do macOS. Use «Reconectar» para autorizar de novo."
             .to_string()
     })
 }
@@ -428,7 +428,7 @@ fn finish_login(mut bundle: GithubTokenBundle, login: String) -> Result<DevicePo
         Ok(p) => (Some(p), None),
         Err(_) => (
             None,
-            Some("Não foi possível obter o nome e o email do perfil. Use «Atualizar perfil» mais tarde.".to_string()),
+            Some("Não foi possível buscar o nome e o email do perfil. Use «Atualizar perfil» mais tarde.".to_string()),
         ),
     };
     let login = profile.as_ref().map(|p| p.user.login.clone()).unwrap_or(login);
@@ -471,9 +471,9 @@ fn finish_login(mut bundle: GithubTokenBundle, login: String) -> Result<DevicePo
     }
 
     let message = if reconnected {
-        format!("Conta @{login} ligada de novo. Token e perfil atualizados.")
+        format!("Conta @{login} reconectada. Acesso e perfil atualizados.")
     } else {
-        format!("Conta @{login} ligada. O token ficou guardado no Keychain.")
+        format!("Conta @{login} conectada. O acesso foi salvo nas Chaves do macOS.")
     };
     Ok(DevicePollResult::Done {
         message,
@@ -573,7 +573,7 @@ pub async fn accounts_set_email(
             .into_iter()
             .find(|o| o.email.eq_ignore_ascii_case(&wanted))
             .ok_or_else(|| {
-                "Este email não está verificado nesta conta GitHub. Escolha um dos emails da lista."
+                "Este email não está verificado nesta conta do GitHub. Escolha um dos emails da lista."
                     .to_string()
             })?;
         cfg.accounts[idx].email = Some(chosen.email);
@@ -646,7 +646,7 @@ pub async fn accounts_check(account_id: String) -> Result<AccountCheck, String> 
                 TokenState::Missing,
                 Vec::new(),
                 true,
-                "O token desta conta não está no Keychain. Volte a ligar a conta.",
+                "O acesso desta conta não está nas Chaves do macOS. Reconecte a conta.",
             ));
         };
 
@@ -664,13 +664,13 @@ pub async fn accounts_check(account_id: String) -> Result<AccountCheck, String> 
                 sync_bundle_scopes(id, bundle, &scopes);
                 let missing = missing_required_scopes(&scopes);
                 if missing.is_empty() || scopes.is_empty() {
-                    Ok(done(TokenState::Ok, scopes, false, "Token válido."))
+                    Ok(done(TokenState::Ok, scopes, false, "O acesso está válido."))
                 } else {
                     Ok(done(
                         TokenState::Ok,
                         scopes,
                         true,
-                        "Faltam permissões no GitHub. Volte a ligar a conta para dar permissões.",
+                        "Faltam permissões no GitHub. Reconecte a conta para dá-las.",
                     ))
                 }
             }
@@ -678,13 +678,13 @@ pub async fn accounts_check(account_id: String) -> Result<AccountCheck, String> 
                 TokenState::Revoked,
                 Vec::new(),
                 true,
-                "O acesso desta conta foi revogado no GitHub. Volte a ligar a conta.",
+                "O acesso desta conta foi cancelado no GitHub. Reconecte a conta.",
             )),
             Err(GithubApiError::Reqwest(_)) => Ok(done(
                 TokenState::Offline,
                 stored_scopes(Some(&bundle)),
                 false,
-                "Sem ligação ao GitHub: não foi possível verificar o token.",
+                "Sem conexão com o GitHub: não foi possível verificar o acesso.",
             )),
             Err(e) => Ok(done(TokenState::Error, stored_scopes(Some(&bundle)), false, &api_err(e))),
         }

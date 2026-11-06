@@ -28,15 +28,15 @@ type State = {
 };
 
 const LABEL_MAX = 64;
-const OAUTH_UNAVAILABLE = "A ligação ao GitHub não está disponível nesta versão da app.";
+const OAUTH_UNAVAILABLE = "A conexão com o GitHub não está disponível nesta versão do app.";
 const GITHUB_APPS_URL = "https://github.com/settings/applications";
 
 /** Permissões OAuth mostradas no cartão; `required` sinaliza quando faltam. */
 const SCOPES: { scope: string; label: string; hint: string; required: boolean; impliedBy: string[] }[] = [
-  { scope: "repo", label: "Repositórios", hint: "Ler e enviar código (push) para os seus repositórios", required: true, impliedBy: [] },
+  { scope: "repo", label: "Repositórios", hint: "Ler e enviar código (push) nos seus repositórios", required: true, impliedBy: [] },
   { scope: "user:email", label: "Email", hint: "Ler os emails verificados para usar nos commits", required: true, impliedBy: ["user"] },
-  { scope: "workflow", label: "Workflows", hint: "Enviar alterações a ficheiros de GitHub Actions", required: false, impliedBy: [] },
-  { scope: "read:org", label: "Organizações", hint: "Ver repositórios das organizações a que pertence", required: false, impliedBy: ["write:org", "admin:org"] },
+  { scope: "workflow", label: "Workflows", hint: "Enviar alterações em arquivos do GitHub Actions", required: false, impliedBy: [] },
+  { scope: "read:org", label: "Organizações", hint: "Ver os repositórios das organizações das quais você participa", required: false, impliedBy: ["write:org", "admin:org"] },
 ];
 
 const svg = (d: string, size = 16) =>
@@ -66,11 +66,11 @@ export const mount: MountView = (root, ctx) => {
     <header class="view-header">
       <div>
         <h1 class="view-title">Contas</h1>
-        <p class="view-sub" data-ref="sub">A carregar…</p>
+        <p class="view-sub" data-ref="sub">Carregando…</p>
       </div>
       <div class="view-actions">
         <button type="button" class="btn primary" data-action="connect" hidden>
-          ${icon("plus")}<span>Ligar conta GitHub</span>
+          ${icon("plus")}<span>Conectar conta GitHub</span>
         </button>
       </div>
     </header>
@@ -159,12 +159,12 @@ export const mount: MountView = (root, ctx) => {
     headerConnect.hidden = !ready;
 
     if (state.loading && !n) {
-      sub.textContent = "A carregar…";
+      sub.textContent = "Carregando…";
       body.innerHTML = renderSkeleton();
       return;
     }
 
-    sub.textContent = n === 0 ? "Nenhuma conta ligada" : n === 1 ? "1 conta ligada" : `${n} contas ligadas`;
+    sub.textContent = n === 0 ? "Nenhuma conta conectada" : n === 1 ? "1 conta conectada" : `${n} contas conectadas`;
 
     let html = ready ? "" : renderOauthUnavailable();
     if (state.error) {
@@ -174,7 +174,7 @@ export const mount: MountView = (root, ctx) => {
           <div class="accounts-callout-body">
             <strong>Não foi possível carregar as contas.</strong>
             <span>${esc(state.error)}</span>
-            <div><button type="button" class="btn" data-action="reload">${icon("refresh")}<span>Tentar novamente</span></button></div>
+            <div><button type="button" class="btn" data-action="reload">${icon("refresh")}<span>Tentar de novo</span></button></div>
           </div>
         </div>`;
     } else if (n === 0) {
@@ -205,12 +205,12 @@ export const mount: MountView = (root, ctx) => {
       <section class="panel accounts-empty">
         <div class="empty-state">
           <div class="empty-icon">${icon("user", 28)}</div>
-          <h3>Nenhuma conta ligada</h3>
+          <h3>Nenhuma conta conectada</h3>
           ${
             ready
-              ? `<p>Ligue uma conta GitHub para associar repositórios a um perfil. O GitPass mostra-lhe um código curto; abre o GitHub no browser, introduz o código e autoriza. O token fica guardado no Keychain.</p>
-                 <button type="button" class="btn primary lg" data-action="connect">${icon("plus")}<span>Ligar conta GitHub</span></button>`
-              : `<p>Quando a ligação ao GitHub estiver disponível, poderá ligar aqui as suas contas.</p>`
+              ? `<p>Conecte uma conta GitHub para vincular repositórios a um perfil. O GitPass mostra um código curto. Você abre o GitHub no navegador, digita o código e autoriza. O acesso fica salvo nas Chaves do macOS (Keychain).</p>
+                 <button type="button" class="btn primary lg" data-action="connect">${icon("plus")}<span>Conectar conta GitHub</span></button>`
+              : `<p>Quando a conexão com o GitHub estiver disponível, você poderá conectar suas contas aqui.</p>`
           }
         </div>
       </section>`;
@@ -239,7 +239,7 @@ export const mount: MountView = (root, ctx) => {
             <dd class="accounts-badges">${renderScopes(a, check)}</dd>
           </div>
           <div class="accounts-fact">
-            <dt>Estado</dt>
+            <dt>Situação</dt>
             <dd class="accounts-badges">${renderTokenState(a, check)}</dd>
           </div>
         </dl>
@@ -251,7 +251,7 @@ export const mount: MountView = (root, ctx) => {
             ${a.repos_count ? `<button type="button" class="btn ghost" data-action="repos">${icon("repo")}<span>Ver repositórios</span></button>` : ""}
             ${
               a.has_token && !revoked
-                ? `<button type="button" class="btn ghost icon-only" data-action="refresh" data-account-id="${esc(a.id)}" title="Atualizar nome, email e avatar a partir do GitHub" aria-label="Atualizar perfil de ${esc(handle(a))}">${icon("refresh")}</button>`
+                ? `<button type="button" class="btn ghost icon-only" data-action="refresh" data-account-id="${esc(a.id)}" title="Atualizar nome, email e foto com os dados do GitHub" aria-label="Atualizar perfil de ${esc(handle(a))}">${icon("refresh")}</button>`
                 : ""
             }
             <button type="button" class="btn ghost icon-only accounts-danger" data-action="remove" data-account-id="${esc(a.id)}" title="Remover conta" aria-label="Remover conta ${esc(handle(a))}">${trashIcon()}</button>
@@ -282,7 +282,7 @@ export const mount: MountView = (root, ctx) => {
           value="${esc(ed.draft)}" maxlength="${LABEL_MAX}" placeholder="${esc(a.name || a.login || "Rótulo")}"
           autocomplete="off" spellcheck="false" aria-describedby="accounts-label-hint-${esc(a.id)}" ${ed.saving ? "disabled" : ""} />
         <p class="muted small accounts-label-hint" id="accounts-label-hint-${esc(a.id)}">${
-          ed.saving ? "A guardar…" : "Enter para guardar · Esc para cancelar · vazio repõe o nome do GitHub"
+          ed.saving ? "Salvando…" : "Enter salva · Esc cancela · deixar vazio volta ao nome do GitHub"
         }</p>
         <h3 class="sr-only" id="${titleId}">${esc(title)}</h3>`;
     }
@@ -298,9 +298,9 @@ export const mount: MountView = (root, ctx) => {
     const open = state.emailMenu?.accountId === a.id;
     const value = a.email
       ? `<span class="mono small truncate" title="${esc(a.email)}">${esc(a.email)}</span>${
-          isNoreply(a.email) ? `<span class="badge" title="Endereço privado do GitHub: o seu email pessoal não aparece nos commits">${icon("lock", 12)}Privado</span>` : ""
+          isNoreply(a.email) ? `<span class="badge" title="Endereço privado do GitHub: seu email pessoal não aparece nos commits">${icon("lock", 12)}Privado</span>` : ""
         }`
-      : `<span class="muted small">Por definir</span>`;
+      : `<span class="muted small">Não definido</span>`;
     const btn =
       a.has_token && !revoked
         ? `<button type="button" class="btn ghost accounts-email-btn" data-action="email-menu" data-account-id="${esc(a.id)}"
@@ -314,11 +314,11 @@ export const mount: MountView = (root, ctx) => {
   function renderEmailMenu(a: AccountInfo, m: EmailMenu): string {
     let inner: string;
     if (m.loading) {
-      inner = `<p class="accounts-menu-status small muted" role="status"><span class="spinner" aria-hidden="true"></span>A obter emails verificados…</p>`;
+      inner = `<p class="accounts-menu-status small muted" role="status"><span class="spinner" aria-hidden="true"></span>Buscando emails verificados…</p>`;
     } else if (m.error) {
       inner = `
         <p class="accounts-menu-status small err" role="alert">${icon("alert", 14)}<span>${esc(m.error)}</span></p>
-        <div><button type="button" class="btn" data-action="email-menu-retry" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Tentar novamente</span></button></div>`;
+        <div><button type="button" class="btn" data-action="email-menu-retry" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Tentar de novo</span></button></div>`;
     } else {
       const opts = m.data?.emails ?? [];
       inner = `
@@ -339,7 +339,7 @@ export const mount: MountView = (root, ctx) => {
         </div>
         ${
           m.data?.needs_reconnect
-            ? `<p class="small warn accounts-menu-note">${icon("alert", 14)}<span>Sem permissão de email: só são mostrados o email público e o privado. Volte a ligar a conta para ver todos os emails verificados.</span></p>`
+            ? `<p class="small warn accounts-menu-note">${icon("alert", 14)}<span>Sem permissão de email: só aparecem o email público e o privado. Conecte a conta de novo para ver todos os emails verificados.</span></p>`
             : ""
         }
         <p class="small muted accounts-menu-note">Os repositórios vinculados a esta conta passam a usar o email escolhido nos próximos commits.</p>`;
@@ -360,33 +360,33 @@ export const mount: MountView = (root, ctx) => {
     const scopes = live ?? a.scopes;
     if (!scopes.length) {
       return check?.state === "checking"
-        ? `<span class="muted small">A verificar…</span>`
-        : `<span class="muted small">Por verificar</span>`;
+        ? `<span class="muted small">Verificando…</span>`
+        : `<span class="muted small">Ainda não verificado</span>`;
     }
     const badges = SCOPES.map((s) => {
       const granted = scopes.includes(s.scope) || s.impliedBy.some((i) => scopes.includes(i));
       if (granted) return `<span class="badge" title="${esc(s.hint)}">${icon("check", 12)}${esc(s.label)}</span>`;
-      if (s.required) return `<span class="badge warning" title="Em falta: ${esc(s.hint)}">${icon("alert", 12)}Sem ${esc(s.label.toLowerCase())}</span>`;
+      if (s.required) return `<span class="badge warning" title="Faltando: ${esc(s.hint)}">${icon("alert", 12)}Sem ${esc(s.label.toLowerCase())}</span>`;
       return "";
     }).join("");
     return badges || `<span class="muted small">Sem permissões relevantes</span>`;
   }
 
   function renderTokenState(a: AccountInfo, check: CheckState | undefined): string {
-    if (!a.has_token) return `<span class="badge warning">${icon("alert", 12)}Sem token</span>`;
+    if (!a.has_token) return `<span class="badge warning">${icon("alert", 12)}Sem acesso</span>`;
     if (!check || check.state === "checking") {
-      return `<span class="badge accounts-badge-checking"><span class="spinner" aria-hidden="true"></span>A verificar token…</span>`;
+      return `<span class="badge accounts-badge-checking"><span class="spinner" aria-hidden="true"></span>Verificando o acesso…</span>`;
     }
     const title = `title="${esc(check.message)}"`;
     switch (check.state) {
       case "ok":
-        return `<span class="badge success" ${title}>${icon("check", 12)}Token válido</span>`;
+        return `<span class="badge success" ${title}>${icon("check", 12)}Acesso válido</span>`;
       case "revoked":
         return `<span class="badge error" ${title}>${icon("x", 12)}Acesso revogado</span>`;
       case "missing":
-        return `<span class="badge warning" ${title}>${icon("alert", 12)}Sem token</span>`;
+        return `<span class="badge warning" ${title}>${icon("alert", 12)}Sem acesso</span>`;
       case "offline":
-        return `<span class="badge" ${title}>${icon("cloud", 12)}Sem ligação</span>
+        return `<span class="badge" ${title}>${icon("cloud", 12)}Sem conexão</span>
           <button type="button" class="btn ghost accounts-inline-btn" data-action="recheck" data-account-id="${esc(a.id)}">Verificar</button>`;
       default:
         return `<span class="badge warning" ${title}>${icon("alert", 12)}Não verificado</span>
@@ -397,11 +397,11 @@ export const mount: MountView = (root, ctx) => {
   function renderAttention(a: AccountInfo, check: CheckState | undefined): string {
     let message: string | null = null;
     if (!a.has_token) {
-      message = "O token não está no Keychain. Volte a ligar para continuar a usar este perfil.";
+      message = "O acesso desta conta não está nas Chaves do macOS. Conecte a conta de novo para continuar usando este perfil.";
     } else if (check && check.state !== "checking" && check.needs_reconnect) {
       if (check.state === "ok" && check.missing_scopes.length) {
         const names = check.missing_scopes.map(scopeLabel).join(" e ");
-        message = `Faltam permissões (${names}). Volte a ligar a conta para dar permissões ao GitPass.`;
+        message = `Faltam permissões (${names}). Conecte a conta de novo para dar essas permissões ao GitPass.`;
       } else {
         message = check.message;
       }
@@ -413,7 +413,7 @@ export const mount: MountView = (root, ctx) => {
         <span class="small">${esc(message)}</span>
         ${
           ready
-            ? `<button type="button" class="btn" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Voltar a ligar</span></button>`
+            ? `<button type="button" class="btn" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>`
             : ""
         }
       </div>`;
@@ -736,7 +736,7 @@ function renderSkeleton(): string {
       <div class="skeleton accounts-sk-line"></div>
       <div class="skeleton accounts-sk-line short"></div>
     </div>`;
-  return `<p class="sr-only">A carregar contas…</p><div class="accounts-grid">${card}${card}</div>`;
+  return `<p class="sr-only">Carregando contas…</p><div class="accounts-grid">${card}${card}</div>`;
 }
 
 class RemoveAccountModal extends ModalBase {
@@ -772,10 +772,10 @@ class RemoveAccountModal extends ModalBase {
       </div>
       <ul class="accounts-remove-list small" id="accounts-modal-desc">
         <li>${bindings}</li>
-        <li>O token de acesso desta conta é apagado do Keychain.</li>
-        <li>As pastas e o histórico dos repositórios não são apagados.</li>
+        <li>O acesso desta conta é apagado das Chaves do macOS (Keychain).</li>
+        <li>As pastas e o histórico dos repositórios não são excluídos.</li>
       </ul>
-      <p class="small muted accounts-remove-note">Para retirar também a autorização do lado do GitHub, abra as <a href="${GITHUB_APPS_URL}">aplicações autorizadas no GitHub</a>.</p>
+      <p class="small muted accounts-remove-note">Para retirar também a autorização do lado do GitHub, abra os <a href="${GITHUB_APPS_URL}">apps autorizados no GitHub</a>.</p>
       ${
         error
           ? `<div class="callout error" role="alert">${icon("alert")}<div class="accounts-callout-body"><strong>Não foi possível remover a conta.</strong><span>${esc(error)}</span></div></div>`
@@ -796,7 +796,7 @@ class RemoveAccountModal extends ModalBase {
   protected onAction(action: string, el: HTMLElement): void {
     if (action !== "confirm" || this.busy) return;
     this.busy = true;
-    void withBusy(el as HTMLButtonElement, "A remover…", this.onConfirm)
+    void withBusy(el as HTMLButtonElement, "Removendo…", this.onConfirm)
       .then(() => {
         this.busy = false;
         this.close();

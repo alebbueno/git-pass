@@ -3,7 +3,7 @@ import { accountsApi, type AccountInfo } from "./api-accounts";
 import { errMessage, esc, showToast } from "./dom";
 
 /** Erros de rede passageiros durante o polling não cancelam o fluxo (texto de `NETWORK_ERROR` em cmd_accounts.rs). */
-const NETWORK_ERROR_HINT = "contactar o GitHub";
+const NETWORK_ERROR_HINTS = ["contactar o GitHub", "contatar o GitHub", "conectar ao GitHub", "conectar com o GitHub"];
 const MAX_POLL_NETWORK_ERRORS = 4;
 import { icon } from "./icons";
 import type { ViewContext } from "./view";
@@ -150,7 +150,7 @@ export class DeviceFlowModal extends ModalBase {
     private onDone: (accountId: string) => void,
     onClosed: () => void
   ) {
-    super(opener, account ? "Voltar a ligar conta" : "Ligar conta GitHub", "accounts-device-modal", onClosed);
+    super(opener, account ? "Conectar a conta de novo" : "Conectar conta GitHub", "accounts-device-modal", onClosed);
     void this.start();
   }
 
@@ -172,7 +172,7 @@ export class DeviceFlowModal extends ModalBase {
     this.setContent(`
       <div class="accounts-step accounts-step-loading" role="status">
         <span class="spinner accounts-spinner-lg" aria-hidden="true"></span>
-        <p id="accounts-modal-desc">A pedir código ao GitHub…</p>
+        <p id="accounts-modal-desc">Pedindo o código ao GitHub…</p>
       </div>`);
 
     let start: DeviceCodeStart;
@@ -180,7 +180,7 @@ export class DeviceFlowModal extends ModalBase {
       start = await accountsApi.deviceStart();
     } catch (e) {
       if (token.cancelled) return;
-      this.showError("Não foi possível obter um código do GitHub.", errMessage(e));
+      this.showError("Não foi possível obter o código do GitHub.", errMessage(e));
       return;
     }
     if (token.cancelled) return;
@@ -192,8 +192,8 @@ export class DeviceFlowModal extends ModalBase {
 
   private showCode(start: DeviceCodeStart, deadline: number, token: FlowToken): void {
     const who = this.account?.login
-      ? `Inicie sessão no GitHub como <span class="mono">@${esc(this.account.login)}</span> e introduza este código:`
-      : "Introduza este código no GitHub para autorizar o GitPass:";
+      ? `Entre no GitHub como <span class="mono">@${esc(this.account.login)}</span> e digite este código:`
+      : "Digite este código no GitHub para autorizar o GitPass:";
 
     this.setContent(
       `
@@ -206,8 +206,8 @@ export class DeviceFlowModal extends ModalBase {
       </div>
       <ol class="accounts-steps small">
         <li>Copie o código acima.</li>
-        <li>No GitHub (abre-se no browser), cole o código.</li>
-        <li>Autorize o GitPass — esta janela fecha sozinha.</li>
+        <li>No GitHub (abre no navegador), cole o código.</li>
+        <li>Autorize o GitPass. Esta janela fecha sozinha.</li>
       </ol>
       <div class="accounts-open">
         <a class="btn primary lg" href="${esc(start.verification_uri)}" target="_blank" rel="noopener noreferrer">
@@ -216,7 +216,7 @@ export class DeviceFlowModal extends ModalBase {
         <span class="mono small muted accounts-uri">${esc(start.verification_uri)}</span>
       </div>
       <div class="accounts-wait">
-        <span class="accounts-wait-status" role="status"><span class="spinner" aria-hidden="true"></span>À espera da autorização no browser…</span>
+        <span class="accounts-wait-status" role="status"><span class="spinner" aria-hidden="true"></span>Aguardando a autorização no navegador…</span>
         <span class="accounts-countdown small muted" data-ref="countdown">Expira em ${formatClock((deadline - Date.now()) / 1000)}</span>
       </div>
       <div class="accounts-modal-foot">
@@ -257,13 +257,13 @@ export class DeviceFlowModal extends ModalBase {
           intervalSecs = Math.max(1, intervalSecs, res.interval_secs);
         } else if (res.status === "done") {
           this.onDone(res.account_id);
-          this.showSuccess(res.reconnected ? "Conta ligada de novo" : "Conta ligada", res.message, res.warning, token);
+          this.showSuccess(res.reconnected ? "Conta conectada de novo" : "Conta conectada", res.message, res.warning, token);
           return;
         }
       } catch (e) {
         if (token.cancelled) return;
-        if (errMessage(e).includes(NETWORK_ERROR_HINT) && ++networkErrors < MAX_POLL_NETWORK_ERRORS) continue;
-        this.showError("A autorização não foi concluída.", errMessage(e));
+        if (NETWORK_ERROR_HINTS.some((h) => errMessage(e).includes(h)) && ++networkErrors < MAX_POLL_NETWORK_ERRORS) continue;
+        this.showError("Não foi possível concluir a autorização.", errMessage(e));
         return;
       }
     }
@@ -281,7 +281,7 @@ export class DeviceFlowModal extends ModalBase {
       </div>`,
       '[data-modal="close"]'
     );
-    showToast(message || "Conta GitHub ligada.", "ok");
+    showToast(message || "Conta GitHub conectada.", "ok");
     this.ctx.notifyDataChanged();
     this.closeTimer = window.setTimeout(() => this.close(), warning ? SUCCESS_CLOSE_MS * 3 : SUCCESS_CLOSE_MS);
   }
@@ -294,7 +294,7 @@ export class DeviceFlowModal extends ModalBase {
         ${icon("alert")}
         <div class="accounts-callout-body">
           <strong id="accounts-modal-desc">O código expirou.</strong>
-          <span>A autorização não foi concluída a tempo. Peça um novo código para tentar outra vez.</span>
+          <span>O tempo acabou antes da autorização. Peça um novo código e tente de novo.</span>
         </div>
       </div>
       <div class="accounts-modal-foot">
@@ -318,7 +318,7 @@ export class DeviceFlowModal extends ModalBase {
       </div>
       <div class="accounts-modal-foot">
         <button type="button" class="btn ghost" data-modal="close">Cancelar</button>
-        <button type="button" class="btn primary" data-modal="retry">${icon("refresh")}<span>Tentar novamente</span></button>
+        <button type="button" class="btn primary" data-modal="retry">${icon("refresh")}<span>Tentar de novo</span></button>
       </div>`,
       '[data-modal="retry"]'
     );
@@ -329,7 +329,7 @@ export class DeviceFlowModal extends ModalBase {
     try {
       await navigator.clipboard.writeText(code);
     } catch {
-      showToast("Não foi possível copiar. Selecione o código e copie manualmente.");
+      showToast("Não foi possível copiar. Selecione o código e copie à mão.");
       return;
     }
     const iconEl = btn.querySelector<HTMLElement>(".accounts-copy-icon");

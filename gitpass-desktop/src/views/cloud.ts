@@ -55,13 +55,13 @@ function ensureProgressListener(): void {
 }
 
 const PHASE_LABEL: Record<string, string> = {
-  starting: "A iniciar…",
-  counting: "A contar objetos",
-  compressing: "A comprimir objetos",
-  receiving: "A receber objetos",
-  resolving: "A resolver deltas",
-  checkout: "A extrair ficheiros",
-  binding: "A vincular à conta",
+  starting: "Iniciando…",
+  counting: "Contando objetos",
+  compressing: "Comprimindo objetos",
+  receiving: "Recebendo objetos",
+  resolving: "Resolvendo deltas",
+  checkout: "Extraindo arquivos",
+  binding: "Vinculando à conta",
 };
 
 /** Intervalo [início, fim] de cada fase no progresso global (as fases do Git são sequenciais). */
@@ -127,8 +127,8 @@ export const mount: MountView = (root, ctx) => {
   root.innerHTML = `
     <header class="view-header">
       <div>
-        <h1 class="view-title">Na cloud</h1>
-        <p class="view-sub">Repositórios no GitHub, por perfil. Clona com a conta certa.</p>
+        <h1 class="view-title">Na nuvem</h1>
+        <p class="view-sub">Repositórios no GitHub, por perfil. Clone com a conta certa.</p>
       </div>
       <div class="view-actions">
         <button type="button" class="btn ghost" id="cloud-refresh">${icon("refresh")}<span>Atualizar</span></button>
@@ -142,7 +142,7 @@ export const mount: MountView = (root, ctx) => {
       <div class="segmented" id="cloud-local-filter" role="group" aria-label="Filtrar por clone local">
         <button type="button" data-local="all" aria-pressed="true">Todos</button>
         <button type="button" data-local="local" aria-pressed="false">Com clone local</button>
-        <button type="button" data-local="cloud" aria-pressed="false">Só na cloud</button>
+        <button type="button" data-local="cloud" aria-pressed="false">Só na nuvem</button>
       </div>
       <div class="segmented" id="cloud-perm-filter" role="group" aria-label="Filtrar por permissão">
         <button type="button" data-perm="all" aria-pressed="true">Qualquer acesso</button>
@@ -287,9 +287,9 @@ export const mount: MountView = (root, ctx) => {
 
   function progressHtml(job: CloneJob): string {
     const pct = overallPercent(job);
-    const label = PHASE_LABEL[job.phase] ?? "A clonar…";
+    const label = PHASE_LABEL[job.phase] ?? "Clonando…";
     return `<div class="cloud-progress-wrap" data-clone-key="${esc(rowKey(job.accountId, job.fullName))}">
-      <div class="cloud-progress" role="progressbar" aria-label="A clonar ${esc(job.fullName)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+      <div class="cloud-progress" role="progressbar" aria-label="Clonando ${esc(job.fullName)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
         <span class="cloud-progress-fill" style="width:${pct}%"></span>
       </div>
       <span class="cloud-progress-label small muted"><span class="cloud-progress-phase">${esc(label)}</span> · <span class="cloud-progress-pct">${pct}%</span></span>
@@ -302,9 +302,9 @@ export const mount: MountView = (root, ctx) => {
       <div class="cloud-dest mono small" title="${esc(destLabel(p))}">${icon("folder", 14)}<span class="truncate">${esc(destLabel(p))}</span></div>
       <div class="cloud-popover-choose">
         <button type="button" class="btn" data-pop-choose>${icon("folder")}<span>Escolher pasta…</span></button>
-        ${p.parent ? `<button type="button" class="btn ghost" data-pop-reset>Usar a pasta por omissão</button>` : ""}
+        ${p.parent ? `<button type="button" class="btn ghost" data-pop-reset>Usar a pasta padrão</button>` : ""}
       </div>
-      <p class="muted small cloud-popover-hint">Clona com o perfil ${esc(profileName(account))} e vincula a pasta a este perfil.</p>
+      <p class="muted small cloud-popover-hint">O GitPass clona com o perfil ${esc(profileName(account))} e vincula a pasta a ele.</p>
       <div class="cloud-popover-actions">
         <button type="button" class="btn ghost" data-pop-cancel>Cancelar</button>
         <button type="button" class="btn primary" data-pop-confirm>${icon("cloud")}<span>Clonar</span></button>
@@ -325,7 +325,7 @@ export const mount: MountView = (root, ctx) => {
     const forkBadge = r.fork ? `<span class="badge" title="Fork de outro repositório">${icon("branch", 12)}Fork</span>` : "";
     const localBadge = isLocal && !job ? `<span class="badge success">${icon("check", 12)}Clone local</span>` : "";
     const branch = r.default_branch
-      ? `<span class="cloud-branch mono muted small" title="Ramo por omissão">${icon("branch", 13)}<span class="truncate">${esc(r.default_branch)}</span></span>`
+      ? `<span class="cloud-branch mono muted small" title="Branch padrão">${icon("branch", 13)}<span class="truncate">${esc(r.default_branch)}</span></span>`
       : "";
     const pushed = r.pushed_at
       ? `<span class="cloud-pushed muted small" title="Último push">${esc(relativeTime(r.pushed_at))}</span>`
@@ -336,7 +336,7 @@ export const mount: MountView = (root, ctx) => {
 
     let action = "";
     if (job) {
-      action = `<span class="badge cloud-cloning" role="status"><span class="spinner cloud-mini-spinner" aria-hidden="true"></span>A clonar</span>`;
+      action = `<span class="badge cloud-cloning" role="status"><span class="spinner cloud-mini-spinner" aria-hidden="true"></span>Clonando…</span>`;
     } else if (isLocal) {
       action = `<button type="button" class="btn" data-open-local>${icon("repo")}<span>Abrir</span></button>`;
     } else {
@@ -376,17 +376,17 @@ export const mount: MountView = (root, ctx) => {
   function sectionHtml(a: AccountRow): string {
     if (!a.has_token) {
       return `<section class="cloud-section" aria-label="${esc(profileName(a))}">
-        ${sectionHead(a, "", `<span class="badge warning">${icon("alert", 12)}Sem token</span>`)}
+        ${sectionHead(a, "", `<span class="badge warning">${icon("alert", 12)}Desconectado</span>`)}
         <div class="cloud-notoken">
-          <p class="muted small">Este perfil não tem token, por isso não é possível listar os repositórios.</p>
-          <button type="button" class="btn" data-action="accounts">${icon("key")}<span>Gerir contas</span></button>
+          <p class="muted small">Este perfil não está conectado ao GitHub, então não dá para listar os repositórios.</p>
+          <button type="button" class="btn" data-action="accounts">${icon("key")}<span>Gerenciar contas</span></button>
         </div>
       </section>`;
     }
     const state = repoStates.get(a.id) ?? { status: "loading" };
     if (state.status === "loading") {
       return `<section class="cloud-section" aria-label="${esc(profileName(a))}" aria-busy="true">
-        ${sectionHead(a, "", `<span class="spinner cloud-head-spinner" role="status" aria-label="A carregar"></span>`)}
+        ${sectionHead(a, "", `<span class="spinner cloud-head-spinner" role="status" aria-label="Carregando"></span>`)}
         <div class="cloud-skeletons">${'<div class="skeleton cloud-skeleton-row"></div>'.repeat(3)}</div>
       </section>`;
     }
@@ -396,7 +396,7 @@ export const mount: MountView = (root, ctx) => {
         <div class="callout error" role="alert">
           ${icon("alert")}
           <div class="cloud-error-body">
-            <div><strong>Erro ao obter repositórios.</strong></div>
+            <div><strong>Não foi possível buscar os repositórios.</strong></div>
             <div class="cloud-error-msg">${esc(state.message)}</div>
           </div>
           <button type="button" class="btn" data-retry="${esc(a.id)}">${icon("refresh")}<span>Tentar de novo</span></button>
@@ -444,15 +444,15 @@ export const mount: MountView = (root, ctx) => {
       return;
     }
     if (loadError) {
-      body.innerHTML = `<div class="callout error" role="alert">${icon("alert")}<div class="cloud-error-body"><div><strong>Erro ao carregar perfis.</strong></div><div class="cloud-error-msg">${esc(loadError)}</div></div><button type="button" class="btn" data-action="reload">${icon("refresh")}<span>Tentar de novo</span></button></div>`;
+      body.innerHTML = `<div class="callout error" role="alert">${icon("alert")}<div class="cloud-error-body"><div><strong>Não foi possível carregar os perfis.</strong></div><div class="cloud-error-msg">${esc(loadError)}</div></div><button type="button" class="btn" data-action="reload">${icon("refresh")}<span>Tentar de novo</span></button></div>`;
       return;
     }
     if (accounts.length === 0) {
       body.innerHTML = `<div class="panel"><div class="empty-state">
         <span class="empty-icon">${icon("cloud", 26)}</span>
-        <h3>Sem perfis ligados</h3>
-        <p>Ligue um perfil GitHub para ver aqui os repositórios que tem na cloud.</p>
-        <button type="button" class="btn primary" data-action="accounts">${icon("plus")}<span>Ligar um perfil</span></button>
+        <h3>Nenhum perfil conectado</h3>
+        <p>Conecte um perfil do GitHub para ver aqui os repositórios que você tem na nuvem.</p>
+        <button type="button" class="btn primary" data-action="accounts">${icon("plus")}<span>Conectar um perfil</span></button>
       </div></div>`;
       return;
     }
@@ -474,7 +474,7 @@ export const mount: MountView = (root, ctx) => {
       const fill = el.querySelector<HTMLElement>(".cloud-progress-fill");
       if (fill) fill.style.width = `${pct}%`;
       const phase = el.querySelector<HTMLElement>(".cloud-progress-phase");
-      if (phase) phase.textContent = PHASE_LABEL[job.phase] ?? "A clonar…";
+      if (phase) phase.textContent = PHASE_LABEL[job.phase] ?? "Clonando…";
       const pctEl = el.querySelector<HTMLElement>(".cloud-progress-pct");
       if (pctEl) pctEl.textContent = `${pct}%`;
     }
@@ -569,7 +569,7 @@ export const mount: MountView = (root, ctx) => {
     if (chooseBtn && popover && !choosing) {
       choosing = true;
       const p = popover;
-      void withBusy(chooseBtn, "A escolher…", () => apiCloud.chooseFolder())
+      void withBusy(chooseBtn, "Escolhendo…", () => apiCloud.chooseFolder())
         .then((folder) => {
           if (folder && alive && popover === p) p.parent = folder;
         })
@@ -607,7 +607,7 @@ export const mount: MountView = (root, ctx) => {
   document.addEventListener("keydown", onKey);
 
   refreshBtn.addEventListener("click", () => {
-    void withBusy(refreshBtn, "A atualizar…", loadAll).catch((e) => showToast(errMessage(e)));
+    void withBusy(refreshBtn, "Atualizando…", loadAll).catch((e) => showToast(errMessage(e)));
   });
 
   const onDataChanged = () => void loadAll(false);

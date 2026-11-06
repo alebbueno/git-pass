@@ -18,7 +18,7 @@ fn env() -> Result<IntegrationEnv, String> {
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f)
         .await
-        .map_err(|e| format!("Erro interno do GitPass: {e}"))?
+        .map_err(|e| format!("Algo deu errado no GitPass: {e}"))?
 }
 
 fn notify(app: &AppHandle, status: &IntegrationStatus) {

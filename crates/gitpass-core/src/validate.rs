@@ -98,7 +98,7 @@ fn operation_label(phase: &str) -> &'static str {
     }
 }
 
-const REPAIR_HINT: &str = "Abre a app GitPass e escolhe «Reparar» em Definições.";
+const REPAIR_HINT: &str = "Abra o app GitPass e escolha «Reparar» em Configurações.";
 
 /// Enforces **daemon must validate** policy when IPC is unavailable or the socket is missing.
 /// Development escape hatches (`GITPASS_ALLOW_*`) are deliberately not mentioned to users.
@@ -110,7 +110,7 @@ pub fn policy_when_daemon_unreachable(phase: &str, cfg: &AppConfig) -> ValidateF
     let blocked = || ValidateFail::Err {
         code: "GP-DAEMON-OFF",
         message: format!(
-            "O serviço do GitPass não está a responder, por isso {} foi bloqueado. {REPAIR_HINT}",
+            "O serviço do GitPass não está respondendo, então {} foi bloqueado. {REPAIR_HINT}",
             operation_label(phase)
         ),
     };
@@ -148,7 +148,7 @@ fn redact_url(url: &str) -> String {
 fn api_error_detail(e: &crate::GithubApiError) -> String {
     match e {
         crate::GithubApiError::Http { status, .. } => format!("o GitHub respondeu HTTP {status}"),
-        crate::GithubApiError::Reqwest(_) => "sem ligação ao GitHub".into(),
+        crate::GithubApiError::Reqwest(_) => "sem conexão com o GitHub".into(),
         _ => "resposta inesperada do GitHub".into(),
     }
 }
@@ -174,7 +174,7 @@ fn expect_binding<'a>(root: &Path, cfg: &'a AppConfig) -> Result<&'a RepoBinding
         .ok_or_else(|| ValidateFail::Err {
             code: "GP-BINDING",
             message: format!(
-                "Este repositório ({}) não está associado a nenhuma conta. Associa-o na app GitPass (Repositórios).",
+                "Este repositório ({}) não está vinculado a nenhuma conta. Vincule-o no app GitPass (Repositórios).",
                 root.display()
             ),
         })
@@ -203,7 +203,7 @@ fn binding_remote_consistency(binding: &RepoBinding, remote: &GitHubRepoId) -> R
         binding.github_repo.as_deref().unwrap_or(remote.repo.as_str())
     );
     Err(format!(
-        "O remoto «origin» aponta para {}/{}, mas no GitPass este repositório está registado como {registered}. Associa-o de novo na app GitPass (Repositórios).",
+        "O remoto «origin» aponta para {}/{}, mas no GitPass este repositório está registrado como {registered}. Vincule-o de novo no app GitPass (Repositórios).",
         remote.owner, remote.repo
     ))
 }
@@ -284,7 +284,7 @@ pub fn validate_repo_for_hook_with_options(
         None => {
             return ValidateFail::Err {
                 code: "GP-ACCOUNT",
-                message: "Este repositório está associado a uma conta que já não existe no GitPass. Escolhe outra conta na app GitPass (Repositórios).".into(),
+                message: "Este repositório está vinculado a uma conta que não existe mais no GitPass. Escolha outra conta no app GitPass (Repositórios).".into(),
             };
         }
     };
@@ -295,7 +295,7 @@ pub fn validate_repo_for_hook_with_options(
             return ValidateFail::Err {
                 code: "GP-ACCOUNT-LOGIN",
                 message: format!(
-                    "A conta «{}» não tem utilizador do GitHub. Liga-a de novo na app GitPass (Contas).",
+                    "A conta «{}» não tem usuário do GitHub. Conecte-a de novo no app GitPass (Contas).",
                     account.label.as_deref().unwrap_or("sem nome")
                 ),
             };
@@ -307,7 +307,7 @@ pub fn validate_repo_for_hook_with_options(
         Err(_) => {
             return ValidateFail::Err {
                 code: "GP-ORIGIN",
-                message: "Este repositório não tem o remoto «origin». Adiciona-o (o endereço do repositório no GitHub) ou associa o repositório de novo na app GitPass.".into(),
+                message: "Este repositório não tem o remoto «origin». Adicione-o (o endereço do repositório no GitHub) ou vincule o repositório de novo no app GitPass.".into(),
             };
         }
     };
@@ -318,7 +318,7 @@ pub fn validate_repo_for_hook_with_options(
             return ValidateFail::Err {
                 code: "GP-REMOTE",
                 message: format!(
-                    "O remoto «origin» ({}) não é um repositório do github.com. O GitPass só protege repositórios do GitHub; remove a associação na app GitPass (Repositórios) se este repositório não for do GitHub.",
+                    "O remoto «origin» ({}) não é um repositório do github.com. O GitPass só protege repositórios do GitHub. Se este repositório não for do GitHub, desvincule-o no app GitPass (Repositórios).",
                     redact_url(&origin_url)
                 ),
             };
@@ -346,7 +346,7 @@ pub fn validate_repo_for_hook_with_options(
     let no_token = || ValidateFail::Err {
         code: "GP-OAUTH",
         message: format!(
-            "Este repositório pertence a {}, e é preciso confirmar no GitHub se a conta @{login} tem acesso, mas a conta não está ligada. Liga-a de novo na app GitPass (Contas).",
+            "Este repositório pertence a {}. Para confirmar no GitHub se a conta @{login} tem acesso, a conta precisa estar conectada. Conecte-a de novo no app GitPass (Contas).",
             remote.owner
         ),
     };
@@ -369,13 +369,13 @@ pub fn validate_repo_for_hook_with_options(
         Ok(false) => ValidateFail::Err {
             code: "GP-PERMISSION",
             message: format!(
-                "A conta @{login} não tem permissão de escrita em {}/{}. Muda a conta na app GitPass (Repositórios) ou pede acesso a {}.",
+                "A conta @{login} não tem permissão de escrita em {}/{}. Troque a conta no app GitPass (Repositórios) ou peça acesso a {}.",
                 remote.owner, remote.repo, remote.owner
             ),
         },
         Err(e) => {
             let detail = if matches!(e, crate::GithubApiError::Http { status: 401, .. }) {
-                format!("a conta @{login} precisa de ser ligada de novo na app GitPass (Contas)")
+                format!("a conta @{login} precisa ser conectada de novo no app GitPass (Contas)")
             } else {
                 api_error_detail(&e)
             };
@@ -392,7 +392,7 @@ pub fn validate_repo_for_hook_with_options(
                 ValidateFail::Err {
                     code: "GP-API",
                     message: format!(
-                        "Não foi possível confirmar no GitHub o acesso da conta @{login} a {}/{} ({detail}). Verifica a ligação à Internet e tenta de novo.",
+                        "Não foi possível confirmar no GitHub o acesso da conta @{login} a {}/{} ({detail}). Veja se você está online e tente de novo.",
                         remote.owner, remote.repo
                     ),
                 }
@@ -403,7 +403,7 @@ pub fn validate_repo_for_hook_with_options(
 
 fn owner_mismatch_message(owner: &str, login: &str) -> String {
     format!(
-        "Este repositório pertence a {owner}, mas está associado à conta @{login}. Muda a conta na app GitPass (Repositórios)."
+        "Este repositório pertence a {owner}, mas está vinculado à conta @{login}. Troque a conta no app GitPass (Repositórios)."
     )
 }
 
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(code, "GP-DAEMON-OFF");
         assert_eq!(
             msg,
-            "O serviço do GitPass não está a responder, por isso o push foi bloqueado. Abre a app GitPass e escolhe «Reparar» em Definições."
+            "O serviço do GitPass não está respondendo, então o push foi bloqueado. Abra o app GitPass e escolha «Reparar» em Configurações."
         );
         let (code, msg) = err_of(policy_when_daemon_unreachable("pre-commit", &cfg));
         assert_eq!(code, "GP-DAEMON-OFF");
@@ -467,7 +467,7 @@ mod tests {
     fn owner_mismatch_message_names_owner_and_account() {
         assert_eq!(
             owner_mismatch_message("acme", "octo"),
-            "Este repositório pertence a acme, mas está associado à conta @octo. Muda a conta na app GitPass (Repositórios)."
+            "Este repositório pertence a acme, mas está vinculado à conta @octo. Troque a conta no app GitPass (Repositórios)."
         );
     }
 
@@ -536,7 +536,7 @@ mod tests {
         let repo = repo_with_origin("https://github.com/octo/app.git");
         let (code, msg) = err_of(check(&repo, &AppConfig::default()));
         assert_eq!(code, "GP-BINDING");
-        assert!(msg.contains("não está associado a nenhuma conta"), "{msg}");
+        assert!(msg.contains("não está vinculado a nenhuma conta"), "{msg}");
         assert_user_facing(&msg);
     }
 
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(code, "GP-OWNER");
         assert_eq!(
             msg,
-            "O remoto «origin» aponta para other/app, mas no GitPass este repositório está registado como octo/app. Associa-o de novo na app GitPass (Repositórios)."
+            "O remoto «origin» aponta para other/app, mas no GitPass este repositório está registrado como octo/app. Vincule-o de novo no app GitPass (Repositórios)."
         );
         assert!(!msg.contains("gho_secret"));
     }
@@ -559,7 +559,7 @@ mod tests {
         let cfg = cfg_for(&repo.0, "octo", Some("acme"), Some("app"));
         let (code, msg) = err_of(check(&repo, &cfg));
         assert_eq!(code, "GP-OAUTH");
-        assert!(msg.contains("pertence a acme") && msg.contains("@octo") && msg.contains("Liga-a de novo"), "{msg}");
+        assert!(msg.contains("pertence a acme") && msg.contains("@octo") && msg.contains("Conecte-a de novo"), "{msg}");
         assert_user_facing(&msg);
     }
 

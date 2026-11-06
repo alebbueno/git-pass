@@ -48,31 +48,31 @@ type State = {
   applyError: string | null;
 };
 
-const OAUTH_UNAVAILABLE = "A ligação ao GitHub não está disponível nesta versão da app.";
+const OAUTH_UNAVAILABLE = "A conexão com o GitHub não está disponível nesta versão do app.";
 
 const STEPS: { n: Step; eyebrow: string; title: string }[] = [
-  { n: 1, eyebrow: "01 / Conta", title: "Ligar a conta GitHub" },
-  { n: 2, eyebrow: "02 / Repositórios", title: "Encontrar os seus repositórios" },
-  { n: 3, eyebrow: "03 / Pronto", title: "Pronto a usar" },
+  { n: 1, eyebrow: "01 / Conta", title: "Conectar a conta do GitHub" },
+  { n: 2, eyebrow: "02 / Repositórios", title: "Encontrar seus repositórios" },
+  { n: 3, eyebrow: "03 / Pronto", title: "Pronto para usar" },
 ];
 
 const REASON_TEXT: Record<SuggestionReason, string> = {
   owner_login: "conta dona do repositório",
-  same_owner_binding: "já usada noutros repositórios deste dono",
-  only_account: "única conta ligada",
-  push_access: "única conta com permissão de push",
+  same_owner_binding: "já usada em outros repositórios deste dono",
+  only_account: "única conta conectada",
+  push_access: "única conta com permissão de envio (push)",
 };
 
 const COMPONENTS: { key: "binaries" | "credentials" | "hooks" | "daemon"; label: string }[] = [
   { key: "binaries", label: "Programas" },
-  { key: "credentials", label: "Credenciais Git" },
+  { key: "credentials", label: "Credenciais do Git" },
   { key: "hooks", label: "Verificação nos commits" },
   { key: "daemon", label: "Serviço em segundo plano" },
 ];
 
 const CHECK_BADGE: Record<CheckState, { cls: string; label: string; sym: "check" | "alert" | "x" }> = {
   ok: { cls: "success", label: "Em ordem", sym: "check" },
-  missing: { cls: "warning", label: "Em falta", sym: "alert" },
+  missing: { cls: "warning", label: "Faltando", sym: "alert" },
   outdated: { cls: "warning", label: "Desatualizado", sym: "alert" },
   conflict: { cls: "warning", label: "Conflito", sym: "alert" },
   error: { cls: "error", label: "Erro", sym: "x" },
@@ -133,7 +133,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
         <p class="view-sub">Três passos, sem terminal.</p>
       </div>
       <div class="view-actions">
-        <button type="button" class="btn ghost" data-action="skip" title="Pode voltar a este guia a partir do Painel">Saltar</button>
+        <button type="button" class="btn ghost" data-action="skip" title="Você pode voltar a este guia pelo Painel">Pular</button>
       </div>
     </header>
     <p class="sr-only" role="status" aria-live="polite" data-ref="live"></p>
@@ -142,7 +142,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
         <div class="welcome-hero-text">
           <p class="welcome-eyebrow">Boas-vindas</p>
           <h2 class="welcome-hero-title" id="welcome-hero-title">A conta certa em cada projeto.</h2>
-          <p class="welcome-hero-sub">Ligue o GitHub, encontre os seus repositórios e o Git passa a usar sozinho a conta e a identidade certas em cada commit e push.</p>
+          <p class="welcome-hero-sub">Conecte o GitHub e encontre seus repositórios. Depois disso, o Git usa sozinho a conta e a identidade certas em cada commit e push.</p>
         </div>
         <div class="welcome-hero-mark" aria-hidden="true">${brandSymbol()}</div>
       </section>
@@ -172,7 +172,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const marker = st === "done" ? icon("check", 16) : `<span aria-hidden="true">${n}</span>`;
     const status =
       st === "done"
-        ? `<span class="badge success">${icon("check", 12)}Concluído</span>`
+        ? `<span class="badge success">${icon("check", 12)}Pronto</span>`
         : st === "locked"
           ? `<span class="muted small">Em seguida</span>`
           : "";
@@ -181,7 +181,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
         <span class="welcome-step-marker">${marker}</span>
         <div class="welcome-step-heading">
           <span class="welcome-eyebrow">${esc(def.eyebrow)}</span>
-          <h3 class="welcome-step-title" id="welcome-step-${n}-title" tabindex="-1">${esc(def.title)}${st === "done" ? `<span class="sr-only"> (concluído)</span>` : ""}</h3>
+          <h3 class="welcome-step-title" id="welcome-step-${n}-title" tabindex="-1">${esc(def.title)}${st === "done" ? `<span class="sr-only"> (pronto)</span>` : ""}</h3>
         </div>
         ${status}
       </div>`;
@@ -227,16 +227,16 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
 
   function body1(st: "done" | "current"): string {
     if (state.loading) {
-      return `<div class="welcome-step-body"><div class="welcome-loading" role="status"><span class="spinner" aria-hidden="true"></span>A carregar…</div></div>`;
+      return `<div class="welcome-step-body"><div class="welcome-loading" role="status"><span class="spinner" aria-hidden="true"></span>Carregando…</div></div>`;
     }
     if (st === "done") {
       const chips = state.accounts.map((a) => `<li>${profileChip(a, { size: "md" })}</li>`).join("");
       return `
         <div class="welcome-step-body welcome-summary">
-          <ul class="welcome-chips" aria-label="Contas ligadas">${chips}</ul>
+          <ul class="welcome-chips" aria-label="Contas conectadas">${chips}</ul>
           ${
             state.oauthOk
-              ? `<button type="button" class="btn ghost" data-action="connect">${icon("plus", 14)}<span>Ligar outra conta</span></button>`
+              ? `<button type="button" class="btn ghost" data-action="connect">${icon("plus", 14)}<span>Conectar outra conta</span></button>`
               : ""
           }
         </div>`;
@@ -244,16 +244,16 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const unavailable = state.oauthOk === false;
     return `
       <div class="welcome-step-body">
-        <p class="welcome-lead">Ligue a conta GitHub que usa neste Mac. Abre-se uma janela com um código: copie-o, autorize no GitHub e volte aqui. A palavra-passe nunca passa pela app.</p>
+        <p class="welcome-lead">Conecte a conta GitHub que você usa neste Mac. Uma janela mostra um código: copie, autorize no GitHub e volte aqui. Sua senha nunca passa pelo app.</p>
         ${
           unavailable
             ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>${esc(OAUTH_UNAVAILABLE)}</span></div>`
             : ""
         }
         <div class="welcome-actions">
-          <button type="button" class="btn primary lg welcome-cta" data-action="connect"${unavailable ? " disabled" : ""}>${icon("key", 18)}<span>Ligar conta GitHub</span></button>
+          <button type="button" class="btn primary lg welcome-cta" data-action="connect"${unavailable ? " disabled" : ""}>${icon("key", 18)}<span>Conectar conta GitHub</span></button>
         </div>
-        <p class="muted small welcome-hint">Pode ligar mais contas depois (por exemplo, pessoal e trabalho).</p>
+        <p class="muted small welcome-hint">Você pode conectar mais contas depois (por exemplo, pessoal e do trabalho).</p>
       </div>`;
   }
 
@@ -308,7 +308,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     return `
       <label class="sr-only" for="welcome-acc-${i}">Conta para ${esc(repoLabel(r.repo))}</label>
       <select class="select welcome-select" id="welcome-acc-${i}" data-row="${i}" data-kind="account">
-        <option value=""${r.accountId ? "" : " selected"}>Escolher conta…</option>
+        <option value=""${r.accountId ? "" : " selected"}>Escolha a conta…</option>
         ${opts}
       </select>`;
   }
@@ -341,7 +341,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
       const text =
         state.bound > 0
           ? `${plural(state.bound, "repositório vinculado", "repositórios vinculados")}. O Git já usa a conta certa neles.`
-          : "Nenhum repositório vinculado por agora. Pode fazê-lo mais tarde em Repositórios.";
+          : "Nenhum repositório vinculado por enquanto. Você pode vincular depois, em Repositórios.";
       return `<div class="welcome-step-body"><p class="welcome-lead">${esc(text)}</p></div>`;
     }
 
@@ -349,18 +349,18 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     if (d.status === "idle" || d.status === "loading") {
       return `
         <div class="welcome-step-body">
-          <div class="welcome-loading" role="status"><span class="spinner" aria-hidden="true"></span>A procurar clones do GitHub nas pastas habituais…</div>
+          <div class="welcome-loading" role="status"><span class="spinner" aria-hidden="true"></span>Procurando clones do GitHub nas pastas mais comuns…</div>
           <div class="welcome-sk-list" aria-hidden="true">${Array.from({ length: 3 }, () => `<div class="skeleton welcome-sk-row"></div>`).join("")}</div>
         </div>`;
     }
     if (d.status === "error") {
       return `
         <div class="welcome-step-body">
-          <div class="callout error" role="alert">${icon("alert", 16)}<span>Não foi possível procurar repositórios.\n${esc(d.message)}</span></div>
+          <div class="callout error" role="alert">${icon("alert", 16)}<span>Não foi possível buscar os repositórios.\n${esc(d.message)}</span></div>
           <div class="welcome-actions">
             <button type="button" class="btn primary lg" data-action="retry-discover">${icon("refresh", 16)}<span>Tentar de novo</span></button>
             ${cloudBtn()}
-            <button type="button" class="btn ghost lg" data-action="next">Saltar este passo</button>
+            <button type="button" class="btn ghost lg" data-action="next">Pular este passo</button>
           </div>
         </div>`;
     }
@@ -368,7 +368,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const errors = state.bindErrors.length
       ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>${esc(`Alguns repositórios não foram vinculados:\n${state.bindErrors.join("\n")}`)}</span></div>`
       : "";
-    const skipLabel = state.bound > 0 ? "Continuar" : "Saltar este passo";
+    const skipLabel = state.bound > 0 ? "Continuar" : "Pular este passo";
 
     if (state.rows.length === 0) {
       return `
@@ -376,11 +376,11 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
           ${errors}
           <div class="empty-state welcome-empty">
             <span class="empty-icon">${icon("repo", 24)}</span>
-            <h4 class="welcome-empty-title">${state.bound > 0 ? "Não há mais repositórios por vincular" : "Não encontrámos clones por vincular"}</h4>
-            <p>Procurámos nas pastas habituais. Se os seus projetos estão noutro sítio, escolha a pasta; se ainda não os tem no Mac, clone-os a partir do GitHub.</p>
+            <h4 class="welcome-empty-title">${state.bound > 0 ? "Não há mais repositórios para vincular" : "Não encontramos clones para vincular"}</h4>
+            <p>Procuramos nas pastas mais comuns. Se seus projetos estão em outro lugar, escolha a pasta. Se ainda não estão no Mac, clone do GitHub.</p>
           </div>
           <div class="welcome-actions">
-            <button type="button" class="btn lg" data-action="browse">${icon("folder", 16)}<span>Procurar noutra pasta</span></button>
+            <button type="button" class="btn lg" data-action="browse">${icon("folder", 16)}<span>Procurar em outra pasta</span></button>
             ${cloudBtn()}
             <button type="button" class="btn primary lg" data-action="next">${skipLabel}</button>
           </div>
@@ -390,7 +390,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const rows = state.rows.map((r, i) => rowHtml(i, r)).join("");
     return `
       <div class="welcome-step-body">
-        <p class="welcome-lead">Encontrámos <strong>${plural(state.rows.length, "repositório", "repositórios")}</strong> do GitHub neste Mac sem conta associada. Escolha os que quer vincular: o commit e o push passam a usar a conta indicada.</p>
+        <p class="welcome-lead">Encontramos <strong>${plural(state.rows.length, "repositório", "repositórios")}</strong> do GitHub neste Mac sem conta vinculada. Escolha os que você quer vincular. O commit e o push passam a usar a conta indicada.</p>
         ${errors}
         <div class="welcome-toolbar">
           <button type="button" class="btn ghost" data-action="toggle-all"></button>
@@ -399,12 +399,12 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
         <ul class="list welcome-repos" data-ref="repos">${rows}</ul>
         ${
           d.truncated
-            ? `<p class="muted small welcome-hint">A procura foi limitada no tempo e pode haver mais repositórios. Use "Procurar noutra pasta" ou veja Repositórios mais tarde.</p>`
+            ? `<p class="muted small welcome-hint">A busca parou por tempo e pode haver mais repositórios. Use "Procurar em outra pasta" ou veja a tela Repositórios depois.</p>`
             : ""
         }
         <div class="welcome-actions">
           <button type="button" class="btn primary lg" data-action="bind"></button>
-          <button type="button" class="btn lg" data-action="browse">${icon("folder", 16)}<span>Procurar noutra pasta</span></button>
+          <button type="button" class="btn lg" data-action="browse">${icon("folder", 16)}<span>Procurar em outra pasta</span></button>
           ${cloudBtn()}
           <button type="button" class="btn ghost lg" data-action="next">${skipLabel}</button>
         </div>
@@ -453,8 +453,8 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
       renderBody(2);
       announce(
         state.rows.length
-          ? `Encontrados ${plural(state.rows.length, "repositório", "repositórios")}.`
-          : "Não foram encontrados repositórios por vincular."
+          ? `Encontramos ${plural(state.rows.length, "repositório", "repositórios")}.`
+          : "Não encontramos repositórios para vincular."
       );
     } catch (e) {
       if (disposed || seq !== discoverSeq) return;
@@ -483,7 +483,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const list = stepLi(2).querySelector<HTMLElement>('[data-ref="repos"]');
     list?.setAttribute("inert", "");
     try {
-      const results = await withBusy(btn, "A vincular…", () =>
+      const results = await withBusy(btn, "Vinculando…", () =>
         reposApi.bindMany(chosen.map((r) => ({ path: r.repo.root_path, account_id: r.accountId })))
       );
       if (disposed) return;
@@ -527,7 +527,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
   function body3(): string {
     const it = state.integration;
     if (it.status === "idle" || it.status === "loading") {
-      return `<div class="welcome-step-body"><div class="welcome-loading" role="status"><span class="spinner" aria-hidden="true"></span>A verificar a integração com o Git…</div></div>`;
+      return `<div class="welcome-step-body"><div class="welcome-loading" role="status"><span class="spinner" aria-hidden="true"></span>Verificando a integração com o Git…</div></div>`;
     }
     if (it.status === "error") {
       return `
@@ -551,32 +551,32 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
       ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>${esc(`Não foi possível ativar a integração.\n${state.applyError}`)}</span></div>`
       : "";
     const gitMissing = !st.git_found
-      ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>O Git não foi encontrado neste Mac. Instale-o (ferramentas de programação da Apple ou git-scm.com) e volte a verificar.</span></div>`
+      ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>O Git não foi encontrado neste Mac. Instale o Git (pelas ferramentas de desenvolvimento da Apple ou em git-scm.com) e verifique de novo.</span></div>`
       : "";
 
     const verdict = st.ready
       ? `<div class="callout success" role="status">${icon("check", 16)}<span>Tudo pronto. A partir de agora, o <span class="mono">git commit</span> e o <span class="mono">git push</span> usam a conta certa em cada repositório vinculado.</span></div>`
       : `<div class="callout warning" role="status">${icon("alert", 16)}<span>${
           st.enabled
-            ? "Falta ativar a integração para o Git usar a conta certa automaticamente. É um clique e pode ser desfeito em Definições."
-            : "A integração está desativada. Ative-a para o Git usar a conta certa automaticamente."
+            ? "Ative a integração para o Git usar a conta certa sozinho. É só um clique e você pode desfazer em Configurações."
+            : "A integração está desativada. Ative para o Git usar a conta certa sozinho."
         }</span></div>`;
 
     const actions = st.ready
       ? `<button type="button" class="btn primary lg welcome-cta" data-action="finish">Ir para o Painel</button>`
       : `
         <button type="button" class="btn primary lg welcome-cta" data-action="apply"${st.git_found ? "" : " disabled"}>${icon("check", 18)}<span>Ativar</span></button>
-        ${hasConflict ? `<button type="button" class="btn lg" data-action="settings">Rever em Definições</button>` : ""}
+        ${hasConflict ? `<button type="button" class="btn lg" data-action="settings">Ver em Configurações</button>` : ""}
         <button type="button" class="btn ghost lg" data-action="finish">Ir para o Painel</button>`;
 
     return `
       <div class="welcome-step-body">
         <div class="welcome-integration-head">
-          <span class="badge ${head.kind}">${icon(headIcon, 12)}Integração Git · ${esc(head.label)}</span>
+          <span class="badge ${head.kind}">${icon(headIcon, 12)}Integração com o Git · ${esc(head.label)}</span>
           <span class="muted small">${esc(head.detail)}</span>
         </div>
         ${gitMissing}${verdict}${warnings}${applyErr}
-        <ul class="list welcome-checks" aria-label="Estado de cada componente">${COMPONENTS.map((c) => componentRow(c.label, st[c.key])).join("")}</ul>
+        <ul class="list welcome-checks" aria-label="Situação de cada item">${COMPONENTS.map((c) => componentRow(c.label, st[c.key])).join("")}</ul>
         <div class="welcome-actions">${actions}</div>
       </div>`;
   }
@@ -595,7 +595,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     }
     renderBody(3);
     if (state.integration.status === "ok") {
-      announce(state.integration.value.ready ? "A integração com o Git está ativa." : "A integração com o Git precisa de ser ativada.");
+      announce(state.integration.value.ready ? "A integração com o Git está ativa." : "A integração com o Git precisa ser ativada.");
     }
   }
 
@@ -603,14 +603,14 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     state.applyError = null;
     state.applyWarnings = [];
     try {
-      const report = await withBusy(btn, "A ativar…", () => integrationApi.apply(false));
+      const report = await withBusy(btn, "Ativando…", () => integrationApi.apply(false));
       if (disposed) return;
       integrationSeq++;
       state.integration = { status: "ok", value: report.status };
       state.applyWarnings = report.warnings;
       renderBody(3);
       focusHeading(3);
-      announce(report.status.ready ? "Integração com o Git ativada." : "A integração ficou por completar. Veja os avisos.");
+      announce(report.status.ready ? "Integração com o Git ativada." : "A integração não foi concluída. Veja os avisos.");
     } catch (e) {
       if (disposed) return;
       state.applyError = errMessage(e);
@@ -789,7 +789,7 @@ export const mountHome: MountView = (root, ctx) => {
   if (flag === "done" || flag === "skipped") {
     showOverview();
   } else {
-    root.innerHTML = `<div class="welcome-boot" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span class="sr-only">A carregar…</span></div>`;
+    root.innerHTML = `<div class="welcome-boot" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span class="sr-only">Carregando…</span></div>`;
     api.accounts().then(
       (accounts) => {
         if (disposed) return;

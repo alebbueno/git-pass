@@ -118,11 +118,11 @@ where
 {
     tauri::async_runtime::spawn_blocking(f)
         .await
-        .map_err(|e| format!("Erro interno: {e}"))?
+        .map_err(|e| format!("Algo deu errado no app: {e}"))?
 }
 
 fn load_config() -> Result<AppConfig, String> {
-    AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler a configuração do GitPass: {e}"))
+    AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass: {e}"))
 }
 
 fn parse_id(raw: &str, what: &str) -> Result<Uuid, String> {
@@ -190,7 +190,7 @@ fn row_for(cfg: &AppConfig, binding_id: Uuid) -> Result<RepoRow, String> {
         .iter()
         .find(|r| r.id == binding_id)
         .map(|b| build_row(cfg, b))
-        .ok_or_else(|| "Vínculo desconhecido. Atualiza a lista e tenta novamente.".to_string())
+        .ok_or_else(|| "Vínculo desconhecido. Atualize a lista e tente de novo.".to_string())
 }
 
 struct RepoTarget {
@@ -205,14 +205,14 @@ fn inspect_folder(path: &Path) -> Result<RepoTarget, String> {
         return Err(format!("A pasta {} não existe.", path.display()));
     }
     let root = git_work_tree_root(Some(path)).map_err(|_| {
-        "A pasta escolhida não é um repositório Git. Escolhe a pasta de um clone (com .git) ou clona o repositório no separador Nuvem.".to_string()
+        "A pasta escolhida não é um repositório Git. Escolha a pasta de um clone (com .git) ou clone o repositório na aba Nuvem.".to_string()
     })?;
     let root = root.canonicalize().unwrap_or(root);
     let url = read_origin_url(&root).ok_or_else(|| {
-        "Este repositório não tem o remote `origin`. Adiciona-o (por exemplo no GitHub Desktop) e tenta novamente.".to_string()
+        "Este repositório não tem o remoto `origin`. Adicione um (por exemplo, no GitHub Desktop) e tente de novo.".to_string()
     })?;
     let gh = parse_github_remote(&url).ok_or_else(|| {
-        "O `origin` deste repositório não aponta para github.com. O GitPass só gere repositórios do GitHub.".to_string()
+        "O `origin` deste repositório não aponta para github.com. O GitPass só cuida de repositórios do GitHub.".to_string()
     })?;
     Ok(RepoTarget {
         root,
@@ -237,7 +237,7 @@ fn ensure_not_bound(cfg: &AppConfig, root: &Path) -> Result<(), String> {
         .map(|l| format!(" à conta @{l}"))
         .unwrap_or_default();
     Err(format!(
-        "Esta pasta já está vinculada{who}. Para usar outra conta, escolhe «Mudar conta» no detalhe do repositório."
+        "Esta pasta já está vinculada{who}. Para usar outra conta, escolha «Mudar conta» nos detalhes do repositório."
     ))
 }
 
@@ -248,7 +248,7 @@ fn bind(app: &AppHandle, cfg: &mut AppConfig, account: Uuid, root: &Path) -> Res
         Err(e) if cfg.repos.iter().any(|r| r.root_path == root) => {
             notify(app);
             Err(format!(
-                "O repositório foi vinculado, mas não foi possível aplicar a identidade Git ({e}). Use «Corrigir» no repositório."
+                "O repositório foi vinculado, mas não foi possível aplicar a identidade do Git ({e}). Use «Corrigir» no repositório."
             ))
         }
         Err(e) => Err(e),
@@ -321,7 +321,7 @@ fn pick_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn pick_folder(_prompt: &str) -> Result<Option<PathBuf>, String> {
-    Err("O seletor de pastas só está disponível no macOS.".to_string())
+    Err("O seletor de pastas só funciona no macOS.".to_string())
 }
 
 fn expand_home(raw: &str) -> PathBuf {
@@ -354,7 +354,7 @@ pub(crate) fn bound_repo_root(path: &str) -> Result<PathBuf, String> {
     if bound && c.is_dir() {
         Ok(c)
     } else {
-        Err("Esta pasta não é um repositório vinculado no GitPass. Atualiza a lista e tenta novamente.".to_string())
+        Err("Esta pasta não é um repositório vinculado no GitPass. Atualize a lista e tente de novo.".to_string())
     }
 }
 
@@ -375,7 +375,7 @@ fn open_with(args: &[&str], path: &Path) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (args, path);
-        Err("Disponível apenas no macOS.".to_string())
+        Err("Só funciona no macOS.".to_string())
     }
 }
 
@@ -408,7 +408,7 @@ pub async fn repos_bind_dialog(app: AppHandle, account_id: Option<String>) -> Re
         let mut cfg = load_config()?;
         ensure_not_bound(&cfg, &target.root)?;
         if cfg.accounts.is_empty() {
-            return Err("Liga primeiro uma conta GitHub no separador Contas.".to_string());
+            return Err("Primeiro, conecte uma conta do GitHub na aba Contas.".to_string());
         }
 
         let (account, reason) = match forced {
@@ -462,7 +462,7 @@ pub async fn repos_bind_path(app: AppHandle, path: String, account_id: String) -
 #[tauri::command]
 pub async fn repos_bind_many(app: AppHandle, items: Vec<BindRequest>) -> Result<Vec<BindItemResult>, String> {
     if items.len() > MAX_BIND_MANY {
-        return Err(format!("Vincula no máximo {MAX_BIND_MANY} repositórios de cada vez."));
+        return Err(format!("Vincule no máximo {MAX_BIND_MANY} repositórios de cada vez."));
     }
     blocking(move || {
         let mut cfg = load_config()?;
@@ -520,15 +520,15 @@ pub async fn repos_change_account(app: AppHandle, binding_id: String, account_id
         let account = parse_id(&account_id, "conta")?;
         let mut cfg = load_config()?;
         if !cfg.accounts.iter().any(|a| a.id == account) {
-            return Err("Conta desconhecida. Atualiza a lista e tenta novamente.".to_string());
+            return Err("Conta desconhecida. Atualize a lista e tente de novo.".to_string());
         }
         if !cfg.repos.iter().any(|r| r.id == id) {
-            return Err("Vínculo desconhecido. Atualiza a lista e tenta novamente.".to_string());
+            return Err("Vínculo desconhecido. Atualize a lista e tente de novo.".to_string());
         }
         let res = change_binding_account(&mut cfg, id, account);
         // Past the checks above, the switch is saved even if the identity could not be written.
         notify(&app);
-        res.map_err(|e| format!("A conta foi alterada, mas a identidade Git não foi aplicada: {e}"))?;
+        res.map_err(|e| format!("A conta foi trocada, mas a identidade do Git não foi aplicada: {e}"))?;
         row_for(&cfg, id)
     })
     .await
@@ -553,11 +553,11 @@ pub async fn repos_discover(roots: Option<Vec<String>>) -> Result<DiscoverResult
         let cfg = load_config()?;
         let candidates: Vec<PathBuf> = match roots {
             Some(r) if r.len() > MAX_DISCOVER_ROOTS => {
-                return Err(format!("Escolhe no máximo {MAX_DISCOVER_ROOTS} pastas de cada vez."));
+                return Err(format!("Escolha no máximo {MAX_DISCOVER_ROOTS} pastas de cada vez."));
             }
             Some(r) => r.iter().map(|s| expand_home(s)).filter(|p| p.is_absolute()).collect(),
             None => {
-                let home = dirs_home().ok_or_else(|| "Não foi possível determinar a pasta pessoal.".to_string())?;
+                let home = dirs_home().ok_or_else(|| "Não foi possível encontrar a sua pasta pessoal.".to_string())?;
                 default_discover_roots(&home)
             }
         };

@@ -17,7 +17,7 @@ const THEME_EVENT = "gitpass:theme-changed";
 
 const CHECK_BADGES: Record<CheckState, { cls: string; sym: "check" | "alert" | "x"; label: string }> = {
   ok: { cls: "success", sym: "check", label: "Ativo" },
-  missing: { cls: "error", sym: "x", label: "Em falta" },
+  missing: { cls: "error", sym: "x", label: "Faltando" },
   outdated: { cls: "warning", sym: "alert", label: "Desatualizado" },
   conflict: { cls: "warning", sym: "alert", label: "Conflito" },
   error: { cls: "error", sym: "x", label: "Erro" },
@@ -26,9 +26,9 @@ const CHECK_BADGES: Record<CheckState, { cls: string; sym: "check" | "alert" | "
 type CheckId = "credentials" | "hooks" | "daemon";
 
 const CHECKS: { id: CheckId; label: string; current: string; previous: string }[] = [
-  { id: "credentials", label: "Credenciais GitHub", current: "Configurado agora", previous: "Substituído (guardado para repor)" },
-  { id: "hooks", label: "Hooks do Git", current: "Hooks globais atuais", previous: "Também corre os hooks em" },
-  { id: "daemon", label: "Daemon gitpassd", current: "Atual", previous: "Anterior" },
+  { id: "credentials", label: "Credenciais do GitHub", current: "Configurado agora", previous: "Substituído (salvo para restaurar)" },
+  { id: "hooks", label: "Verificação do Git", current: "Pasta de verificação atual", previous: "Também roda as verificações em" },
+  { id: "daemon", label: "Serviço em segundo plano", current: "Atual", previous: "Anterior" },
 ];
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: "monitor" | "sun" | "moon" }[] = [
@@ -74,8 +74,8 @@ export const mount: MountView = (root) => {
   root.innerHTML = `
     <header class="view-header">
       <div>
-        <h1 class="view-title">Definições</h1>
-        <p class="view-sub">Aparência, ligações e dados locais do GitPass.</p>
+        <h1 class="view-title">Configurações</h1>
+        <p class="view-sub">Aparência, conexões e dados locais do GitPass.</p>
       </div>
     </header>
 
@@ -86,7 +86,7 @@ export const mount: MountView = (root) => {
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-label">Tema</div>
-              <div class="settings-row-desc">Auto acompanha a definição do sistema.</div>
+              <div class="settings-row-desc">Auto segue a configuração do Mac.</div>
             </div>
             <div class="settings-row-control">
               <div class="segmented" role="group" aria-label="Tema">
@@ -110,10 +110,10 @@ export const mount: MountView = (root) => {
         <div class="panel settings-group">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-label">Ligação ao GitHub</div>
-              <div class="settings-row-desc" id="settings-oauth-desc">A verificar…</div>
+              <div class="settings-row-label">Conexão com o GitHub</div>
+              <div class="settings-row-desc" id="settings-oauth-desc">Verificando…</div>
             </div>
-            <div class="settings-row-control" id="settings-oauth-badge"><span class="spinner" role="status" aria-label="A carregar"></span></div>
+            <div class="settings-row-control" id="settings-oauth-badge"><span class="spinner" role="status" aria-label="Carregando"></span></div>
           </div>
         </div>
       </section>
@@ -123,9 +123,9 @@ export const mount: MountView = (root) => {
         <div class="panel settings-group" id="settings-integration" aria-live="polite">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-desc">A verificar a integração…</div>
+              <div class="settings-row-desc">Verificando a integração…</div>
             </div>
-            <span class="spinner" role="status" aria-label="A verificar"></span>
+            <span class="spinner" role="status" aria-label="Verificando"></span>
           </div>
         </div>
       </section>
@@ -134,13 +134,13 @@ export const mount: MountView = (root) => {
         <h2 class="section-label settings-group-label" id="settings-h-data">Dados e segurança</h2>
         <div class="panel settings-group">
           <div class="settings-row settings-row-stack">
-            <div class="settings-row-label">Ficheiro de configuração</div>
-            <div id="settings-config-path"><span class="muted small">A carregar…</span></div>
+            <div class="settings-row-label">Arquivo de configuração</div>
+            <div id="settings-config-path"><span class="muted small">Carregando…</span></div>
           </div>
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-label">Pasta de dados</div>
-              <div class="settings-row-desc">Abre a pasta onde o GitPass guarda a configuração.</div>
+              <div class="settings-row-desc">Abre a pasta onde o GitPass salva a configuração.</div>
             </div>
             <div class="settings-row-control">
               <button type="button" class="btn" id="settings-open-data">${icon("folder", 14)}Abrir pasta de dados</button>
@@ -150,8 +150,8 @@ export const mount: MountView = (root) => {
             <div class="settings-keychain">
               <span class="settings-keychain-icon" aria-hidden="true">${icon("key", 18)}</span>
               <div class="settings-keychain-body">
-                <div class="settings-row-label">Keychain</div>
-                <p class="settings-note small muted" id="settings-keychain-text">A carregar…</p>
+                <div class="settings-row-label">Chaves do macOS (Keychain)</div>
+                <p class="settings-note small muted" id="settings-keychain-text">Carregando…</p>
               </div>
             </div>
           </div>
@@ -229,8 +229,8 @@ export const mount: MountView = (root) => {
       ? `<span class="badge success">${icon("check", 12)}Pronta</span>`
       : `<span class="badge error">${icon("x", 12)}Indisponível</span>`;
     $("settings-oauth-desc").textContent = ready
-      ? "Ligação ao GitHub pronta."
-      : "Esta build não tem o GitHub configurado.";
+      ? "Conexão com o GitHub pronta."
+      : "Este app não tem o GitHub configurado.";
   };
   api
     .oauthStatus()
@@ -251,9 +251,9 @@ export const mount: MountView = (root) => {
         <div class="settings-row">
           <div class="settings-row-text">
             <div class="settings-row-label">Não foi possível verificar a integração</div>
-            <div class="settings-row-desc">${esc(intError ?? "Erro desconhecido.")}</div>
+            <div class="settings-row-desc">${esc(intError ?? "Algo deu errado.")}</div>
           </div>
-          <button type="button" class="btn" data-int="refresh">${icon("refresh", 14)}Tentar novamente</button>
+          <button type="button" class="btn" data-int="refresh">${icon("refresh", 14)}Tentar de novo</button>
         </div>`;
       return;
     }
@@ -272,7 +272,7 @@ export const mount: MountView = (root) => {
 
   const reportResult = (r: IntegrationReport, okMessage: string) => {
     if (r.warnings.length) showToast(r.warnings.join("\n"));
-    else showToast(r.changes.length ? `${okMessage}\n${r.changes.join("\n")}` : "Tudo em ordem, nada a alterar.", "ok");
+    else showToast(r.changes.length ? `${okMessage}\n${r.changes.join("\n")}` : "Tudo certo. Nada para mudar.", "ok");
   };
 
   const runIntegration = async (btn: HTMLButtonElement, busyLabel: string, task: () => Promise<void>) => {
@@ -294,40 +294,40 @@ export const mount: MountView = (root) => {
     if (!btn || btn.disabled) return;
     const action = btn.dataset.int;
     if (action === "refresh") {
-      void withBusy(btn, "A verificar…", loadIntegration);
+      void withBusy(btn, "Verificando…", loadIntegration);
     } else if (action === "repair") {
-      void runIntegration(btn, "A reparar…", async () => {
+      void runIntegration(btn, "Reparando…", async () => {
         reportResult(await integrationApi.apply(false), "Integração reparada.");
       });
     } else if (action === "chain-hooks") {
       void (async () => {
         const path = intStatus?.hooks.current_value ?? "";
         const ok = await confirmDialog(btn, {
-          title: "Encadear os teus hooks?",
-          body: `O Git passa a usar os hooks do GitPass, que validam a conta e depois correm os teus hooks em ${path}. Podes repor a configuração anterior com Desfazer integração.`,
-          confirm: "Encadear hooks",
+          title: "Manter também as suas verificações?",
+          body: `O Git vai usar as verificações do GitPass, que conferem a conta e depois rodam as suas verificações em ${path}. Para voltar à configuração anterior, use Desfazer integração.`,
+          confirm: "Manter as duas",
         });
         if (ok) {
-          await runIntegration(btn, "A aplicar…", async () => {
-            reportResult(await integrationApi.apply(true), "Hooks encadeados.");
+          await runIntegration(btn, "Aplicando…", async () => {
+            reportResult(await integrationApi.apply(true), "Verificações combinadas.");
           });
         }
       })();
     } else if (action === "daemon-restart") {
-      void runIntegration(btn, "A reiniciar…", async () => {
+      void runIntegration(btn, "Reiniciando…", async () => {
         await integrationApi.daemonRestart();
-        showToast("Daemon reiniciado.", "ok");
+        showToast("Serviço em segundo plano reiniciado.", "ok");
       });
     } else if (action === "undo") {
       void (async () => {
         const ok = await confirmDialog(btn, {
           title: "Desfazer a integração com o Git?",
-          body: "O GitPass deixa de fornecer as credenciais do GitHub e de validar commits e pushes. A configuração do Git que tinhas antes é reposta e o daemon é removido. As contas e os vínculos ficam guardados e podes voltar a ativar quando quiseres.",
+          body: "O GitPass deixa de fornecer as credenciais do GitHub e de validar commits e pushes. A configuração do Git que você tinha antes é restaurada e o serviço em segundo plano é removido. Suas contas e vínculos continuam salvos, e você pode ativar de novo quando quiser.",
           confirm: "Desfazer integração",
           danger: true,
         });
         if (ok) {
-          await runIntegration(btn, "A desfazer…", async () => {
+          await runIntegration(btn, "Desfazendo…", async () => {
             reportResult(await integrationApi.undo(), "Integração desfeita.");
           });
         }
@@ -356,7 +356,7 @@ export const mount: MountView = (root) => {
 
   const openBtn = $<HTMLButtonElement>("settings-open-data");
   openBtn.addEventListener("click", () => {
-    void withBusy(openBtn, "A abrir…", async () => {
+    void withBusy(openBtn, "Abrindo…", async () => {
       try {
         await api.openDataFolder();
       } catch (e) {
@@ -395,7 +395,7 @@ function checkRow(id: CheckId, c: ComponentStatus, s: IntegrationStatus, busy: b
   const dis = busy ? " disabled" : "";
   let action = "";
   if (id === "hooks" && c.state === "conflict") {
-    action = `<button type="button" class="btn" data-int="chain-hooks"${dis}>Encadear hooks</button>`;
+    action = `<button type="button" class="btn" data-int="chain-hooks"${dis}>Manter as duas</button>`;
   } else if (id === "daemon" && s.enabled && c.state !== "missing" && s.binaries.state !== "error") {
     action = `<button type="button" class="btn ghost" data-int="daemon-restart"${dis}>${icon("refresh", 14)}Reiniciar</button>`;
   }
@@ -416,7 +416,7 @@ function renderIntegrationBody(s: IntegrationStatus, busy: boolean): string {
   const callouts: string[] = [];
   if (!s.enabled) {
     callouts.push(
-      `<div class="callout warning">${icon("alert", 16)}<span>A integração está desativada: o Git funciona como antes de instalares o GitPass. Ativa-a para voltar a usar a conta certa em cada repositório.</span></div>`
+      `<div class="callout warning">${icon("alert", 16)}<span>A integração está desativada: o Git funciona como antes de você instalar o GitPass. Ative para voltar a usar a conta certa em cada repositório.</span></div>`
     );
   }
   if (!s.git_found) {
@@ -426,7 +426,7 @@ function renderIntegrationBody(s: IntegrationStatus, busy: boolean): string {
   }
   const intro = s.ready
     ? "O Git usa automaticamente a conta vinculada a cada repositório."
-    : "O GitPass configura o Git sozinho ao abrir. Se algo mudar, escolhe Reparar.";
+    : "O GitPass configura o Git sozinho ao abrir. Se algo mudar, clique em Reparar.";
   return `
     ${callouts.length ? `<div class="settings-row settings-row-stack">${callouts.join("")}</div>` : ""}
     ${checkRow("credentials", s.credentials, s, busy)}
