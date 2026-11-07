@@ -2,10 +2,12 @@ import "./accounts.css";
 import { api, type OauthConfigStatus } from "../lib/api";
 import { accountsApi, type AccountCheck, type AccountEmails, type AccountInfo } from "../lib/api-accounts";
 import { errMessage, esc, showToast, withBusy } from "../lib/dom";
+import { errorView } from "../lib/errors";
 import { DeviceFlowModal, ModalBase } from "../lib/device-flow";
 import { icon } from "../lib/icons";
 import { profileAvatar, profileFamily } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView, type ViewContext } from "../lib/view";
+import { openMenu, type MenuItem } from "./repos-ui";
 
 type CheckState = { state: "checking" } | AccountCheck;
 
@@ -39,12 +41,6 @@ const SCOPES: { scope: string; label: string; hint: string; required: boolean; i
   { scope: "read:org", label: "Organizações", hint: "Ver os repositórios das organizações das quais você participa", required: false, impliedBy: ["write:org", "admin:org"] },
 ];
 
-const svg = (d: string, size = 16) =>
-  `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-const pencilIcon = (size = 14) => svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', size);
-const trashIcon = (size = 16) => svg('<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>', size);
-const chevronIcon = (size = 14) => svg('<path d="m6 9 6 6 6-6"/>', size);
-
 export const mount: MountView = (root, ctx) => {
   const state: State = {
     loading: true,
@@ -63,17 +59,13 @@ export const mount: MountView = (root, ctx) => {
   let modal: { close(): void } | null = null;
 
   root.innerHTML = `
-    <header class="view-header">
-      <div>
-        <h1 class="view-title">Contas</h1>
-        <p class="view-sub" data-ref="sub">Carregando…</p>
+    <div class="page-head">
+      <div class="heading-group">
+        <h1>Contas</h1>
+        <p data-ref="sub">Gerencie os perfis usados nos seus projetos.</p>
       </div>
-      <div class="view-actions">
-        <button type="button" class="btn primary" data-action="connect" hidden>
-          ${icon("plus")}<span>Conectar conta GitHub</span>
-        </button>
-      </div>
-    </header>
+      <button type="button" class="control primary" data-action="connect" hidden>${icon("plus")}<span>Conectar conta</span></button>
+    </div>
     <p class="sr-only" data-ref="live" role="status" aria-live="polite"></p>
     <div class="accounts-body" data-ref="body" aria-busy="true"></div>
   `;
@@ -159,28 +151,21 @@ export const mount: MountView = (root, ctx) => {
     headerConnect.hidden = !ready;
 
     if (state.loading && !n) {
-      sub.textContent = "Carregando…";
       body.innerHTML = renderSkeleton();
       return;
     }
 
-    sub.textContent = n === 0 ? "Nenhuma conta conectada" : n === 1 ? "1 conta conectada" : `${n} contas conectadas`;
-
     let html = ready ? "" : renderOauthUnavailable();
     if (state.error) {
-      html += `
-        <div class="callout error accounts-error" role="alert">
-          ${icon("alert")}
-          <div class="accounts-callout-body">
-            <strong>Não foi possível carregar as contas.</strong>
-            <span>${esc(state.error)}</span>
-            <div><button type="button" class="btn" data-action="reload">${icon("refresh")}<span>Tentar de novo</span></button></div>
-          </div>
-        </div>`;
+      html += errorView({
+        title: "Não foi possível carregar as contas",
+        error: state.error,
+        actions: [{ label: "Tentar de novo", action: "reload", icon: "refresh", primary: true }],
+      });
     } else if (n === 0) {
       html += renderEmpty(ready);
     } else {
-      html += `<div class="accounts-grid">${state.accounts.map((a) => renderCard(a)).join("")}</div>`;
+      html += `<div class="accounts">${state.accounts.map((a) => renderCard(a)).join("")}</div>`;
     }
     keepFocus(() => (body.innerHTML = html));
   }
@@ -202,14 +187,14 @@ export const mount: MountView = (root, ctx) => {
 
   function renderEmpty(ready: boolean): string {
     return `
-      <section class="panel accounts-empty">
+      <section class="surface accounts-empty">
         <div class="empty-state">
           <div class="empty-icon">${icon("user", 28)}</div>
           <h3>Nenhuma conta conectada</h3>
           ${
             ready
-              ? `<p>Conecte uma conta GitHub para vincular repositórios a um perfil. O GitPass mostra um código curto. Você abre o GitHub no navegador, digita o código e autoriza. O acesso fica salvo nas Chaves do macOS (Keychain).</p>
-                 <button type="button" class="btn primary lg" data-action="connect">${icon("plus")}<span>Conectar conta GitHub</span></button>`
+              ? `<p>Conecte uma conta do GitHub para vincular repositórios a um perfil. O GitPass mostra um código curto. Você abre o GitHub no navegador, digita o código e autoriza. O acesso fica salvo nas Chaves do macOS (Keychain).</p>
+                 <button type="button" class="control primary" data-action="connect">${icon("plus")}<span>Conectar conta</span></button>`
               : `<p>Quando a conexão com o GitHub estiver disponível, você poderá conectar suas contas aqui.</p>`
           }
         </div>
@@ -220,52 +205,35 @@ export const mount: MountView = (root, ctx) => {
     const fam = profileFamily(a.id);
     const titleId = `accounts-card-${esc(a.id)}`;
     const check = state.checks.get(a.id);
-    const repoText = a.repos_count === 0 ? "Sem repositórios locais" : a.repos_count === 1 ? "1 repositório local" : `${a.repos_count} repositórios locais`;
-    const revoked = !a.has_token || (check && check.state !== "checking" && (check.state === "revoked" || check.state === "missing"));
-
+    const repoText = a.repos_count === 0 ? "Nenhum repositório" : a.repos_count === 1 ? "1 repositório" : `${a.repos_count} repositórios`;
     return `
-      <article class="panel accounts-card profile-${fam}" data-card="${esc(a.id)}" aria-labelledby="${titleId}">
-        <div class="accounts-card-head">
+      <section class="surface account-card ${fam}" data-card="${esc(a.id)}" aria-labelledby="${titleId}">
+        <div class="account-top">
           ${renderAvatar(a)}
-          <div class="accounts-card-id">${renderIdentity(a, titleId)}</div>
+          <div class="account-id">${renderIdentity(a, titleId)}</div>
+          <button type="button" class="icon-button account-more" data-action="more" data-account-id="${esc(a.id)}" aria-haspopup="menu" aria-label="Mais ações para ${esc(
+            handle(a)
+          )}" title="Mais ações">${icon("more")}</button>
         </div>
-        <dl class="accounts-facts">
-          <div class="accounts-fact">
-            <dt>Email de commit</dt>
-            <dd>${renderEmail(a, !!revoked)}</dd>
-          </div>
-          <div class="accounts-fact">
-            <dt>Permissões</dt>
-            <dd class="accounts-badges">${renderScopes(a, check)}</dd>
-          </div>
-          <div class="accounts-fact">
-            <dt>Situação</dt>
-            <dd class="accounts-badges">${renderTokenState(a, check)}</dd>
-          </div>
-        </dl>
+        <div class="account-email">
+          <p class="caption muted">E-mail de commit</p>
+          ${renderEmail(a)}
+        </div>
         ${state.emailMenu?.accountId === a.id ? renderEmailMenu(a, state.emailMenu) : ""}
+        <div class="account-state">${renderTokenState(a, check)}</div>
         ${renderAttention(a, check)}
-        <div class="accounts-card-foot">
-          <span class="accounts-repo-count small">${icon("folder", 14)}<span>${esc(repoText)}</span></span>
-          <div class="accounts-card-actions">
-            ${a.repos_count ? `<button type="button" class="btn ghost" data-action="repos">${icon("repo")}<span>Ver repositórios</span></button>` : ""}
-            ${
-              a.has_token && !revoked
-                ? `<button type="button" class="btn ghost icon-only" data-action="refresh" data-account-id="${esc(a.id)}" title="Atualizar nome, email e foto com os dados do GitHub" aria-label="Atualizar perfil de ${esc(handle(a))}">${icon("refresh")}</button>`
-                : ""
-            }
-            <button type="button" class="btn ghost icon-only accounts-danger" data-action="remove" data-account-id="${esc(a.id)}" title="Remover conta" aria-label="Remover conta ${esc(handle(a))}">${trashIcon()}</button>
-          </div>
+        <div class="account-foot"><span class="caption muted">${esc(repoText)}</span>
+          <button class="control" type="button" data-action="repos" data-account-id="${esc(a.id)}"${a.repos_count ? "" : " disabled"}>Ver projetos${icon("chevronRight")}</button>
         </div>
-      </article>`;
+      </section>`;
   }
 
   function renderAvatar(a: AccountInfo): string {
-    const fallback = profileAvatar({ id: a.id, login: a.login, label: a.label || a.name }, 48);
-    const src = a.avatar_url ? sizedAvatar(a.avatar_url, 96) : null;
+    const fallback = profileAvatar({ id: a.id, login: a.login, label: a.label || a.name }, 42);
+    const src = a.avatar_url ? sizedAvatar(a.avatar_url, 84) : null;
     const img =
       src && !failedAvatars.has(src)
-        ? `<img class="accounts-avatar-img" src="${esc(src)}" alt="" width="48" height="48" decoding="async" referrerpolicy="no-referrer" />`
+        ? `<img class="accounts-avatar-img" src="${esc(src)}" alt="" width="42" height="42" decoding="async" referrerpolicy="no-referrer" />`
         : "";
     return `<span class="accounts-avatar">${fallback}${img}</span>`;
   }
@@ -273,150 +241,163 @@ export const mount: MountView = (root, ctx) => {
   function renderIdentity(a: AccountInfo, titleId: string): string {
     const title = displayName(a);
     const secondary = [a.login ? `@${a.login}` : null, a.label && a.name && a.name !== a.label ? a.name : null].filter(Boolean).join(" · ");
-    const subLine = `<p class="muted small truncate accounts-handle">${secondary ? esc(secondary) : "sem login"}</p>`;
     const ed = state.editing;
     if (ed?.id === a.id) {
       return `
-        <label class="sr-only" for="accounts-label-${esc(a.id)}">Rótulo da conta ${esc(handle(a))}</label>
+        <label class="sr-only" for="accounts-label-${esc(a.id)}">Nome do perfil ${esc(handle(a))}</label>
         <input id="accounts-label-${esc(a.id)}" class="input accounts-label-input" data-action="label-input" data-account-id="${esc(a.id)}"
-          value="${esc(ed.draft)}" maxlength="${LABEL_MAX}" placeholder="${esc(a.name || a.login || "Rótulo")}"
+          value="${esc(ed.draft)}" maxlength="${LABEL_MAX}" placeholder="${esc(a.name || a.login || "Nome do perfil")}"
           autocomplete="off" spellcheck="false" aria-describedby="accounts-label-hint-${esc(a.id)}" ${ed.saving ? "disabled" : ""} />
-        <p class="muted small accounts-label-hint" id="accounts-label-hint-${esc(a.id)}">${
-          ed.saving ? "Salvando…" : "Enter salva · Esc cancela · deixar vazio volta ao nome do GitHub"
+        <p class="caption muted accounts-label-hint" id="accounts-label-hint-${esc(a.id)}">${
+          ed.saving ? "Salvando…" : "Enter salva · Esc cancela · vazio volta ao nome do GitHub"
         }</p>
-        <h3 class="sr-only" id="${titleId}">${esc(title)}</h3>`;
+        <h2 class="sr-only" id="${titleId}">${esc(title)}</h2>`;
     }
-    return `
-      <div class="accounts-title-row">
-        <h3 class="panel-title truncate" id="${titleId}">${esc(title)}</h3>
-        <button type="button" class="btn ghost icon-only accounts-edit-btn" data-action="edit-label" data-account-id="${esc(a.id)}" title="Editar rótulo" aria-label="Editar rótulo de ${esc(handle(a))}">${pencilIcon()}</button>
-      </div>
-      ${subLine}`;
+    return `<h2 class="truncate" id="${titleId}">${esc(title)}</h2><p class="muted truncate">${secondary ? esc(secondary) : "sem login"}</p>`;
   }
 
-  function renderEmail(a: AccountInfo, revoked: boolean): string {
+  function renderEmail(a: AccountInfo): string {
     const open = state.emailMenu?.accountId === a.id;
     const value = a.email
-      ? `<span class="mono small truncate" title="${esc(a.email)}">${esc(a.email)}</span>${
-          isNoreply(a.email) ? `<span class="badge" title="Endereço privado do GitHub: seu email pessoal não aparece nos commits">${icon("lock", 12)}Privado</span>` : ""
+      ? `<code class="truncate" title="${esc(a.email)}">${esc(a.email)}</code>${
+          isNoreply(a.email) ? `<span class="account-tag" title="Endereço privado do GitHub: seu e-mail pessoal não aparece nos commits">${icon("lock", 12)}Privado</span>` : ""
         }`
-      : `<span class="muted small">Não definido</span>`;
-    const btn =
-      a.has_token && !revoked
-        ? `<button type="button" class="btn ghost accounts-email-btn" data-action="email-menu" data-account-id="${esc(a.id)}"
-            aria-haspopup="menu" aria-expanded="${open}" aria-controls="accounts-email-menu-${esc(a.id)}" aria-label="Alterar email de commit de ${esc(handle(a))}">
-            <span>Alterar</span>${chevronIcon()}
-          </button>`
-        : "";
-    return `<span class="accounts-email">${value}</span>${btn}`;
+      : `<code class="muted">Não definido</code>`;
+    return `<div class="account-email-value">${value}${
+      a.has_token
+        ? `<button type="button" class="account-email-btn" data-action="email-menu" data-account-id="${esc(a.id)}" aria-haspopup="menu" aria-expanded="${open}" aria-controls="accounts-email-menu-${esc(
+            a.id
+          )}" aria-label="Alterar o e-mail de commit de ${esc(handle(a))}" title="Alterar o e-mail de commit">${icon("edit", 13)}</button>`
+        : ""
+    }</div>`;
   }
 
   function renderEmailMenu(a: AccountInfo, m: EmailMenu): string {
     let inner: string;
     if (m.loading) {
-      inner = `<p class="accounts-menu-status small muted" role="status"><span class="spinner" aria-hidden="true"></span>Buscando emails verificados…</p>`;
+      inner = `<p class="accounts-menu-status caption muted" role="status"><span class="spinner" aria-hidden="true"></span>Buscando e-mails verificados…</p>`;
     } else if (m.error) {
       inner = `
-        <p class="accounts-menu-status small err" role="alert">${icon("alert", 14)}<span>${esc(m.error)}</span></p>
-        <div><button type="button" class="btn" data-action="email-menu-retry" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Tentar de novo</span></button></div>`;
+        <p class="accounts-menu-status caption err" role="alert">${icon("alert")}<span>${esc(m.error)}</span></p>
+        <div><button type="button" class="control" data-action="email-menu-retry" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Tentar de novo</span></button></div>`;
     } else {
       const opts = m.data?.emails ?? [];
       inner = `
-        <div class="accounts-menu-list" role="menu" aria-label="Emails verificados de ${esc(handle(a))}">
+        <div class="accounts-menu-list" role="menu" aria-label="E-mails verificados de ${esc(handle(a))}">
           ${opts
             .map((o) => {
-              const tag = o.primary ? "Principal" : o.noreply ? "Privado (noreply)" : "";
+              const tag = o.primary ? "Principal" : o.noreply ? "Privado" : "";
               const busy = m.saving === o.email;
               return `
                 <button type="button" class="accounts-menu-item" role="menuitemradio" aria-checked="${o.selected}"
                   data-action="email-pick" data-account-id="${esc(a.id)}" data-email="${esc(o.email)}" ${m.saving ? "disabled" : ""}>
                   <span class="accounts-menu-check" aria-hidden="true">${busy ? '<span class="spinner"></span>' : o.selected ? icon("check", 14) : ""}</span>
-                  <span class="mono small truncate">${esc(o.email)}</span>
-                  ${tag ? `<span class="badge">${esc(tag)}</span>` : ""}
+                  <span class="mono truncate">${esc(o.email)}</span>
+                  ${tag ? `<span class="account-tag">${esc(tag)}</span>` : ""}
                 </button>`;
             })
             .join("")}
         </div>
         ${
           m.data?.needs_reconnect
-            ? `<p class="small warn accounts-menu-note">${icon("alert", 14)}<span>Sem permissão de email: só aparecem o email público e o privado. Conecte a conta de novo para ver todos os emails verificados.</span></p>`
+            ? `<p class="caption warn accounts-menu-note">${icon("alert")}<span>Sem permissão de e-mail: só aparecem o e-mail público e o privado. Conecte a conta de novo para ver todos os e-mails verificados.</span></p>`
             : ""
         }
-        <p class="small muted accounts-menu-note">Os repositórios vinculados a esta conta passam a usar o email escolhido nos próximos commits.</p>`;
+        <p class="caption muted accounts-menu-note">Os repositórios vinculados a esta conta passam a usar o e-mail escolhido nos próximos commits.</p>`;
     }
     return `
       <div class="accounts-email-menu" id="accounts-email-menu-${esc(a.id)}">
         <div class="accounts-email-menu-head">
-          <span class="small">Escolher email de commit</span>
-          <button type="button" class="btn ghost icon-only" data-action="email-menu-close" data-account-id="${esc(a.id)}" aria-label="Fechar lista de emails">${icon("x", 14)}</button>
+          <span class="caption">Escolher o e-mail de commit</span>
+          <button type="button" class="icon-button" data-action="email-menu-close" data-account-id="${esc(a.id)}" aria-label="Fechar a lista de e-mails">${icon("x")}</button>
         </div>
         ${inner}
       </div>`;
   }
 
-  function renderScopes(a: AccountInfo, check: CheckState | undefined): string {
-    if (!a.has_token) return `<span class="muted small">—</span>`;
+  function scopesText(a: AccountInfo, check: CheckState | undefined): string {
     const live = check && check.state !== "checking" && check.scopes.length ? check.scopes : null;
     const scopes = live ?? a.scopes;
-    if (!scopes.length) {
-      return check?.state === "checking"
-        ? `<span class="muted small">Verificando…</span>`
-        : `<span class="muted small">Ainda não verificado</span>`;
-    }
-    const badges = SCOPES.map((s) => {
-      const granted = scopes.includes(s.scope) || s.impliedBy.some((i) => scopes.includes(i));
-      if (granted) return `<span class="badge" title="${esc(s.hint)}">${icon("check", 12)}${esc(s.label)}</span>`;
-      if (s.required) return `<span class="badge warning" title="Faltando: ${esc(s.hint)}">${icon("alert", 12)}Sem ${esc(s.label.toLowerCase())}</span>`;
-      return "";
-    }).join("");
-    return badges || `<span class="muted small">Sem permissões relevantes</span>`;
+    const granted = SCOPES.filter((s) => scopes.includes(s.scope) || s.impliedBy.some((i) => scopes.includes(i))).map((s) => s.label);
+    return granted.length ? `Permissões: ${granted.join(", ")}` : "";
   }
 
   function renderTokenState(a: AccountInfo, check: CheckState | undefined): string {
-    if (!a.has_token) return `<span class="badge warning">${icon("alert", 12)}Sem acesso</span>`;
+    const reconnect = oauthReady()
+      ? `<button type="button" class="control ghost" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>`
+      : "";
+    if (!a.has_token) return `<span class="state warning">${icon("alert")}Desconectada</span>${reconnect}`;
     if (!check || check.state === "checking") {
-      return `<span class="badge accounts-badge-checking"><span class="spinner" aria-hidden="true"></span>Verificando o acesso…</span>`;
+      return `<span class="state neutral"><span class="spinner" aria-hidden="true"></span>Verificando o acesso…</span>`;
     }
-    const title = `title="${esc(check.message)}"`;
+    const title = `title="${esc([check.message, scopesText(a, check)].filter(Boolean).join(" · "))}"`;
     switch (check.state) {
       case "ok":
-        return `<span class="badge success" ${title}>${icon("check", 12)}Acesso válido</span>`;
+        return `<span class="state" ${title}>${icon("check")}Conta conectada</span>`;
       case "revoked":
-        return `<span class="badge error" ${title}>${icon("x", 12)}Acesso revogado</span>`;
+        return `<span class="state error" ${title}>${icon("x")}Desconectada: acesso revogado</span>${reconnect}`;
       case "missing":
-        return `<span class="badge warning" ${title}>${icon("alert", 12)}Sem acesso</span>`;
+        return `<span class="state warning" ${title}>${icon("alert")}Desconectada</span>${reconnect}`;
       case "offline":
-        return `<span class="badge" ${title}>${icon("cloud", 12)}Sem conexão</span>
-          <button type="button" class="btn ghost accounts-inline-btn" data-action="recheck" data-account-id="${esc(a.id)}">Verificar</button>`;
+        return `<span class="state neutral" ${title}>${icon("cloud")}Sem conexão</span>
+          <button type="button" class="control ghost" data-action="recheck" data-account-id="${esc(a.id)}">Verificar</button>`;
       default:
-        return `<span class="badge warning" ${title}>${icon("alert", 12)}Não verificado</span>
-          <button type="button" class="btn ghost accounts-inline-btn" data-action="recheck" data-account-id="${esc(a.id)}">Verificar</button>`;
+        return `<span class="state warning" ${title}>${icon("alert")}Não verificado</span>
+          <button type="button" class="control ghost" data-action="recheck" data-account-id="${esc(a.id)}">Verificar</button>`;
     }
   }
 
   function renderAttention(a: AccountInfo, check: CheckState | undefined): string {
-    let message: string | null = null;
-    if (!a.has_token) {
-      message = "O acesso desta conta não está nas Chaves do macOS. Conecte a conta de novo para continuar usando este perfil.";
-    } else if (check && check.state !== "checking" && check.needs_reconnect) {
-      if (check.state === "ok" && check.missing_scopes.length) {
-        const names = check.missing_scopes.map(scopeLabel).join(" e ");
-        message = `Faltam permissões (${names}). Conecte a conta de novo para dar essas permissões ao GitPass.`;
-      } else {
-        message = check.message;
-      }
-    }
-    if (!message) return "";
-    const ready = oauthReady();
+    if (!a.has_token || !check || check.state === "checking" || !check.needs_reconnect) return "";
+    if (check.state === "revoked" || check.state === "missing") return "";
+    const message =
+      check.state === "ok" && check.missing_scopes.length
+        ? `Faltam permissões (${check.missing_scopes.map(scopeLabel).join(" e ")}). Conecte a conta de novo para dar essas permissões ao GitPass.`
+        : check.message;
     return `
-      <div class="accounts-card-warn" role="status">
-        <span class="small">${esc(message)}</span>
-        ${
-          ready
-            ? `<button type="button" class="btn" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>`
-            : ""
-        }
+      <div class="callout warning accounts-card-warn" role="status">${icon("alert")}
+        <span>${esc(message)}</span>
+        ${oauthReady() ? `<button type="button" class="control" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>` : ""}
       </div>`;
+  }
+
+  function openMore(btn: HTMLButtonElement, a: AccountInfo): void {
+    const check = state.checks.get(a.id);
+    const connected = a.has_token && !(check && (check.state === "revoked" || check.state === "missing"));
+    const items: MenuItem[] = [
+      { id: "edit-label", html: `${icon("edit")}<span>Renomear perfil</span>` },
+      ...(connected ? [{ id: "email-menu", html: `${icon("user")}<span>Alterar o e-mail de commit</span>` }] : []),
+      ...(connected ? [{ id: "refresh", html: `${icon("refresh")}<span>Atualizar com os dados do GitHub</span>` }] : []),
+      ...(a.has_token ? [{ id: "recheck", html: `${icon("shieldCheck")}<span>Verificar o acesso</span>` }] : []),
+      ...(oauthReady() ? [{ id: "reconnect", html: `${icon("key")}<span>Conectar de novo</span>` }] : []),
+      { id: "remove", html: `${icon("trash")}<span>Remover conta</span>`, danger: true },
+    ];
+    openMenu(btn, {
+      label: `Ações de ${handle(a)}`,
+      items,
+      onPick: (id) => {
+        switch (id) {
+          case "edit-label":
+            startEdit(a.id);
+            break;
+          case "email-menu":
+            void openEmailMenu(a.id);
+            break;
+          case "refresh":
+            void refreshProfile(btn, a.id);
+            break;
+          case "recheck":
+            void runCheck(a.id);
+            break;
+          case "reconnect":
+            openFlow(btn, a);
+            break;
+          case "remove":
+            confirmRemove(btn, a);
+            break;
+        }
+      },
+    });
   }
 
   // ---------- Ações ----------
@@ -579,7 +560,7 @@ export const mount: MountView = (root, ctx) => {
 
   root.addEventListener("click", (ev) => {
     const target = (ev.target as HTMLElement).closest<HTMLElement>("[data-action]");
-    if (state.emailMenu && !(ev.target as HTMLElement).closest(".accounts-email-menu, [data-action='email-menu']")) {
+    if (state.emailMenu && !(ev.target as HTMLElement).closest(".accounts-email-menu, [data-action='email-menu'], .repos-menu")) {
       closeEmailMenu(false);
     }
     if (!target || (target as HTMLButtonElement).disabled) return;
@@ -592,8 +573,13 @@ export const mount: MountView = (root, ctx) => {
         openFlow(target, findAccount(id));
         break;
       case "repos":
-        ctx.navigate("repos");
+        if (id) ctx.navigate(`repos?profile=${encodeURIComponent(id)}`);
         break;
+      case "more": {
+        const a = findAccount(id);
+        if (a) openMore(target as HTMLButtonElement, a);
+        break;
+      }
       case "reload":
         void load();
         break;
@@ -728,15 +714,15 @@ function sizedAvatar(url: string, px: number): string {
 
 function renderSkeleton(): string {
   const card = `
-    <div class="panel accounts-card accounts-card-skeleton" aria-hidden="true">
-      <div class="accounts-card-head">
+    <div class="surface account-card accounts-card-skeleton" aria-hidden="true">
+      <div class="account-top">
         <div class="skeleton accounts-sk-avatar"></div>
-        <div class="accounts-card-id"><div class="skeleton accounts-sk-line"></div><div class="skeleton accounts-sk-line short"></div></div>
+        <div class="account-id"><div class="skeleton accounts-sk-line"></div><div class="skeleton accounts-sk-line short"></div></div>
       </div>
       <div class="skeleton accounts-sk-line"></div>
       <div class="skeleton accounts-sk-line short"></div>
     </div>`;
-  return `<p class="sr-only">Carregando contas…</p><div class="accounts-grid">${card}${card}</div>`;
+  return `<p class="sr-only">Carregando contas…</p><div class="accounts">${card}${card}${card}</div>`;
 }
 
 class RemoveAccountModal extends ModalBase {
@@ -765,7 +751,7 @@ class RemoveAccountModal extends ModalBase {
       `
       <div class="accounts-remove-who">
         ${profileAvatar({ id: a.id, login: a.login, label: a.label || a.name }, 36)}
-        <div class="accounts-card-id">
+        <div class="account-id">
           <strong class="truncate">${esc(displayName(a))}</strong>
           ${a.login ? `<span class="muted small mono truncate">@${esc(a.login)}</span>` : ""}
         </div>
@@ -783,7 +769,7 @@ class RemoveAccountModal extends ModalBase {
       }
       <div class="accounts-modal-foot">
         <button type="button" class="btn ghost" data-modal="close">Cancelar</button>
-        <button type="button" class="btn accounts-btn-danger" data-modal="confirm">${trashIcon()}<span>Remover conta</span></button>
+        <button type="button" class="control danger" data-modal="confirm">${icon("trash")}<span>Remover conta</span></button>
       </div>`,
       '[data-modal="close"].btn:not(.icon-only)'
     );

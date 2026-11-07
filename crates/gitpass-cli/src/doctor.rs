@@ -2,9 +2,9 @@
 
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::Command;
 
-use gitpass_core::integration::{self, CheckState, ComponentStatus, IntegrationEnv, IntegrationStatus};
+use gitpass_core::diagnostics::{self, DiagnosticState, DiagnosticsInput, ACTION_REPAIR_INTEGRATION, ACTION_RESTART_DAEMON};
+use gitpass_core::integration::{CheckState, ComponentStatus, IntegrationEnv, IntegrationStatus};
 use gitpass_core::{config_file_path, AppConfig};
 
 #[derive(Default)]
@@ -22,6 +22,10 @@ impl DoctorReport {
     fn warn(&mut self, msg: impl Into<String>) {
         self.warnings += 1;
         self.lines.push(format!("aviso: {}", msg.into()));
+    }
+
+    fn info(&mut self, msg: impl Into<String>) {
+        self.lines.push(format!("info: {}", msg.into()));
     }
 
     fn err(&mut self, msg: impl Into<String>) {
@@ -97,32 +101,6 @@ pub fn print_integration_status(s: &IntegrationStatus) {
 pub fn run() -> io::Result<i32> {
     let mut r = DoctorReport::default();
 
-    if cfg!(target_os = "macos") {
-        match Command::new("/usr/bin/sw_vers").arg("-productVersion").output() {
-            Ok(out) if out.status.success() => {
-                let s = String::from_utf8_lossy(&out.stdout);
-                match s.lines().next().map(str::trim).filter(|v| !v.is_empty()) {
-                    Some(ver) => r.ok(format!("macOS {ver}")),
-                    None => r.warn("não foi possível ler a versão do macOS"),
-                }
-            }
-            _ => r.warn("não foi possível rodar o sw_vers"),
-        }
-    } else {
-        r.warn("o GitPass foi feito para o macOS 14 ou mais novo");
-    }
-
-    match integration::find_git() {
-        Some(git) => match Command::new(&git).arg("--version").output() {
-            Ok(out) if out.status.success() => {
-                let s = String::from_utf8_lossy(&out.stdout);
-                r.ok(format!("{} ({})", s.lines().next().unwrap_or("git").trim(), git.display()));
-            }
-            _ => r.err(format!("o Git em {} não respondeu", git.display())),
-        },
-        None => r.err("Git não encontrado (instale as Xcode Command Line Tools ou o Git)"),
-    }
-
     match config_file_path() {
         Ok(p) => match AppConfig::load_or_default() {
             Ok(cfg) if p.exists() => r.ok(format!(
@@ -139,19 +117,26 @@ pub fn run() -> io::Result<i32> {
 
     match integration_env() {
         Ok(env) => {
-            let status = integration::status(&env);
-            if !status.enabled {
-                r.warn("integração desativada (foi desfeita); para ativar de novo: gitpass hooks install");
-            }
-            for (label, c) in components(&status) {
-                let line = format!("{label}: {}", component_detail(c));
-                match c.state {
-                    CheckState::Ok => r.ok(line),
-                    CheckState::Error => r.err(line),
-                    CheckState::Missing | CheckState::Outdated | CheckState::Conflict => r.warn(line),
+            // Same checks as Diagnóstico in the app; the Keychain items are not read here (a
+            // different program reading them may make macOS ask for permission).
+            let d = diagnostics::run(&DiagnosticsInput {
+                env: &env,
+                app_version: env!("CARGO_PKG_VERSION"),
+                accessibility_granted: None,
+                token_probe: None,
+            });
+            for it in &d.items {
+                let code = it.code.as_deref().map(|c| format!(" [{c}]")).unwrap_or_default();
+                let line = format!("{}: {}{code}", it.label, it.detail);
+                match it.state {
+                    DiagnosticState::Ok => r.ok(line),
+                    DiagnosticState::Warning => r.warn(line),
+                    DiagnosticState::Error => r.err(line),
+                    DiagnosticState::Info => r.info(line),
                 }
             }
-            if !status.ready && status.enabled {
+            let repair = [ACTION_REPAIR_INTEGRATION, ACTION_RESTART_DAEMON];
+            if d.items.iter().any(|i| i.action.as_deref().is_some_and(|a| repair.contains(&a))) {
                 r.lines.push("Para reparar: gitpass hooks install (ou «Reparar» em Configurações no app GitPass).".into());
             }
         }

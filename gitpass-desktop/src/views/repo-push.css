@@ -1,0 +1,759 @@
+/* Aba Enviar: validação, commits prontos e envio com a conta vinculada */
+
+.push {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.push .callout {
+  white-space: normal;
+}
+
+.push-callout-action {
+  align-items: center;
+}
+
+.push-callout-action > span {
+  flex: 1;
+}
+
+.push-callout-action .btn {
+  flex-shrink: 0;
+}
+
+/* ---------- Branch enviado ---------- */
+
+.push-branch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.push-branch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.select.push-branch-select {
+  width: auto;
+  min-width: 12ch;
+  max-width: min(100%, 44ch);
+  min-height: 32px;
+  font-size: var(--fs-body);
+}
+
+.callout.push-wrong-branch {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------- Estado da verificação ---------- */
+
+.push-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: calc(-1 * var(--sp-2));
+}
+
+.push-status-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.push-status-text .spinner {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.push-status.warn .push-status-text {
+  color: var(--warn);
+}
+
+/* ---------- Resumo ---------- */
+
+.push-summary-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  outline: none;
+}
+
+.push-summary-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-body);
+  color: var(--muted);
+}
+
+.callout.push-new-branch {
+  align-items: center;
+  margin: var(--sp-3) 0 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.push-truncated {
+  margin: var(--sp-2) 0 0;
+}
+
+.push-empty,
+.push-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-4);
+  text-align: center;
+}
+
+.push-empty .empty-icon,
+.push-success-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-xl);
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.push-empty-title,
+.push-success-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  outline: none;
+}
+
+.push-empty-sub {
+  max-width: 48ch;
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--muted);
+}
+
+/* ---------- Validação ---------- */
+
+.push-validation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.push-group {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.push-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.push-group-title .badge {
+  margin-left: auto;
+}
+
+.push-group-error .push-group-title {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.push-group-warning .push-group-title {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.push-group-info .push-group-title {
+  background: var(--canvas);
+  color: var(--muted);
+}
+
+.push-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.push-check {
+  display: flex;
+  gap: 10px;
+  padding: 10px var(--sp-3);
+  border-top: 1px solid var(--line);
+}
+
+.push-check-icon {
+  display: inline-flex;
+  margin-top: 3px;
+}
+
+.push-check-error .push-check-icon {
+  color: var(--bad);
+}
+
+.push-check-warning .push-check-icon {
+  color: var(--warn);
+}
+
+.push-check-info .push-check-icon {
+  color: var(--muted);
+}
+
+.push-check-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.push-check-title {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.push-check-msgs {
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.push-check-msgs li + li {
+  margin-top: 2px;
+}
+
+.push-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.push-reason {
+  color: var(--muted);
+}
+
+.push-sha-link {
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.push-path {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Commits ---------- */
+
+.push-commits-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--sp-2) 0 var(--sp-2);
+}
+
+.push-commits-count {
+  letter-spacing: 0;
+}
+
+.push-commits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.push-commit {
+  position: relative;
+  border-top: 1px solid var(--line);
+}
+
+.push-commit:first-child {
+  border-top: 0;
+}
+
+.push-commit-error::before,
+.push-commit-warning::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--bad);
+}
+
+.push-commit-warning::before {
+  background: var(--warn);
+}
+
+.push-commit-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px var(--sp-3);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s var(--ease);
+}
+
+.push-commit-toggle:hover {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+
+.push-commit-chevron {
+  display: inline-flex;
+  margin-top: 3px;
+  color: var(--muted);
+  transition: transform 0.16s var(--ease);
+}
+
+.push-commit.open .push-commit-chevron {
+  transform: rotate(90deg);
+}
+
+.push-commit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.push-commit-subject {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.push-commit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  color: var(--muted);
+}
+
+.push-sha {
+  font-size: var(--fs-sm);
+  color: var(--accent);
+}
+
+.push-author.mismatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.push-ins {
+  color: var(--good);
+  font-variant-numeric: tabular-nums;
+}
+
+.push-del {
+  color: var(--bad);
+  font-variant-numeric: tabular-nums;
+}
+
+.push-commit-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 40%;
+}
+
+.push-commit-detail {
+  padding: 0 var(--sp-3) var(--sp-3) 36px;
+}
+
+.push-commit-body {
+  margin: 0 0 10px;
+  padding: var(--sp-2) 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.push-commit-people {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px var(--sp-3);
+  margin: 0 0 10px;
+}
+
+.push-commit-people dt {
+  color: var(--muted);
+}
+
+.push-commit-people dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.push-mismatch {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.push-files-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.push-files-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.push-skeleton-file {
+  height: 22px;
+  border-radius: 6px;
+}
+
+.push-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.push-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-body);
+}
+
+.push-file:first-child {
+  border-top: 0;
+}
+
+.push-file-status {
+  flex: none;
+  min-width: 10ch;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+.push-file-added {
+  background: var(--good-bg);
+  color: var(--good);
+  border-color: transparent;
+}
+
+.push-file-deleted {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border-color: transparent;
+}
+
+.push-file-renamed,
+.push-file-copied {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.push-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.push-file-stat,
+.push-file-size {
+  flex: none;
+  white-space: nowrap;
+}
+
+.push-file-size {
+  min-width: 7ch;
+  text-align: right;
+}
+
+/* ---------- Barra de envio (fixa embaixo) ---------- */
+
+/* O sticky respeita o padding de quem rola (o painel na janela larga, a área principal na estreita). */
+.push-bar {
+  position: sticky;
+  bottom: calc(-1 * var(--sp-6));
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0 calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5));
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  box-shadow: 0 -10px 24px -12px color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+@media (min-width: 1000px) {
+  .push-bar {
+    bottom: calc(-1 * var(--sp-5));
+  }
+}
+
+.push-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.push-bar-reason {
+  flex: 1 1 200px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.push-ack {
+  font-weight: 500;
+}
+
+.push-progress-text {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  font-weight: 600;
+}
+
+.push-progress-text .spinner {
+  color: var(--accent);
+}
+
+.push-progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.push-progress-track {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+}
+
+.push-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s var(--ease);
+}
+
+.push-progress-pct {
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Resultado ---------- */
+
+.push-failed > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.push-failed-title {
+  margin: 0;
+}
+
+.push-failed-msg {
+  margin: var(--sp-1) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.push-success-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--muted);
+}
+
+.push-success-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+}
+
+.push-success-actions a.btn {
+  text-decoration: none;
+}
+
+.push-success-details {
+  width: 100%;
+  max-width: 640px;
+  text-align: left;
+}
+
+.push-success-details summary {
+  width: fit-content;
+  margin: 0 auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.push-success-log {
+  max-height: 240px;
+  margin: var(--sp-2) 0 0;
+  padding: 10px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+/* ---------- Modais ---------- */
+
+.push-confirm {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  font-size: var(--fs-body);
+}
+
+.push-confirm dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.push-confirm dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.push-confirm-warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--warn);
+}
+
+.push-modal-identity {
+  margin: 0;
+  padding: var(--sp-2) 10px;
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.push-modal-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+/* ---------- Carregando ---------- */
+
+.push-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.push-skeleton-title {
+  height: 28px;
+  width: 55%;
+  margin-bottom: var(--sp-2);
+}
+
+.push-skeleton-row {
+  height: 52px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .push-progress-fill,
+  .push-commit-chevron {
+    transition: none;
+  }
+}

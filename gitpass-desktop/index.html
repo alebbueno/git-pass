@@ -5,22 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>GitPass</title>
+    <script>
+      // Aplica o tema antes do primeiro desenho (sem piscar escuro → claro).
+      try {
+        var t = localStorage.getItem("gitpass-theme");
+        if (t !== "light" && t !== "dark") t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
     <style>
-      /* Estado inicial antes do bundle (tokens alinhados ao kit RepoID) */
+      /* Estado antes do bundle: canvas e texto do design system (os tokens ainda não carregaram). */
       html,
       body {
         margin: 0;
         min-height: 100vh;
-        background: #f3f5fc;
-        color: #13182b;
-        font-family: system-ui, -apple-system, sans-serif;
+        background: #f4f5fb;
+        color: #18192e;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
-      @media (prefers-color-scheme: dark) {
-        html,
-        body {
-          background: #0d1123;
-          color: #f3f5ff;
-        }
+      html[data-theme="dark"],
+      html[data-theme="dark"] body {
+        background: #0e1120;
+        color: #f1f2ff;
       }
       .shell-loading {
         min-height: 100vh;
@@ -28,21 +35,30 @@
         align-items: center;
         justify-content: center;
         padding: 2rem;
+        color: #565c74;
+        font-size: 13px;
+      }
+      html[data-theme="dark"] .shell-loading {
+        color: #b7bdd6;
       }
       .shell-loading-inner {
         display: flex;
         align-items: center;
-        gap: 1rem;
+        gap: 10px;
       }
       .shell-loading-spinner {
-        width: 28px;
-        height: 28px;
+        width: 16px;
+        height: 16px;
         border-radius: 50%;
-        border: 2px solid rgba(79, 88, 112, 0.35);
-        border-top-color: #5545d6;
-        animation: rid-spin-boot 0.85s linear infinite;
+        border: 2px solid #dce0ed;
+        border-top-color: #5138c9;
+        animation: boot-spin 0.85s linear infinite;
       }
-      @keyframes rid-spin-boot {
+      html[data-theme="dark"] .shell-loading-spinner {
+        border-color: #2d3550;
+        border-top-color: #beb0ff;
+      }
+      @keyframes boot-spin {
         to {
           transform: rotate(360deg);
         }
@@ -50,7 +66,6 @@
       @media (prefers-reduced-motion: reduce) {
         .shell-loading-spinner {
           animation: none;
-          border-top-color: #b3a5ff;
         }
       }
     </style>

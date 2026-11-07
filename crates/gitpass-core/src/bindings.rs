@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use uuid::Uuid;
 
+use crate::remote::GitHubRepoId;
 use crate::{git_remote_url, normalize_owner, parse_github_remote, Account, AppConfig, RepoBinding};
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -74,10 +75,15 @@ pub fn create_binding(cfg: &mut AppConfig, account_id: Uuid, root: &Path) -> Res
 
     let canon: PathBuf = root.canonicalize().map_err(|e| format!("Caminho inválido: {e}"))?;
 
-    let url = git_remote_url(&canon, "origin")
-        .map_err(|e| format!("{e}. Adicione o remoto `origin` ou escolha outro clone."))?;
-    let gh = parse_github_remote(&url)
-        .ok_or_else(|| format!("O `origin` não aponta para github.com (`{}`).", redact_remote_url(&url)))?;
+    let gh = match pick_remote(&read_remotes(&canon)) {
+        RemotePick::GitHub { id, .. } => id,
+        RemotePick::Other { name, url } => {
+            return Err(format!("O remoto `{name}` não aponta para github.com (`{url}`)."));
+        }
+        RemotePick::None => {
+            return Err("O repositório não tem remoto. Adicione o remoto `origin` ou escolha outro clone.".to_string());
+        }
+    };
 
     if cfg.repos.iter().any(|r| r.root_path == canon) {
         return Err("Esta pasta já está vinculada.".to_string());
@@ -380,9 +386,10 @@ pub fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
     Some(if p.is_absolute() { p } else { root.join(p) })
 }
 
-/// First `url` of `[remote "origin"]` in a git config file's text.
-pub fn origin_url_from_git_config(text: &str) -> Option<String> {
-    let mut in_origin = false;
+/// `(name, first url)` of every `[remote "<name>"]` in a git config file's text, in file order.
+pub fn remotes_from_git_config(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut current: Option<String> = None;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
@@ -393,23 +400,92 @@ pub fn origin_url_from_git_config(text: &str) -> Option<String> {
             let mut parts = header.splitn(2, char::is_whitespace);
             let section = parts.next().unwrap_or("");
             let sub = parts.next().unwrap_or("").trim().trim_matches('"');
-            in_origin = section.eq_ignore_ascii_case("remote") && sub == "origin";
+            current = (section.eq_ignore_ascii_case("remote") && !sub.is_empty()).then(|| sub.to_string());
             continue;
         }
-        if !in_origin {
+        let Some(name) = &current else {
             continue;
-        }
+        };
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
         if key.trim().eq_ignore_ascii_case("url") {
             let v = value.trim().trim_matches('"').trim();
-            if !v.is_empty() {
-                return Some(v.to_string());
+            if !v.is_empty() && !out.iter().any(|(n, _)| n == name) {
+                out.push((name.clone(), v.to_string()));
             }
         }
     }
-    None
+    out
+}
+
+/// First `url` of `[remote "origin"]` in a git config file's text.
+pub fn origin_url_from_git_config(text: &str) -> Option<String> {
+    remotes_from_git_config(text)
+        .into_iter()
+        .find(|(n, _)| n == "origin")
+        .map(|(_, u)| u)
+}
+
+/// Remotes of the repo, from `.git/config` when possible (no process spawn), else via `git config`
+/// (worktrees and submodules keep their config in another git dir).
+pub fn read_remotes(root: &Path) -> Vec<(String, String)> {
+    let dot = root.join(".git");
+    if dot.is_dir() {
+        return std::fs::read_to_string(dot.join("config"))
+            .map(|t| remotes_from_git_config(&t))
+            .unwrap_or_default();
+    }
+    if std::fs::symlink_metadata(&dot).is_err() {
+        return Vec::new();
+    }
+    let Some(listing) = git_stdout(root, &["config", "--local", "--get-regexp", r"^remote\..*\.url$"]) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in listing.lines() {
+        let Some((key, url)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some(name) = key.strip_prefix("remote.").and_then(|k| k.strip_suffix(".url")) else {
+            continue;
+        };
+        let url = url.trim();
+        if !name.is_empty() && !url.is_empty() && !out.iter().any(|(n, _)| n == name) {
+            out.push((name.to_string(), url.to_string()));
+        }
+    }
+    out
+}
+
+/// The remote that identifies a project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemotePick {
+    GitHub { name: String, id: GitHubRepoId },
+    /// Not on GitHub; `url` has any embedded credentials removed.
+    Other { name: String, url: String },
+    None,
+}
+
+/// `origin` when it exists (GitHub or not), else the first GitHub remote, else the first remote.
+pub fn pick_remote(remotes: &[(String, String)]) -> RemotePick {
+    let other = |(name, url): &(String, String)| RemotePick::Other {
+        name: name.clone(),
+        url: redact_remote_url(url),
+    };
+    if let Some(origin) = remotes.iter().find(|(n, _)| n == "origin") {
+        return match parse_github_remote(&origin.1) {
+            Some(id) => RemotePick::GitHub { name: origin.0.clone(), id },
+            None => other(origin),
+        };
+    }
+    if let Some((name, id)) = remotes
+        .iter()
+        .find_map(|(n, u)| parse_github_remote(u).map(|id| (n.clone(), id)))
+    {
+        return RemotePick::GitHub { name, id };
+    }
+    remotes.first().map(other).unwrap_or(RemotePick::None)
 }
 
 /// `origin` URL, read from the config file when possible (no process spawn), else via `git remote get-url`.
@@ -522,6 +598,22 @@ pub fn default_discover_roots(home: &Path) -> Vec<PathBuf> {
 /// Does not descend into repos, ignored dirs or symlinks. Returns `(paths, truncated_by_deadline)`.
 pub fn find_git_work_trees(roots: &[PathBuf], max_depth: usize, deadline: Option<Instant>) -> (Vec<PathBuf>, bool) {
     let mut found = Vec::new();
+    let truncated = walk_git_work_trees(roots, max_depth, deadline, |p| {
+        found.push(p);
+        true
+    });
+    found.sort();
+    (found, truncated)
+}
+
+/// Breadth-first walk behind [`find_git_work_trees`]: calls `visit` for each work tree as soon as it
+/// is found; `visit` returns `false` to stop. Returns `true` when stopped early (deadline or `visit`).
+pub fn walk_git_work_trees(
+    roots: &[PathBuf],
+    max_depth: usize,
+    deadline: Option<Instant>,
+    mut visit: impl FnMut(PathBuf) -> bool,
+) -> bool {
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
     for r in roots {
@@ -533,10 +625,12 @@ pub fn find_git_work_trees(roots: &[PathBuf], max_depth: usize, deadline: Option
     }
     while let Some((dir, depth)) = queue.pop_front() {
         if deadline.is_some_and(|d| Instant::now() >= d) {
-            return (found, true);
+            return true;
         }
         if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
-            found.push(dir);
+            if !visit(dir) {
+                return true;
+            }
             continue;
         }
         if depth >= max_depth {
@@ -558,8 +652,7 @@ pub fn find_git_work_trees(roots: &[PathBuf], max_depth: usize, deadline: Option
             }
         }
     }
-    found.sort();
-    (found, false)
+    false
 }
 
 /// Like [`find_git_work_trees`], one thread per root. Returns at `deadline` even if a root is stuck
@@ -631,7 +724,9 @@ pub fn discover_unbound_repos(
         .into_iter()
         .filter(|p| !bound.contains(p))
         .filter_map(|p| {
-            let gh = parse_github_remote(&read_origin_url(&p)?)?;
+            let RemotePick::GitHub { id: gh, .. } = pick_remote(&read_remotes(&p)) else {
+                return None;
+            };
             Some(DiscoveredRepo {
                 suggestion: suggest_account_offline(cfg, &gh.owner),
                 root_path: p,
@@ -775,6 +870,65 @@ mod tests {
 "#;
         assert_eq!(origin_url_from_git_config(text).as_deref(), Some("https://github.com/Me/proj.git"));
         assert_eq!(origin_url_from_git_config("[remote \"up\"]\nurl = x"), None);
+        assert_eq!(
+            remotes_from_git_config(text),
+            vec![
+                ("upstream".to_string(), "git@github.com:up/stream.git".to_string()),
+                ("origin".to_string(), "https://github.com/Me/proj.git".to_string()),
+            ]
+        );
+    }
+
+    fn remotes(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter().map(|(n, u)| (n.to_string(), u.to_string())).collect()
+    }
+
+    #[test]
+    fn pick_remote_prefers_origin_then_first_github() {
+        let gh = |name: &str, owner: &str, repo: &str| RemotePick::GitHub {
+            name: name.into(),
+            id: GitHubRepoId { owner: owner.into(), repo: repo.into() },
+        };
+        assert_eq!(
+            pick_remote(&remotes(&[("up", "git@github.com:up/x.git"), ("origin", "https://github.com/Me/y")])),
+            gh("origin", "me", "y")
+        );
+        // A non-GitHub origin wins over other GitHub remotes.
+        assert_eq!(
+            pick_remote(&remotes(&[("origin", "https://ana:pw@gitlab.com/a/b.git"), ("gh", "git@github.com:a/b.git")])),
+            RemotePick::Other { name: "origin".into(), url: "https://gitlab.com/a/b.git".into() }
+        );
+        assert_eq!(
+            pick_remote(&remotes(&[("lab", "git@gitlab.com:a/b.git"), ("gh", "git@github.com:A/b.git")])),
+            gh("gh", "a", "b")
+        );
+        assert_eq!(
+            pick_remote(&remotes(&[("lab", "git@gitlab.com:a/b.git")])),
+            RemotePick::Other { name: "lab".into(), url: "git@gitlab.com:a/b.git".into() }
+        );
+        assert_eq!(pick_remote(&[]), RemotePick::None);
+    }
+
+    #[test]
+    fn reads_remotes_of_plain_repos_and_worktrees() {
+        let t = TempDir::new();
+        let main = t.0.join("main");
+        init_repo(&main, None);
+        git(&main, &["remote", "add", "github", "git@github.com:ana/proj.git"]);
+        git(&main, &["remote", "add", "lab", "https://gitlab.com/ana/proj.git"]);
+        let expected = remotes(&[("github", "git@github.com:ana/proj.git"), ("lab", "https://gitlab.com/ana/proj.git")]);
+        assert_eq!(read_remotes(&main), expected);
+
+        // The user's global hooks (e.g. GitPass's own) must not run in tests.
+        let no_hooks = ["-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@x"];
+        git(&main, &[&no_hooks[..], &["commit", "-q", "--no-verify", "--allow-empty", "-m", "init"]].concat());
+        let wt = t.0.join("wt");
+        git(&main, &[&no_hooks[..], &["worktree", "add", "-q", wt.to_str().unwrap()]].concat());
+        assert!(wt.join(".git").is_file());
+        let mut got = read_remotes(&wt);
+        got.sort();
+        assert_eq!(got, expected);
+        assert_eq!(read_remotes(&t.0), Vec::<(String, String)>::new());
     }
 
     #[test]

@@ -1,0 +1,376 @@
+/* Tela Integração (#integration): integração com o Git, atalho opcional, modo emergência e auditoria. */
+
+.int-page {
+  display: grid;
+  gap: 12px;
+  max-width: 880px;
+}
+
+/* Grupos e painéis dentro de um cartão de seção ficam sem moldura própria. */
+.int-section .gp-group,
+.int-section .panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.int-section .gp-group-row:first-child {
+  padding-top: 2px;
+}
+.int-section .gp-group-row:last-child {
+  padding-bottom: 0;
+}
+
+.int-row-icon {
+  display: grid;
+  place-items: center;
+  align-self: flex-start;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.int-row-icon-warning {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.int-row-icon-error {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.int-check-value {
+  margin: 4px 0 0;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+/* Resumo no topo da seção */
+.int-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-4);
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  border: 1px solid var(--soft-line);
+  box-shadow: var(--surface-shadow);
+}
+
+.int-summary-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.int-summary-warning .int-summary-icon {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.int-summary-error .int-summary-icon {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.int-summary-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.int-summary-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.int-summary-desc {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.int-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+.int-callouts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+/* ---------- Modo emergência ---------- */
+
+.int-em {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+.int-em > .spinner {
+  justify-self: start;
+}
+
+.int-em-explain {
+  min-width: 0;
+}
+
+.int-em-lead {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+
+.int-em-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.int-em-points li {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+
+.int-em-points .icon {
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.int-em-points strong {
+  color: var(--ink);
+}
+
+.int-em-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--inset);
+}
+
+.int-em-field .segmented {
+  display: flex;
+}
+
+.int-em-field .segmented button {
+  flex: 1;
+}
+
+.int-em-hint {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+}
+
+.int-em-reason .input[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+
+.int-em-submit {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.int-em .gp-error {
+  grid-column: 2;
+}
+
+/* Ativo */
+.int-em-active {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.int-em-clock {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.int-em-clock-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+.int-em-clock-label {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.int-em-clock-value {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.int-em-sentence {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.int-em-meta {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+}
+
+.int-em-active .muted {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* ---------- Auditoria ---------- */
+
+.int-audit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.int-audit-head .btn {
+  margin-top: var(--sp-6);
+}
+
+.int-audit-lead {
+  margin: 0 2px var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.int-audit-filters {
+  margin-bottom: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.int-filter-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+[aria-pressed="true"] > .int-filter-count {
+  color: inherit;
+}
+
+.int-audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+div.int-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.int-audit-sk {
+  height: 52px;
+}
+
+.int-audit-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  gap: var(--sp-3);
+  align-items: start;
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.int-audit-row + .int-audit-row {
+  border-top: 1px solid var(--soft-line);
+}
+
+.int-audit-kind {
+  justify-self: start;
+}
+
+.int-audit-main {
+  min-width: 0;
+}
+
+.int-audit-msg {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.int-audit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 4px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.int-audit-time {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  line-height: 20px;
+}
+
+.int-audit-empty {
+  padding-block: var(--sp-6);
+}
+
+@media (max-width: 1080px) {
+  .int-em,
+  .int-em-active {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .int-em .gp-error {
+    grid-column: auto;
+  }
+  .int-em-active > .btn {
+    justify-self: start;
+  }
+  .int-audit-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .int-audit-kind {
+    grid-column: 1 / -1;
+  }
+  .int-summary {
+    flex-wrap: wrap;
+  }
+  .int-summary-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

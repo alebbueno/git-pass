@@ -1,669 +1,377 @@
 import "./repos.css";
 import { api, type AccountRow } from "../lib/api";
-import {
-  reposApi,
-  type BindOutcome,
-  type DiscoveredRepo,
-  type RepoRow,
-  type SuggestionReason,
-} from "../lib/api-repos";
+import { reposApi, type BindOutcome, type RepoRow, type SuggestionReason } from "../lib/api-repos";
+import type { CurrentRepoState } from "../lib/api-system";
 import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
+import { errorView } from "../lib/errors";
 import { icon } from "../lib/icons";
 import { profileChip, profileName } from "../lib/profile";
-import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
+import { onSystemState } from "../lib/system-state";
+import { DATA_CHANGED_EVENT, DRAWER_EVENT, type DrawerEventDetail, type MountView } from "../lib/view";
+import { drawerRoute } from "./repo-detail";
+import { isPushing, onSessionChange, refreshOutgoing } from "./repo-push";
+import { createDiscovery } from "./repos-discover";
+import { startFolderMap } from "./repos-map";
+import {
+  REASON_TEXT,
+  aheadOf,
+  closeMenus,
+  columnsHtml,
+  openModal,
+  plural,
+  projectName,
+  projectRowHtml,
+  repoName,
+  reviewReasons,
+  whoText,
+} from "./repos-ui";
 
-/** Seleção mantida em memória entre recarregamentos e mudanças de ecrã. */
-let rememberedSelection: string | null = null;
+type Filters = { profile: string; review: boolean; ahead: boolean; query: string };
 
-type DiscoveryStatus = "idle" | "scanning" | "done" | "error";
+const FILTERS_KEY = "gitpass:repos-filters";
+const ALL_PROFILES = "";
+const MISSING_PROFILE = "missing";
 
-/** Resultados de «Encontrados neste Mac», mantidos durante a sessão (a procura corre uma vez automaticamente). */
-const discovery = {
-  status: "idle" as DiscoveryStatus,
-  items: [] as DiscoveredRepo[],
-  error: "",
-  truncated: false,
-  extraRoots: [] as string[],
-  /** Conta escolhida por item (caminho → id da conta). */
-  choice: new Map<string, string>(),
-  run: null as Promise<void> | null,
-};
-
-/** Re-renderiza a secção de descoberta da vista montada (quando a procura termina fora do ciclo da vista). */
-let onDiscoveryUpdate: (() => void) | null = null;
-
-type ProfileRef = Pick<AccountRow, "id" | "login" | "label">;
-
-const REASON_TEXT: Record<SuggestionReason, string> = {
-  owner_login: "conta dona do repositório",
-  same_owner_binding: "já usada em outros repositórios deste dono",
-  only_account: "única conta conectada",
-  push_access: "única conta com permissão de push",
-};
-
-function repoName(b: Pick<RepoRow, "github_owner" | "github_repo" | "root_path">): string {
-  if (b.github_owner && b.github_repo) return `${b.github_owner}/${b.github_repo}`;
-  const parts = b.root_path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? b.root_path;
-}
-
-const shortPath = shortenPath;
-
-function parseCommit(line: string): { hash: string | null; message: string } {
-  const m = /^([0-9a-f]{7,40})\b\s*(.*)$/i.exec(line.trim());
-  return m ? { hash: m[1], message: m[2] } : { hash: null, message: line };
-}
-
-function identityText(name: string | null, email: string | null): string {
-  if (!name && !email) return "não definida";
-  return `${name ?? "(sem nome)"} <${email ?? "sem email"}>`;
-}
-
-type RowStatus = { kind: "success" | "warning" | "error"; symbol: string; label: string; fixable: boolean };
-
-function rowStatus(b: RepoRow): RowStatus {
-  if (!b.exists) return { kind: "error", symbol: "✕", label: "Pasta não encontrada", fixable: false };
-  if (b.account_missing) return { kind: "error", symbol: "✕", label: "Conta removida", fixable: false };
-  switch (b.identity.state) {
-    case "correct":
-      return { kind: "success", symbol: "✓", label: "Identidade correta", fixable: false };
-    case "different":
-      return { kind: "warning", symbol: "⚠", label: "Identidade diferente", fixable: true };
-    default:
-      return { kind: "warning", symbol: "⚠", label: "Identidade não definida", fixable: true };
+function loadFilters(): Filters {
+  const base: Filters = { profile: ALL_PROFILES, review: false, ahead: false, query: "" };
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(FILTERS_KEY) ?? "null") as Partial<Filters> | null;
+    if (!raw || typeof raw !== "object") return base;
+    return {
+      profile: typeof raw.profile === "string" ? raw.profile : base.profile,
+      review: raw.review === true,
+      ahead: raw.ahead === true,
+      query: typeof raw.query === "string" ? raw.query : "",
+    };
+  } catch {
+    return base;
   }
 }
 
-function statusBadge(s: RowStatus): string {
-  return `<span class="badge ${s.kind}"><span aria-hidden="true">${s.symbol}</span> ${esc(s.label)}</span>`;
+function saveFilters(f: Filters): void {
+  try {
+    sessionStorage.setItem(FILTERS_KEY, JSON.stringify(f));
+  } catch {
+    // Sem sessionStorage os filtros só valem enquanto a tela está aberta.
+  }
 }
 
-type ModalOptions<T> = {
-  title: string;
-  body: string;
-  confirmLabel: string;
-  /** Ação destrutiva: o foco inicial fica em «Cancelar». */
-  danger?: boolean;
-  /** Lê o resultado do formulário ao confirmar; devolver `undefined` mantém o modal aberto. */
-  read: (dialog: HTMLElement) => T | undefined;
-};
-
-/** Modal de confirmação do kit; resolve com o valor de `read` ou `null` se for cancelado. */
-function openModal<T>(opts: ModalOptions<T>): Promise<T | null> {
-  const opener = document.activeElement as HTMLElement | null;
-  const backdrop = document.createElement("div");
-  backdrop.className = "modal-backdrop repos-modal-backdrop";
-  backdrop.innerHTML = `
-    <div class="modal repos-modal" role="dialog" aria-modal="true" aria-labelledby="repos-modal-title">
-      <header class="repos-modal-head">
-        <h2 class="repos-modal-title" id="repos-modal-title">${esc(opts.title)}</h2>
-        <button type="button" class="btn ghost icon-only" data-modal="cancel" aria-label="Fechar">${icon("x")}</button>
-      </header>
-      <div class="repos-modal-body">${opts.body}</div>
-      <footer class="repos-modal-foot">
-        <button type="button" class="btn ghost" data-modal="cancel">Cancelar</button>
-        <button type="button" class="btn primary${opts.danger ? " repos-danger" : ""}" data-modal="confirm">${esc(opts.confirmLabel)}</button>
-      </footer>
-    </div>`;
-  document.body.appendChild(backdrop);
-  const dialog = backdrop.querySelector<HTMLElement>(".modal")!;
-
-  return new Promise<T | null>((resolve) => {
-    const done = (value: T | null): void => {
-      document.removeEventListener("keydown", onKey, true);
-      backdrop.remove();
-      opener?.focus();
-      resolve(value);
-    };
-    const focusables = (): HTMLElement[] =>
-      Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, [tabindex]:not([tabindex='-1'])")).filter(
-        (el) => !(el as HTMLButtonElement).disabled
-      );
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        done(null);
-      } else if (e.key === "Tab") {
-        const els = focusables();
-        const first = els[0];
-        const last = els[els.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last?.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    backdrop.addEventListener("pointerdown", (e) => {
-      if (e.target === backdrop) done(null);
-    });
-    dialog.addEventListener("click", (e) => {
-      const action = (e.target as HTMLElement).closest<HTMLElement>("[data-modal]")?.dataset.modal;
-      if (action === "cancel") done(null);
-      if (action === "confirm") {
-        const v = opts.read(dialog);
-        if (v !== undefined) done(v);
-      }
-    });
-    const initial = opts.danger
-      ? dialog.querySelector<HTMLElement>(".repos-modal-foot [data-modal='cancel']")
-      : (dialog.querySelector<HTMLElement>("input:checked") ??
-        dialog.querySelector<HTMLElement>("input") ??
-        dialog.querySelector<HTMLElement>("[data-modal='confirm']"));
-    initial?.focus();
-  });
+/** `repos?profile=<id>` e `repos?review=1` (links do Painel, de Contas e da barra lateral) trocam os filtros. */
+function applyQuery(f: Filters, query: URLSearchParams | undefined): Filters {
+  if (!query) return f;
+  if (query.has("profile")) return { profile: query.get("profile") ?? "", review: false, ahead: false, query: "" };
+  if (query.get("review") === "1") return { profile: ALL_PROFILES, review: true, ahead: false, query: "" };
+  if (query.get("ahead") === "1") return { profile: ALL_PROFILES, review: false, ahead: true, query: "" };
+  return f;
 }
 
-export const mount: MountView = (root, ctx) => {
+const normalize = (s: string): string => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+/** Mantido entre montagens: rolagem da tela. */
+const memory = { scroll: 0 };
+
+export const mount: MountView = (root, ctx, _param, initialQuery) => {
   let accounts: AccountRow[] = [];
   let repos: RepoRow[] = [];
-  let query = "";
+  let loaded = false;
   let loadToken = 0;
-  let logToken = 0;
   let disposed = false;
-  let closeMenu: (() => void) | null = null;
+  let filters = applyQuery(loadFilters(), initialQuery);
+  let expanded: string | null = null;
+  let reloadTimer: number | undefined;
+  let system: CurrentRepoState | null = null;
+  saveFilters(filters);
 
-  const profileFor = (b: Pick<RepoRow, "account_id" | "account_login" | "account_label">): ProfileRef => {
+  root.classList.add("repos-view");
+  const screen = root.closest<HTMLElement>(".screen");
+  const who = (id: string): string => whoText(accounts, id);
+  const openRepo = (id: string): void => ctx.navigate(drawerRoute(id));
+
+  const discovery = createDiscovery({
+    accounts: () => accounts,
+    repos: () => repos,
+    isDisposed: () => disposed,
+    onUpdate: () => updateFoundCount(),
+    onBound: (rows) => {
+      rows.forEach(upsertRepo);
+      ctx.notifyDataChanged();
+      render();
+    },
+  });
+
+  // ---------- Filtros ----------
+
+  const needsReview = (b: RepoRow): boolean => reviewReasons(b, accounts, system).length > 0;
+  const matchesProfile = (b: RepoRow, p: string): boolean =>
+    p === ALL_PROFILES || (p === MISSING_PROFILE ? b.account_missing : !b.account_missing && b.account_id === p);
+  const matchesQuery = (b: RepoRow, q: string): boolean => {
+    const t = normalize(q.trim());
+    if (!t) return true;
     const acc = accounts.find((a) => a.id === b.account_id);
-    if (acc) return acc;
-    return { id: b.account_id, login: b.account_login, label: b.account_label };
+    return normalize(
+      [projectName(b), repoName(b), b.root_path, shortenPath(b.root_path), b.branch ?? "", b.remote_url ?? "", acc ? profileName(acc) : "", acc?.login ?? ""].join(" ")
+    ).includes(t);
   };
 
-  const accountById = (id: string | null): AccountRow | undefined => accounts.find((a) => a.id === id);
-  const who = (id: string): string => {
-    const a = accountById(id);
-    return a ? (a.login ? `@${a.login}` : profileName(a)) : "outra conta";
-  };
+  function sorted(list: RepoRow[]): RepoRow[] {
+    return [...list].sort((a, b) => {
+      const pa = aheadOf(a) > 0 ? 0 : 1;
+      const pb = aheadOf(b) > 0 ? 0 : 1;
+      return pa - pb || projectName(a).localeCompare(projectName(b), "pt-BR", { sensitivity: "base" });
+    });
+  }
 
-  const filtered = (): RepoRow[] => {
-    const q = query.trim().toLowerCase();
-    if (!q) return repos;
-    return repos.filter((b) =>
-      [repoName(b), b.root_path, profileName(profileFor(b)), b.account_login ?? "", b.branch ?? ""].some((s) =>
-        s.toLowerCase().includes(q)
+  const visible = (): RepoRow[] =>
+    sorted(
+      repos.filter(
+        (b) =>
+          matchesProfile(b, filters.profile) &&
+          (!filters.review || needsReview(b)) &&
+          (!filters.ahead || aheadOf(b) > 0) &&
+          matchesQuery(b, filters.query)
       )
     );
-  };
 
-  const bindButton = (extra = ""): string =>
-    accounts.length === 0
-      ? `<button type="button" class="btn primary ${extra}" data-action="go-accounts">${icon("user")}<span>Conecte uma conta primeiro</span></button>`
-      : `<button type="button" class="btn primary ${extra}" data-action="bind">${icon("plus")}<span>Vincular repositório</span></button>`;
+  function setFilters(next: Partial<Filters>): void {
+    filters = { ...filters, ...next };
+    saveFilters(filters);
+    renderFilterbar();
+    renderList();
+  }
 
-  const subtitle = (): string => {
-    const n = repos.length;
-    if (n === 0) return "Nenhum repositório local vinculado";
-    const issues = repos.filter((r) => rowStatus(r).kind !== "success").length;
-    const base = n === 1 ? "1 repositório local vinculado" : `${n} repositórios locais vinculados`;
-    return issues === 0 ? base : `${base} · ${issues === 1 ? "1 precisa de atenção" : `${issues} precisam de atenção`}`;
-  };
+  function validateFilters(): void {
+    const p = filters.profile;
+    const ok = p === ALL_PROFILES || (p === MISSING_PROFILE && repos.some((b) => b.account_missing)) || accounts.some((a) => a.id === p);
+    if (!ok) {
+      filters.profile = ALL_PROFILES;
+      saveFilters(filters);
+    }
+  }
+
+  // ---------- Estrutura ----------
+
+  function headActions(): string {
+    if (!loaded) return "";
+    if (accounts.length === 0) {
+      return `<button type="button" class="control primary" data-action="go-accounts">${icon("plus")}<span>Conectar conta</span></button>`;
+    }
+    return `
+      <button type="button" class="icon-button" data-action="refresh" aria-label="Atualizar a lista" title="Atualizar a lista">${icon("refresh")}</button>
+      <button type="button" class="control" data-action="map">${icon("folder")}<span>Mapear pasta…</span></button>
+      <button type="button" class="control" data-action="found" aria-controls="repos-discover">${icon("search")}<span>Encontrados neste Mac</span><span class="repos-found-count" data-ref="found-count"></span></button>
+      <button type="button" class="control primary" data-action="bind">${icon("plus")}<span>Vincular repositório</span></button>`;
+  }
+
+  function renderShell(): void {
+    root.innerHTML = `
+      <div class="page-head">
+        <div class="heading-group"><h1>Repositórios</h1><p>Gerencie a conta Git vinculada a cada projeto local.</p></div>
+        <div class="page-actions" data-ref="actions">${headActions()}</div>
+      </div>
+      <div data-ref="body"></div>`;
+  }
+
+  const body = (): HTMLElement => root.querySelector<HTMLElement>('[data-ref="body"]')!;
+
+  function renderActions(): void {
+    const box = root.querySelector<HTMLElement>('[data-ref="actions"]');
+    if (!box) return;
+    const focusAction = box.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.action : undefined;
+    box.innerHTML = headActions();
+    if (focusAction) box.querySelector<HTMLElement>(`[data-action="${focusAction}"]`)?.focus();
+    updateFoundCount();
+  }
+
+  function updateFoundCount(): void {
+    const el = root.querySelector<HTMLElement>('[data-ref="found-count"]');
+    if (!el) return;
+    const n = discovery.count();
+    el.textContent = n > 0 ? String(n) : "";
+    el.hidden = n === 0;
+  }
 
   function renderLoading(): void {
-    root.innerHTML = `
-      <header class="view-header">
-        <div>
-          <h1 class="view-title">Repositórios</h1>
-          <p class="view-sub">Carregando…</p>
-        </div>
-      </header>
-      <div class="repos-layout" aria-busy="true">
-        <section class="repos-list-pane">
-          ${Array.from({ length: 4 }, () => `<div class="skeleton repos-skeleton-row"></div>`).join("")}
-        </section>
-        <section class="panel repos-detail"><div class="skeleton repos-skeleton-title"></div></section>
+    body().innerHTML = `
+      <div class="filterbar repos-filterbar-skeleton" aria-hidden="true"><div class="skeleton repos-skeleton-search"></div></div>
+      <div class="list-frame" aria-busy="true">${columnsHtml()}
+        <span class="sr-only">Carregando repositórios…</span>
+        <ul class="projects">${Array.from({ length: 5 }, () => `<li class="repos-skeleton-row"><span class="skeleton"></span></li>`).join("")}</ul>
       </div>`;
   }
 
   function renderError(message: string): void {
-    root.innerHTML = `
-      <header class="view-header">
-        <div><h1 class="view-title">Repositórios</h1></div>
-        <div class="view-actions">
-          <button type="button" class="btn" data-action="retry">${icon("refresh")}<span>Tentar de novo</span></button>
-        </div>
-      </header>
-      <div class="callout error" role="alert">${icon("alert")}<span>Não foi possível carregar os repositórios: ${esc(message)}</span></div>`;
-    root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.addEventListener("click", () => void load());
+    body().innerHTML = errorView({
+      title: "Não foi possível carregar os repositórios",
+      error: message,
+      actions: [{ label: "Tentar de novo", action: "retry", icon: "refresh", primary: true }],
+    });
   }
 
-  function render(): void {
-    closeMenu?.();
-    const header = `
-      <header class="view-header">
-        <div>
-          <h1 class="view-title">Repositórios</h1>
-          <p class="view-sub">${esc(subtitle())}</p>
+  function renderEmpty(): void {
+    const noAccounts = accounts.length === 0;
+    body().innerHTML = `
+      <section class="surface">
+        <div class="empty-state">
+          <div class="empty-icon">${icon(noAccounts ? "user" : "repo")}</div>
+          <h3>${noAccounts ? "Conecte primeiro uma conta do GitHub" : "Nenhum repositório vinculado"}</h3>
+          <p>${
+            noAccounts
+              ? "Depois de conectar uma conta, o GitPass encontra seus clones e usa a conta certa em cada um."
+              : "Mapeie a pasta onde ficam seus projetos: o GitPass encontra todos e sugere a conta certa para cada um. Depois disso, você confere e envia os commits por aqui."
+          }</p>
+          <div class="row-actions">${
+            noAccounts
+              ? `<button type="button" class="control primary" data-action="go-accounts">${icon("plus")}<span>Conectar conta</span></button>`
+              : `<button type="button" class="control primary" data-action="map">${icon("folder")}<span>Mapear pasta…</span></button>
+                 <button type="button" class="control" data-action="bind">${icon("plus")}<span>Vincular repositório</span></button>`
+          }</div>
         </div>
-        <div class="view-actions repos-actions">${bindButton()}</div>
-      </header>`;
+      </section>
+      ${noAccounts ? "" : `<section class="surface repos-discover" id="repos-discover" aria-labelledby="repos-discover-title"></section>`}`;
+    discovery.render(body().querySelector<HTMLElement>(".repos-discover"), true);
+    updateFoundCount();
+  }
 
-    const discoverySection = accounts.length > 0 ? `<section class="panel repos-discover" aria-labelledby="repos-discover-title"></section>` : "";
-
-    if (repos.length === 0) {
-      root.innerHTML = `${header}
-        <section class="panel">
-          <div class="empty-state">
-            <div class="empty-icon">${icon(accounts.length === 0 ? "user" : "repo", 26)}</div>
-            <h3>${accounts.length === 0 ? "Conecte primeiro uma conta do GitHub" : "Nenhum repositório vinculado"}</h3>
-            <p>${
-              accounts.length === 0
-                ? "Depois de conectar uma conta, o GitPass encontra seus clones e usa a conta certa em cada um."
-                : "Escolha a pasta de um clone e o GitPass indica a conta certa. Depois disso, commits e pushes usam essa conta automaticamente."
-            }</p>
-            <div class="repos-actions">${bindButton("lg")}</div>
-          </div>
-        </section>
-        ${discoverySection}`;
-      wireHeaderButtons();
-      renderDiscovery();
-      return;
-    }
-
-    if (!rememberedSelection || !repos.some((b) => b.id === rememberedSelection)) {
-      rememberedSelection = repos[0].id;
-    }
-
-    root.innerHTML = `${header}
-      <div class="repos-layout">
-        <section class="repos-list-pane" aria-label="Lista de repositórios">
-          <label class="repos-search">
-            <span class="sr-only">Procurar repositórios</span>
-            ${icon("search")}
-            <input type="search" class="input" placeholder="Procurar por repositório, pasta, branch ou perfil" value="${esc(query)}" autocomplete="off" spellcheck="false" />
-          </label>
-          <ul class="list repos-list" aria-label="Repositórios vinculados"></ul>
-        </section>
-        <section class="panel repos-detail" aria-live="polite"></section>
+  function ensureLayout(): void {
+    if (body().querySelector(".filterbar[data-ready]")) return;
+    const mac = /Mac/i.test(navigator.platform);
+    body().innerHTML = `
+      <div class="filterbar" data-ready aria-label="Filtros dos repositórios" role="search">
+        <label class="search">${icon("search")}<span class="sr-only">Buscar repositório</span>
+          <input type="search" id="repo-search" placeholder="Buscar repositório" title="Busque por nome, pasta, branch ou perfil" autocomplete="off" spellcheck="false" />
+          <kbd aria-hidden="true">${mac ? "⌘ K" : "Ctrl K"}</kbd>
+        </label>
+        <label class="select-wrap">${icon("user")}<span class="sr-only">Filtrar por perfil</span><select id="repo-profile"></select></label>
+        <button type="button" class="control filter-review" data-filter="review" aria-pressed="false">${icon("alert")}<span>Para revisar</span></button>
+        <button type="button" class="control filter-toggle" data-filter="ahead" aria-pressed="false">${icon("arrowUp")}<span>Para enviar</span></button>
+        <span class="filter-count" role="status" aria-live="polite" data-ref="count"></span>
       </div>
-      ${discoverySection}`;
+      <div data-ref="list"></div>
+      <div class="list-note"><span>${icon("info")}Selecione um repositório para abrir os detalhes.</span></div>
+      <section class="surface repos-discover" id="repos-discover" aria-labelledby="repos-discover-title"></section>`;
 
-    const input = root.querySelector<HTMLInputElement>(".repos-search input")!;
-    input.addEventListener("input", () => {
-      query = input.value;
-      renderList();
-    });
+    const input = body().querySelector<HTMLInputElement>("#repo-search")!;
+    input.value = filters.query;
+    input.addEventListener("input", () => setFilters({ query: input.value }));
     input.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        focusSelected();
+        focusRow(null);
+      } else if (e.key === "Escape" && input.value) {
+        e.preventDefault();
+        input.value = "";
+        setFilters({ query: "" });
       }
     });
-
-    const list = root.querySelector<HTMLUListElement>(".repos-list")!;
+    body()
+      .querySelector<HTMLSelectElement>("#repo-profile")!
+      .addEventListener("change", (e) => setFilters({ profile: (e.target as HTMLSelectElement).value }));
+    const list = body().querySelector<HTMLElement>('[data-ref="list"]')!;
     list.addEventListener("click", (e) => {
-      const target = e.target as HTMLElement;
-      const fix = target.closest<HTMLButtonElement>('[data-action="fix-row"]');
-      if (fix?.dataset.id) {
-        void fixIdentity(fix, fix.dataset.id);
-        return;
-      }
-      const row = target.closest<HTMLButtonElement>(".repos-row-select");
-      if (row?.dataset.id) select(row.dataset.id, true);
+      const row = (e.target as HTMLElement).closest<HTMLButtonElement>(".project-row");
+      if (row?.dataset.repoId) openRepo(row.dataset.repoId);
     });
     list.addEventListener("keydown", onListKey);
+  }
 
-    wireHeaderButtons();
-    renderList();
-    renderDetail();
-    renderDiscovery();
+  function renderFilterbar(): void {
+    const select = body().querySelector<HTMLSelectElement>("#repo-profile");
+    if (!select) return;
+    const options = [
+      `<option value="${ALL_PROFILES}">Todos os perfis</option>`,
+      ...accounts
+        .filter((a) => repos.some((b) => matchesProfile(b, a.id)) || filters.profile === a.id)
+        .map((a) => `<option value="${esc(a.id)}"${filters.profile === a.id ? " selected" : ""}>${esc(profileName(a))}</option>`),
+      ...(repos.some((b) => b.account_missing)
+        ? [`<option value="${MISSING_PROFILE}"${filters.profile === MISSING_PROFILE ? " selected" : ""}>Conta removida</option>`]
+        : []),
+    ];
+    select.innerHTML = options.join("");
+    select.value = filters.profile;
+    body().querySelector('[data-filter="review"]')?.setAttribute("aria-pressed", String(filters.review));
+    body().querySelector('[data-filter="ahead"]')?.setAttribute("aria-pressed", String(filters.ahead));
+    const input = body().querySelector<HTMLInputElement>("#repo-search");
+    if (input && document.activeElement !== input && input.value !== filters.query) input.value = filters.query;
   }
 
   function renderList(): void {
-    const list = root.querySelector<HTMLUListElement>(".repos-list");
+    const list = body().querySelector<HTMLElement>('[data-ref="list"]');
     if (!list) return;
-    const items = filtered();
+    const focusedId = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.repoId : undefined;
+    const items = visible();
+    const count = body().querySelector<HTMLElement>('[data-ref="count"]');
+    if (count) count.textContent = plural(items.length, "repositório", "repositórios");
     if (items.length === 0) {
-      list.innerHTML = `<li class="repos-no-results muted small">${icon("search")} Nenhum resultado para “${esc(query.trim())}”.</li>`;
+      list.innerHTML = `<div class="list-frame empty"><strong>Nenhum repositório encontrado</strong>Experimente outra busca ou ajuste os filtros.
+        <div><button type="button" class="control" data-action="clear-filters">${icon("x")}<span>Limpar filtros</span></button></div></div>`;
       return;
     }
-    const selectedVisible = items.some((b) => b.id === rememberedSelection);
-    list.innerHTML = items
-      .map((b, i) => {
-        const sel = b.id === rememberedSelection;
-        const focusable = sel || (!selectedVisible && i === 0);
-        const st = rowStatus(b);
-        return `<li class="list-row repos-row${sel ? " selected" : ""}" data-id="${esc(b.id)}">
-          <button type="button" class="repos-row-select" data-id="${esc(b.id)}" aria-current="${sel}" tabindex="${focusable ? 0 : -1}">
-            <span class="repos-row-main">
-              <span class="mono repos-row-name truncate">${esc(repoName(b))}</span>
-              <span class="mono muted small repos-row-path truncate" title="${esc(b.root_path)}">${esc(shortPath(b.root_path))}</span>
-              <span class="repos-row-status">${statusBadge(st)}</span>
-            </span>
-            ${profileChip(profileFor(b))}
-          </button>
-          ${
-            st.fixable
-              ? `<button type="button" class="btn repos-row-fix" data-action="fix-row" data-id="${esc(b.id)}" aria-label="Corrigir identidade de ${esc(repoName(b))}">${icon("check", 14)}<span>Corrigir</span></button>`
-              : ""
-          }
-        </li>`;
-      })
-      .join("");
+    const anchor = items.find((b) => b.id === (focusedId ?? expanded))?.id ?? items[0].id;
+    list.innerHTML = `<div class="list-frame">${columnsHtml()}<ul class="projects" aria-label="Repositórios locais">${items
+      .map((b) => projectRowHtml(b, accounts, system, { expanded: b.id === expanded, tabbable: b.id === anchor }))
+      .join("")}</ul></div>`;
+    if (focusedId) list.querySelector<HTMLElement>(`.project-row[data-repo-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
   }
 
-  function focusSelected(): void {
-    root.querySelector<HTMLButtonElement>('.repos-row-select[tabindex="0"]')?.focus();
+  function rows(): HTMLButtonElement[] {
+    return Array.from(body().querySelectorAll<HTMLButtonElement>(".projects .project-row"));
+  }
+
+  function focusRow(id: string | null): void {
+    const all = rows();
+    const target = (id ? all.find((r) => r.dataset.repoId === id) : undefined) ?? all.find((r) => r.tabIndex === 0) ?? all[0];
+    if (!target) return;
+    all.forEach((r) => (r.tabIndex = r === target ? 0 : -1));
+    target.focus();
+    target.scrollIntoView({ block: "nearest" });
   }
 
   function onListKey(e: KeyboardEvent): void {
-    if (!(e.target as HTMLElement).classList.contains("repos-row-select")) return;
-    const items = filtered();
-    if (items.length === 0) return;
-    const cur = (e.target as HTMLElement).dataset.id;
-    let idx = items.findIndex((b) => b.id === (cur ?? rememberedSelection));
+    const cur = (e.target as HTMLElement).closest<HTMLButtonElement>(".project-row");
+    if (!cur) return;
+    const all = rows();
+    let i = all.indexOf(cur);
     switch (e.key) {
       case "ArrowDown":
-        idx = Math.min(items.length - 1, idx + 1);
+        i = Math.min(all.length - 1, i + 1);
         break;
       case "ArrowUp":
-        if (idx <= 0) {
+        if (i <= 0) {
           e.preventDefault();
-          root.querySelector<HTMLInputElement>(".repos-search input")?.focus();
+          body().querySelector<HTMLInputElement>("#repo-search")?.focus();
           return;
         }
-        idx -= 1;
+        i -= 1;
         break;
       case "Home":
-        idx = 0;
+        i = 0;
         break;
       case "End":
-        idx = items.length - 1;
+        i = all.length - 1;
         break;
       default:
         return;
     }
     e.preventDefault();
-    select(items[Math.max(0, idx)].id, true);
+    focusRow(all[i]?.dataset.repoId ?? null);
   }
 
-  function select(id: string, focus: boolean): void {
-    const changed = id !== rememberedSelection;
-    rememberedSelection = id;
-    root.querySelectorAll<HTMLLIElement>(".repos-row").forEach((li) => {
-      const sel = li.dataset.id === id;
-      li.classList.toggle("selected", sel);
-      const btn = li.querySelector<HTMLButtonElement>(".repos-row-select");
-      if (!btn) return;
-      btn.setAttribute("aria-current", String(sel));
-      btn.tabIndex = sel ? 0 : -1;
-      if (sel && focus) {
-        btn.focus();
-        li.scrollIntoView({ block: "nearest" });
-      }
-    });
-    if (changed) renderDetail();
-  }
-
-  function identityCallout(b: RepoRow): string {
-    const id = b.identity;
-    if (!b.exists) {
-      return `<div class="callout error" role="alert">${icon("alert")}<span>A pasta não existe mais neste Mac. Se você a moveu, desvincule o repositório e vincule de novo na nova pasta.</span></div>`;
-    }
-    if (b.account_missing) {
-      return `<div class="callout error" role="alert">${icon("alert")}<span>A conta deste vínculo foi removida. Clique em “Mudar conta” para continuar usando o GitPass neste repositório.</span></div>`;
-    }
-    const expected = esc(identityText(id.expected_name, id.expected_email));
-    switch (id.state) {
-      case "correct":
-        return `<div class="callout success">${icon("check")}<span><strong>Identidade correta.</strong> Os commits usam <span class="mono">${esc(
-          identityText(id.local_name, id.local_email)
-        )}</span>.${
-          id.expected_email ? "" : " A conta não tem e-mail de commit definido. Escolha um em Contas."
-        }</span></div>`;
-      case "different":
-        return `<div class="callout warning repos-identity-callout">${icon("alert")}<div>
-          <p><strong>Identidade diferente da conta.</strong> Os próximos commits não serão associados a ${esc(who(b.account_id))}.</p>
-          <dl class="repos-identity-diff">
-            <dt>Aplicada</dt><dd class="mono">${esc(identityText(id.local_name, id.local_email))}</dd>
-            <dt>Da conta</dt><dd class="mono">${expected}</dd>
-          </dl>
-          <button type="button" class="btn" data-action="fix">${icon("check")}<span>Corrigir identidade</span></button>
-        </div></div>`;
-      default:
-        return `<div class="callout warning repos-identity-callout">${icon("alert")}<div>
-          <p><strong>Identidade não definida.</strong> Os commits usam a identidade global do Git em vez de <span class="mono">${expected}</span>.</p>
-          <button type="button" class="btn" data-action="fix">${icon("check")}<span>Aplicar identidade da conta</span></button>
-        </div></div>`;
-    }
-  }
-
-  function renderDetail(): void {
-    closeMenu?.();
-    const panel = root.querySelector<HTMLElement>(".repos-detail");
-    if (!panel) return;
-    const b = repos.find((x) => x.id === rememberedSelection);
-    if (!b) {
-      panel.innerHTML = `<p class="muted small">Escolha um repositório.</p>`;
+  function render(): void {
+    if (disposed) return;
+    closeMenus();
+    renderActions();
+    if (repos.length === 0) {
+      renderEmpty();
       return;
     }
-    const head = b.branch
-      ? `<span class="mono">${esc(b.branch)}</span>`
-      : b.detached_at
-        ? `<span class="mono">HEAD solto em ${esc(b.detached_at)}</span>`
-        : `<span class="muted">—</span>`;
-    panel.innerHTML = `
-      <div class="repos-detail-head">
-        <div class="repos-detail-title">
-          <span class="repos-detail-icon">${icon("repo", 20)}</span>
-          <h2 class="panel-title mono truncate" title="${esc(repoName(b))}">${esc(repoName(b))}</h2>
-        </div>
-        ${profileChip(profileFor(b), { size: "md" })}
-      </div>
-      <div class="repos-detail-callouts">
-        ${identityCallout(b)}
-        ${
-          b.remote_has_credentials
-            ? `<div class="callout error" role="alert">${icon("lock")}<span>O <span class="mono">origin</span> deste repositório tem uma senha ou token escrito na URL. Troque por <span class="mono">${esc(
-                b.remote_url ?? ""
-              )}</span> — o GitPass fornece as credenciais automaticamente.</span></div>`
-            : ""
-        }
-      </div>
-      <div class="repos-detail-actions" role="group" aria-label="Ações do repositório">
-        <span class="repos-menu-host">
-          <button type="button" class="btn" data-action="change-account" aria-haspopup="menu" aria-expanded="false"${
-            accounts.length === 0 ? " disabled" : ""
-          }>${icon("user")}<span>Mudar conta</span></button>
-        </span>
-        <button type="button" class="btn" data-action="finder"${b.exists ? "" : " disabled"}>${icon("folder")}<span>Mostrar no Finder</span></button>
-        <button type="button" class="btn" data-action="terminal"${b.exists ? "" : " disabled"}>${icon("monitor")}<span>Abrir no Terminal</span></button>
-        <button type="button" class="btn ghost repos-danger-text" data-action="unbind">${icon("x")}<span>Desvincular</span></button>
-      </div>
-      <dl class="repos-meta">
-        <div class="repos-meta-item">
-          <dt class="field-label">Pasta local</dt>
-          <dd class="repos-path-row">
-            <code class="repos-path mono">${esc(b.root_path)}</code>
-            <button type="button" class="btn ghost icon-only" data-action="copy-path" aria-label="Copiar caminho" title="Copiar caminho">${icon("copy")}</button>
-          </dd>
-        </div>
-        <div class="repos-meta-grid">
-          <div class="repos-meta-item">
-            <dt class="field-label">GitHub</dt>
-            <dd>${
-              b.remote_url
-                ? `<a class="repos-gh-link mono" href="${esc(b.remote_url)}" data-action="open-gh">${esc(
-                    b.remote_url.replace(/^https:\/\//, "")
-                  )} ${icon("external", 14)}<span class="sr-only">(abre no navegador)</span></a>`
-                : `<span class="badge warning"><span aria-hidden="true">⚠</span> Origin desconhecido</span>`
-            }</dd>
-          </div>
-          <div class="repos-meta-item">
-            <dt class="field-label">Branch atual</dt>
-            <dd class="repos-branch">${icon("branch", 14)} ${head}</dd>
-          </div>
-          <div class="repos-meta-item">
-            <dt class="field-label">user.name</dt>
-            <dd class="mono repos-ident-value">${b.identity.local_name ? esc(b.identity.local_name) : `<span class="muted">não definido</span>`}</dd>
-          </div>
-          <div class="repos-meta-item">
-            <dt class="field-label">user.email</dt>
-            <dd class="mono repos-ident-value">${b.identity.local_email ? esc(b.identity.local_email) : `<span class="muted">não definido</span>`}</dd>
-          </div>
-        </div>
-      </dl>
-      <h3 class="section-label repos-log-label">${icon("commit", 14)} Histórico de commits</h3>
-      <div class="repos-log"></div>`;
-
-    panel.querySelector<HTMLButtonElement>('[data-action="fix"]')?.addEventListener("click", (e) =>
-      void fixIdentity(e.currentTarget as HTMLButtonElement, b.id)
-    );
-    panel.querySelector<HTMLAnchorElement>('[data-action="open-gh"]')?.addEventListener("click", (e) => {
-      e.preventDefault();
-      if (b.remote_url) api.openExternal(b.remote_url).catch((err) => showToast(errMessage(err), "err"));
-    });
-    panel.querySelector<HTMLButtonElement>('[data-action="finder"]')?.addEventListener("click", () =>
-      reposApi.openInFinder(b.root_path).catch((err) => showToast(errMessage(err), "err"))
-    );
-    panel.querySelector<HTMLButtonElement>('[data-action="terminal"]')?.addEventListener("click", () =>
-      reposApi.openInTerminal(b.root_path).catch((err) => showToast(errMessage(err), "err"))
-    );
-    panel.querySelector<HTMLButtonElement>('[data-action="unbind"]')?.addEventListener("click", () => void unbind(b));
-    const changeBtn = panel.querySelector<HTMLButtonElement>('[data-action="change-account"]')!;
-    changeBtn.addEventListener("click", () => {
-      if (closeMenu) {
-        closeMenu();
-        return;
-      }
-      openAccountMenu(changeBtn, "Usar neste repositório", b.account_id, (id) => void changeAccount(changeBtn, b, id));
-    });
-
-    const copyBtn = panel.querySelector<HTMLButtonElement>('[data-action="copy-path"]')!;
-    copyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(b.root_path);
-        copyBtn.innerHTML = icon("check");
-        copyBtn.setAttribute("aria-label", "Caminho copiado");
-        showToast("Caminho copiado para a área de transferência.", "ok");
-        window.setTimeout(() => {
-          if (!copyBtn.isConnected) return;
-          copyBtn.innerHTML = icon("copy");
-          copyBtn.setAttribute("aria-label", "Copiar caminho");
-        }, 1600);
-      } catch (e) {
-        showToast(`Não foi possível copiar: ${errMessage(e)}`, "err");
-      }
-    });
-
-    const logBox = panel.querySelector<HTMLElement>(".repos-log")!;
-    if (b.exists) void loadLog(b, logBox);
-    else logBox.innerHTML = `<p class="muted small repos-log-empty">${icon("commit")} Histórico indisponível: a pasta não foi encontrada.</p>`;
+    ensureLayout();
+    renderFilterbar();
+    renderList();
+    discovery.render(body().querySelector<HTMLElement>(".repos-discover"), false);
+    updateFoundCount();
   }
 
-  async function loadLog(b: RepoRow, box: HTMLElement): Promise<void> {
-    const token = ++logToken;
-    box.setAttribute("aria-busy", "true");
-    box.innerHTML = `<span class="sr-only">Carregando commits…</span>${Array.from(
-      { length: 6 },
-      (_, i) => `<div class="skeleton repos-skeleton-commit" style="width:${92 - (i % 3) * 14}%"></div>`
-    ).join("")}`;
-    try {
-      const lines = await api.commitLog(b.root_path, 40);
-      if (disposed || token !== logToken) return;
-      box.removeAttribute("aria-busy");
-      if (lines.length === 0) {
-        box.innerHTML = `<p class="muted small repos-log-empty">${icon("commit")} Ainda não há commits neste repositório.</p>`;
-        return;
-      }
-      box.innerHTML = `<ol class="repos-commits">${lines
-        .map((line) => {
-          const c = parseCommit(line);
-          return `<li class="repos-commit">${
-            c.hash ? `<span class="mono repos-hash" title="${esc(c.hash)}">${esc(c.hash.slice(0, 7))}</span>` : ""
-          }<span class="repos-msg">${esc(c.message)}</span></li>`;
-        })
-        .join("")}</ol>`;
-    } catch (e) {
-      if (disposed || token !== logToken) return;
-      box.removeAttribute("aria-busy");
-      // Repositório sem commits: o git log falha em vez de devolver vazio.
-      if (/does not have any commits|bad default revision/i.test(errMessage(e))) {
-        box.innerHTML = `<p class="muted small repos-log-empty">${icon("commit")} Ainda não há commits neste repositório.</p>`;
-        return;
-      }
-      box.innerHTML = `<div class="callout error" role="alert">${icon("alert")}<span>Não foi possível ler o histórico: ${esc(
-        errMessage(e)
-      )}</span></div>`;
-    }
-  }
-
-  function wireHeaderButtons(): void {
-    root.querySelectorAll<HTMLButtonElement>('[data-action="bind"]').forEach((btn) => {
-      btn.addEventListener("click", () => void bindWithDialog(btn));
-    });
-    root.querySelectorAll<HTMLButtonElement>('[data-action="go-accounts"]').forEach((btn) => {
-      btn.addEventListener("click", () => ctx.navigate("accounts"));
-    });
-  }
-
-  /** Menu de perfis (vidro). `currentId` fica marcado e não é selecionável. */
-  function openAccountMenu(btn: HTMLButtonElement, title: string, currentId: string | null, onPick: (id: string) => void): void {
-    const host = btn.parentElement!;
-    const menu = document.createElement("div");
-    menu.className = "material repos-menu";
-    menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", title);
-    menu.innerHTML = `<p class="repos-menu-title muted small">${esc(title)}</p>${accounts
-      .map((a) => {
-        const cur = a.id === currentId;
-        return `<button type="button" class="repos-menu-item" role="menuitemradio" aria-checked="${cur}" data-account="${esc(a.id)}"${
-          cur ? ' aria-disabled="true"' : ""
-        }>${profileChip(a)}${
-          cur
-            ? `<span class="repos-menu-current small">${icon("check", 14)} Atual</span>`
-            : a.login && a.label
-              ? `<span class="mono muted small truncate">@${esc(a.login)}</span>`
-              : ""
-        }</button>`;
-      })
-      .join("")}`;
-    host.classList.add("repos-menu-host");
-    host.appendChild(menu);
-    btn.setAttribute("aria-expanded", "true");
-    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>(".repos-menu-item"));
-    (items.find((i) => i.getAttribute("aria-checked") !== "true") ?? items[0])?.focus();
-
-    const onDocDown = (e: PointerEvent): void => {
-      if (!menu.contains(e.target as Node) && !btn.contains(e.target as Node)) close();
-    };
-    const onKey = (e: KeyboardEvent): void => {
-      const i = items.indexOf(document.activeElement as HTMLButtonElement);
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-        btn.focus();
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        items[(i + 1) % items.length]?.focus();
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        items[(i - 1 + items.length) % items.length]?.focus();
-      } else if (e.key === "Tab") {
-        close();
-      }
-    };
-    const close = (): void => {
-      document.removeEventListener("pointerdown", onDocDown, true);
-      menu.removeEventListener("keydown", onKey);
-      menu.remove();
-      btn.setAttribute("aria-expanded", "false");
-      closeMenu = null;
-    };
-    document.addEventListener("pointerdown", onDocDown, true);
-    menu.addEventListener("keydown", onKey);
-    menu.addEventListener("click", (e) => {
-      const item = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-account]");
-      if (!item?.dataset.account || item.getAttribute("aria-checked") === "true") return;
-      const id = item.dataset.account;
-      close();
-      btn.focus();
-      onPick(id);
-    });
-    closeMenu = close;
-  }
+  // ---------- Vincular ----------
 
   function upsertRepo(row: RepoRow): void {
     const i = repos.findIndex((r) => r.id === row.id);
@@ -673,11 +381,12 @@ export const mount: MountView = (root, ctx) => {
 
   function afterBound(row: RepoRow, reason: SuggestionReason | null): void {
     upsertRepo(row);
-    rememberedSelection = row.id;
-    forgetDiscovered(row.root_path);
+    discovery.forget(row.root_path);
     const why = reason ? ` (${REASON_TEXT[reason]})` : "";
     showToast(`${repoName(row)} vinculado a ${who(row.account_id)}${why}.`, "ok");
+    ctx.notifyDataChanged();
     render();
+    openRepo(row.id);
   }
 
   async function bindWithDialog(btn: HTMLButtonElement): Promise<void> {
@@ -706,14 +415,14 @@ export const mount: MountView = (root, ctx) => {
   function confirmAccount(o: Extract<BindOutcome, { status: "needs_account" }>): Promise<string | null> {
     const pushText = (v: boolean | null | undefined): string =>
       v === true
-        ? `<span class="badge success"><span aria-hidden="true">✓</span> Pode fazer push</span>`
+        ? `<span class="badge success">${icon("check", 12)}Pode enviar</span>`
         : v === false
-          ? `<span class="badge warning"><span aria-hidden="true">⚠</span> Sem permissão de push</span>`
-          : `<span class="badge"><span aria-hidden="true">?</span> Não confirmado</span>`;
+          ? `<span class="badge warning">${icon("alert", 12)}Sem permissão para enviar</span>`
+          : `<span class="badge">${icon("help", 12)}Não confirmado</span>`;
     const preselected = o.suggested_account_id ?? accounts[0]?.id;
-    const body = `
+    const bodyHtml = `
       <p class="repos-modal-lead">Qual conta deve ser usada em <span class="mono">${esc(`${o.github_owner}/${o.github_repo}`)}</span>?</p>
-      <p class="muted small repos-modal-path mono" title="${esc(o.root_path)}">${esc(shortPath(o.root_path))}</p>
+      <p class="muted small repos-modal-path mono" title="${esc(o.root_path)}">${esc(shortenPath(o.root_path))}</p>
       <fieldset class="repos-pick">
         <legend class="sr-only">Conta</legend>
         ${accounts
@@ -729,319 +438,146 @@ export const mount: MountView = (root, ctx) => {
       </fieldset>`;
     return openModal<string>({
       title: "Escolher a conta",
-      body,
+      body: bodyHtml,
       confirmLabel: "Vincular",
       read: (d) => d.querySelector<HTMLInputElement>('input[name="repos-pick"]:checked')?.value,
     });
   }
 
-  async function fixIdentity(btn: HTMLButtonElement, id: string): Promise<void> {
-    try {
-      const row = await withBusy(btn, "Corrigindo…", () => reposApi.fixIdentity(id));
-      if (disposed) return;
-      upsertRepo(row);
-      const st = rowStatus(row);
-      showToast(
-        st.kind === "success"
-          ? `Identidade aplicada: ${identityText(row.identity.local_name, row.identity.local_email)}.`
-          : "Identidade aplicada, mas a conta não tem e-mail de commit. Escolha um em Contas.",
-        st.kind === "success" ? "ok" : "err"
-      );
-      render();
-    } catch (e) {
-      showToast(errMessage(e), "err");
-    }
-  }
-
-  async function changeAccount(btn: HTMLButtonElement, b: RepoRow, accountId: string): Promise<void> {
-    try {
-      const row = await withBusy(btn, "Mudando…", () => reposApi.changeAccount(b.id, accountId));
-      if (disposed) return;
-      upsertRepo(row);
-      showToast(`${repoName(row)} agora usa ${who(accountId)}. Identidade atualizada.`, "ok");
-      render();
-    } catch (e) {
-      showToast(errMessage(e), "err");
-      void load();
-    }
-  }
-
-  async function unbind(b: RepoRow): Promise<void> {
-    const reset = await openModal<boolean>({
-      title: `Desvincular ${repoName(b)}?`,
-      body: `
-        <p class="repos-modal-lead">O GitPass deixa de escolher a conta neste repositório. A pasta, os arquivos e o histórico não mudam.</p>
-        ${
-          b.exists && (b.identity.local_name || b.identity.local_email)
-            ? `<label class="repos-check">
-                <input type="checkbox" name="reset" />
-                <span>Remover também o <span class="mono">user.name</span> e o <span class="mono">user.email</span> que o GitPass aplicou</span>
-              </label>`
-            : ""
-        }`,
-      confirmLabel: "Desvincular",
-      danger: true,
-      read: (d) => d.querySelector<HTMLInputElement>('input[name="reset"]')?.checked ?? false,
-    });
-    if (reset === null || disposed) return;
-    try {
-      await reposApi.unbind(b.id, reset);
-      if (disposed) return;
-      repos = repos.filter((r) => r.id !== b.id);
-      if (rememberedSelection === b.id) rememberedSelection = null;
-      showToast(`${repoName(b)} foi desvinculado.`, "ok");
-      render();
-    } catch (e) {
-      showToast(errMessage(e), "err");
-    }
-  }
-
-  // ---------- Encontrados neste Mac ----------
-
-  function forgetDiscovered(path: string): void {
-    discovery.items = discovery.items.filter((d) => d.root_path !== path);
-    discovery.choice.delete(path);
-  }
-
-  function choiceFor(d: DiscoveredRepo): string | null {
-    const c = discovery.choice.get(d.root_path) ?? d.suggested_account_id;
-    return c && accounts.some((a) => a.id === c) ? c : null;
-  }
-
-  function renderDiscovery(): void {
-    const sec = root.querySelector<HTMLElement>(".repos-discover");
+  function openFound(): void {
+    const sec = body().querySelector<HTMLElement>(".repos-discover");
     if (!sec) return;
-    const bound = new Set(repos.map((r) => r.root_path));
-    discovery.items = discovery.items.filter((d) => !bound.has(d.root_path));
-    const ready = discovery.items.filter((d) => choiceFor(d));
-    const scanning = discovery.status === "scanning";
-
-    let body: string;
-    if (scanning && discovery.items.length === 0) {
-      body = `<div class="repos-discover-list" aria-busy="true"><span class="sr-only">Procurando repositórios…</span>${Array.from(
-        { length: 3 },
-        () => `<div class="skeleton repos-skeleton-row"></div>`
-      ).join("")}</div>`;
-    } else if (discovery.status === "error") {
-      body = `<div class="callout error" role="alert">${icon("alert")}<span>Não foi possível procurar repositórios: ${esc(discovery.error)}</span></div>`;
-    } else if (discovery.items.length === 0) {
-      body = `<p class="muted small repos-discover-empty">${icon("check")} ${
-        discovery.status === "done"
-          ? "Não há clones do GitHub sem vínculo nas pastas de sempre (Developer, Projects, GitHub, Code, src, Documentos/GitHub, Mesa)."
-          : "Procure clones do GitHub que já existam neste Mac."
-      }</p>`;
-    } else {
-      body = `<ul class="list repos-discover-list">${discovery.items
-        .map((d) => {
-          const chosen = choiceFor(d);
-          const reason =
-            chosen && chosen === d.suggested_account_id && d.suggestion_reason
-              ? `<span class="muted small">Sugerida: ${esc(REASON_TEXT[d.suggestion_reason])}</span>`
-              : !chosen
-                ? `<span class="warn small"><span aria-hidden="true">⚠</span> Escolha a conta</span>`
-                : "";
-          return `<li class="list-row repos-discover-row" data-path="${esc(d.root_path)}">
-            <span class="repos-row-main">
-              <span class="mono repos-row-name truncate">${esc(`${d.github_owner}/${d.github_repo}`)}</span>
-              <span class="mono muted small repos-row-path truncate" title="${esc(d.root_path)}">${esc(shortPath(d.root_path))}</span>
-            </span>
-            <span class="repos-discover-pick">
-              <select class="select repos-discover-select" aria-label="Conta para ${esc(`${d.github_owner}/${d.github_repo}`)}">
-                ${chosen ? "" : `<option value="" selected>Escolher conta…</option>`}
-                ${accounts
-                  .map((a) => `<option value="${esc(a.id)}"${a.id === chosen ? " selected" : ""}>${esc(a.login ? `${profileName(a)} (@${a.login})` : profileName(a))}</option>`)
-                  .join("")}
-              </select>
-              ${reason}
-            </span>
-            <button type="button" class="btn" data-action="bind-found"${chosen ? "" : " disabled"}>${icon("plus", 14)}<span>Vincular</span></button>
-          </li>`;
-        })
-        .join("")}</ul>`;
-    }
-
-    const truncatedNote =
-      discovery.truncated && discovery.status === "done"
-        ? `<p class="muted small repos-discover-note">Algumas pastas demoraram demais e não foram verificadas. Se o macOS pediu acesso a uma pasta (como a Mesa), permita e clique em “Procurar de novo”.</p>`
-        : "";
-
-    sec.innerHTML = `
-      <header class="repos-discover-head">
-        <div>
-          <h2 class="panel-title" id="repos-discover-title">Encontrados neste Mac</h2>
-          <p class="muted small">Clones do GitHub que ainda não estão vinculados.${
-            discovery.extraRoots.length
-              ? ` Também em ${discovery.extraRoots.map((r) => `<span class="mono">${esc(shortPath(r))}</span>`).join(", ")}.`
-              : ""
-          }</p>
-        </div>
-        <div class="repos-discover-actions">
-          <button type="button" class="btn ghost" data-action="discover-folder"${scanning ? " disabled" : ""}>${icon("folder")}<span>Procurar em outra pasta…</span></button>
-          <button type="button" class="btn" data-action="discover"${scanning ? " disabled aria-busy=\"true\"" : ""}>${
-            scanning ? `<span class="spinner" aria-hidden="true"></span><span>Procurando…</span>` : `${icon("refresh")}<span>${discovery.status === "idle" ? "Procurar" : "Procurar de novo"}</span>`
-          }</button>
-          ${
-            discovery.items.length > 1
-              ? `<button type="button" class="btn primary" data-action="bind-all"${ready.length ? "" : " disabled"}>${icon("plus")}<span>Vincular todos (${ready.length})</span></button>`
-              : ""
-          }
-        </div>
-      </header>
-      ${body}
-      ${truncatedNote}`;
-
-    sec.querySelector<HTMLButtonElement>('[data-action="discover"]')?.addEventListener("click", () => void runDiscovery());
-    sec.querySelector<HTMLButtonElement>('[data-action="discover-folder"]')?.addEventListener("click", () => void discoverFolder());
-    sec.querySelector<HTMLButtonElement>('[data-action="bind-all"]')?.addEventListener("click", (e) =>
-      void bindAll(e.currentTarget as HTMLButtonElement)
-    );
-    sec.querySelectorAll<HTMLLIElement>(".repos-discover-row").forEach((li) => {
-      const path = li.dataset.path!;
-      li.querySelector<HTMLSelectElement>("select")?.addEventListener("change", (e) => {
-        const v = (e.target as HTMLSelectElement).value;
-        if (v) discovery.choice.set(path, v);
-        renderDiscovery();
-        sec.querySelector<HTMLSelectElement>(`.repos-discover-row[data-path="${CSS.escape(path)}"] select`)?.focus();
-      });
-      li.querySelector<HTMLButtonElement>('[data-action="bind-found"]')?.addEventListener("click", (e) =>
-        void bindFound(e.currentTarget as HTMLButtonElement, path)
-      );
-    });
+    discovery.open();
+    sec.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    sec.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
   }
 
-  function mergeDiscovered(items: DiscoveredRepo[]): void {
-    const seen = new Set(discovery.items.map((d) => d.root_path));
-    for (const d of items) if (!seen.has(d.root_path)) discovery.items.push(d);
-    discovery.items.sort((a, b) => repoName(a).localeCompare(repoName(b)));
-  }
+  // ---------- Eventos ----------
 
-  function runDiscovery(): Promise<void> {
-    if (discovery.run) return discovery.run;
-    discovery.status = "scanning";
-    discovery.error = "";
-    renderDiscovery();
-    discovery.run = (async () => {
-      try {
-        const results = await Promise.all([
-          reposApi.discover(null),
-          ...(discovery.extraRoots.length ? [reposApi.discover(discovery.extraRoots)] : []),
-        ]);
-        discovery.items = [];
-        results.forEach((r) => mergeDiscovered(r.repos));
-        discovery.truncated = results.some((r) => r.truncated);
-        discovery.status = "done";
-      } catch (e) {
-        discovery.status = "error";
-        discovery.error = errMessage(e);
-      } finally {
-        discovery.run = null;
-        onDiscoveryUpdate?.();
-      }
-    })();
-    return discovery.run;
-  }
-
-  async function discoverFolder(): Promise<void> {
-    let path: string | null;
-    try {
-      path = await reposApi.pickFolder();
-    } catch (e) {
-      showToast(errMessage(e), "err");
+  root.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const filterBtn = target.closest<HTMLButtonElement>("button[data-filter]");
+    if (filterBtn) {
+      if (filterBtn.dataset.filter === "review") setFilters({ review: !filters.review });
+      else if (filterBtn.dataset.filter === "ahead") setFilters({ ahead: !filters.ahead });
       return;
     }
-    if (!path || disposed) return;
-    if (!discovery.extraRoots.includes(path)) discovery.extraRoots.push(path);
-    discovery.status = "scanning";
-    renderDiscovery();
-    try {
-      const r = await reposApi.discover([path]);
-      mergeDiscovered(r.repos);
-      discovery.status = "done";
-      if (r.repos.length === 0) showToast(`Não encontramos clones do GitHub sem vínculo em ${shortPath(path)}.`, "err");
-    } catch (e) {
-      discovery.status = "error";
-      discovery.error = errMessage(e);
+    const btn = target.closest<HTMLButtonElement>("button[data-action]");
+    if (!btn || btn.disabled || btn.closest(".repos-discover")) return;
+    switch (btn.dataset.action) {
+      case "map":
+        void startFolderMap(ctx, btn);
+        break;
+      case "bind":
+        void bindWithDialog(btn);
+        break;
+      case "found":
+        openFound();
+        break;
+      case "go-accounts":
+        ctx.navigate("accounts");
+        break;
+      case "refresh":
+        void withBusy(btn, "", async () => {
+          await load();
+          if (expanded && !isPushing(expanded)) await refreshOutgoing(expanded, false);
+        });
+        break;
+      case "retry":
+        void load();
+        break;
+      case "clear-filters":
+        setFilters({ profile: ALL_PROFILES, review: false, ahead: false, query: "" });
+        body().querySelector<HTMLInputElement>("#repo-search")?.focus();
+        break;
     }
-    onDiscoveryUpdate?.();
-  }
-
-  async function bindFound(btn: HTMLButtonElement, path: string): Promise<void> {
-    const d = discovery.items.find((x) => x.root_path === path);
-    const accountId = d && choiceFor(d);
-    if (!d || !accountId) return;
-    try {
-      const row = await withBusy(btn, "Vinculando…", () => reposApi.bindPath(path, accountId));
-      if (disposed) return;
-      upsertRepo(row);
-      forgetDiscovered(path);
-      showToast(`${repoName(row)} vinculado a ${who(accountId)}.`, "ok");
-      if (!rememberedSelection) rememberedSelection = row.id;
-      render();
-    } catch (e) {
-      showToast(errMessage(e), "err");
-    }
-  }
-
-  async function bindAll(btn: HTMLButtonElement): Promise<void> {
-    const items = discovery.items
-      .map((d) => ({ path: d.root_path, account_id: choiceFor(d) }))
-      .filter((x): x is { path: string; account_id: string } => !!x.account_id);
-    if (items.length === 0) return;
-    try {
-      const results = await withBusy(btn, "Vinculando…", () => reposApi.bindMany(items));
-      if (disposed) return;
-      const ok = results.filter((r) => r.repo);
-      const failed = results.filter((r) => r.error);
-      ok.forEach((r) => {
-        upsertRepo(r.repo!);
-        forgetDiscovered(r.path);
-      });
-      if (ok.length) showToast(ok.length === 1 ? "1 repositório vinculado." : `${ok.length} repositórios vinculados.`, "ok");
-      if (failed.length) {
-        showToast(
-          `Não foi possível vincular ${failed.length === 1 ? "1 repositório" : `${failed.length} repositórios`}:\n${failed
-            .map((f) => `${shortPath(f.path)} — ${f.error}`)
-            .join("\n")}`,
-          "err"
-        );
-      }
-      render();
-    } catch (e) {
-      showToast(errMessage(e), "err");
-    }
-  }
-
-  // ---------- Carregamento ----------
+  });
 
   async function load(): Promise<void> {
     const token = ++loadToken;
-    if (!root.querySelector(".repos-layout, .empty-state")) renderLoading();
+    if (!loaded) renderLoading();
     try {
-      const [accs, rows] = await Promise.all([api.accounts(), reposApi.list()]);
+      const [accs, list] = await Promise.all([api.accounts(), reposApi.list()]);
       if (disposed || token !== loadToken) return;
       accounts = accs;
-      repos = rows;
-      const hadFocusInList = root.querySelector(".repos-list")?.contains(document.activeElement) ?? false;
+      repos = list;
+      const first = !loaded;
+      loaded = true;
+      validateFilters();
       render();
-      if (hadFocusInList) focusSelected();
-      if (accounts.length > 0 && discovery.status === "idle") void runDiscovery();
+      discovery.autoRun();
+      if (first && screen && memory.scroll) screen.scrollTop = memory.scroll;
     } catch (e) {
       if (disposed || token !== loadToken) return;
-      renderError(errMessage(e));
+      if (loaded) showToast(`Não foi possível atualizar os repositórios: ${errMessage(e)}`, "err");
+      else {
+        renderActions();
+        renderError(errMessage(e));
+      }
     }
   }
 
-  onDiscoveryUpdate = () => {
-    if (!disposed) renderDiscovery();
-  };
-  const onDataChanged = (): void => void load();
+  /** Vários avisos seguidos (push, correção de autor, config) viram um só recarregamento. */
+  function scheduleReload(): void {
+    window.clearTimeout(reloadTimer);
+    reloadTimer = window.setTimeout(() => void load(), 250);
+  }
+
+  ctx.onRoute((_param, query) => {
+    if (disposed) return;
+    const next = applyQuery(filters, query);
+    if (next !== filters) {
+      filters = next;
+      saveFilters(filters);
+      if (loaded) render();
+    }
+  });
+  const onDataChanged = (): void => scheduleReload();
   document.addEventListener(DATA_CHANGED_EVENT, onDataChanged);
+  const onDrawer = (e: Event): void => {
+    expanded = (e as CustomEvent<DrawerEventDetail>).detail.id;
+    rows().forEach((r) => r.setAttribute("aria-expanded", String(r.dataset.repoId === expanded)));
+  };
+  document.addEventListener(DRAWER_EVENT, onDrawer);
+  const offSession = onSessionChange((_id, what) => {
+    if (what === "pushed") scheduleReload();
+  });
+  let unlistenOutgoing: (() => void) | null = null;
+  reposApi
+    .onOutgoingChanged(() => {
+      if (!disposed) scheduleReload();
+    })
+    .then((un) => {
+      if (disposed) un();
+      else unlistenOutgoing = un;
+    })
+    .catch(() => {});
+  const onScroll = (): void => {
+    memory.scroll = screen?.scrollTop ?? 0;
+  };
+  screen?.addEventListener("scroll", onScroll, { passive: true });
+
+  const offSystem = onSystemState((s) => {
+    const next = s.current.status === "ok" ? s.current.value : null;
+    if (next === system) return;
+    system = next;
+    if (loaded && !disposed && repos.length) renderList();
+  });
+
+  renderShell();
   void load();
 
   return () => {
     disposed = true;
-    closeMenu?.();
-    onDiscoveryUpdate = null;
+    offSystem();
+    window.clearTimeout(reloadTimer);
+    closeMenus();
+    discovery.dispose();
+    offSession();
+    unlistenOutgoing?.();
+    screen?.removeEventListener("scroll", onScroll);
     document.removeEventListener(DATA_CHANGED_EVENT, onDataChanged);
+    document.removeEventListener(DRAWER_EVENT, onDrawer);
+    root.classList.remove("repos-view");
   };
 };

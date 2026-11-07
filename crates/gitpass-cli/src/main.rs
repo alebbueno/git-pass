@@ -2,22 +2,22 @@
 
 mod doctor;
 
-use std::io::{BufRead, BufReader, Write};
 use std::str::FromStr;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream as StdUnixStream;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use doctor::{integration_env, print_integration_status, run as doctor_run};
+use gitpass_core::audit::{self, AuditKind};
 use gitpass_core::integration::{self, ApplyOptions, CheckState, IntegrationReport};
+use gitpass_core::recent::{self, EmergencyVia, HookOutcome, Verdict};
 use gitpass_core::{
-    ci_bypass_from_env, config_file_path, decode_response_line, encode_line, git_remote_url,
-    git_work_tree_root,
+    app_support_dir, ci_bypass_from_env, config_file_path, decode_response_line, emergency, encode_line,
+    git_remote_url, git_work_tree_root,
     github_oauth_device_login, github_oauth_env_credentials, github_oauth_login, github_token_delete,
     github_token_save, resolve_oauth_client_id,
     ipc_socket_path, normalize_owner, parse_github_remote,
-    policy_when_daemon_unreachable, validate_repo_for_hook, Account, AppConfig,
+    ipc_client, is_validated_phase, offline_policy, validate_repo_for_hook,
+    Account, AppConfig, DaemonUnreachable, IpcTimeouts, OfflineAllowance,
     AuthMode as CoreAuthMode,
     DEFAULT_GITHUB_SCOPES, DEFAULT_OAUTH_CALLBACK_PORT, KEYCHAIN_SERVICE,
     HookContext, HookPhase, IpcRequest, IpcResponse, RepoBinding, ValidateFail,
@@ -55,6 +55,11 @@ enum Commands {
     Ui {
         #[command(subcommand)]
         sub: UiCmd,
+    },
+    /// Emergency mode: allow local commits for a while when the GitPass service does not answer (pushes stay blocked).
+    Emergency {
+        #[command(subcommand)]
+        sub: EmergencyCmd,
     },
     /// Check Git, the GitPass integration (credentials, hooks, daemon) and the config.
     Doctor,
@@ -174,6 +179,23 @@ enum ConfigCmd {
 }
 
 #[derive(Subcommand)]
+enum EmergencyCmd {
+    /// Turn emergency mode on.
+    On {
+        /// Duration in minutes (5 to 240).
+        #[arg(long, default_value_t = 30)]
+        minutes: i64,
+        /// Why (3 to 200 characters); kept in the local audit log.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Turn emergency mode off.
+    Off,
+    /// Show whether emergency mode is on.
+    Status,
+}
+
+#[derive(Subcommand)]
 enum UiCmd {
     /// Pin the current repo binding for the menu bar tooltip (see GitPass desktop app).
     Pin {
@@ -205,6 +227,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
             ConfigCmd::UninstallCredentialHelper => integration_undo(),
         },
         Commands::Ui { sub } => ui_cmd(sub),
+        Commands::Emergency { sub } => emergency_cmd(sub),
         Commands::Doctor => doctor_run().map_err(|e| e.into()),
         Commands::Hooks(h) => match h.sub {
             HooksSub::Install { chain } => integration_apply(chain),
@@ -437,20 +460,34 @@ fn binding_id_for_path(
     Ok(id)
 }
 
-fn update_last_active_repo(cwd: &std::path::Path) -> Result<(), std::io::Error> {
-    let mut cfg = AppConfig::load_or_default().map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-    })?;
-    let bid = match binding_id_for_path(&cfg, cwd) {
-        Ok(id) => id,
-        Err(_) => return Ok(()),
-    };
-    if cfg.ui.last_active_repo_binding_id == Some(bid) {
-        return Ok(());
+fn print_emergency(v: &emergency::EmergencyView) {
+    match (&v.until, &v.reason) {
+        (Some(until), reason) if v.active => {
+            println!("Modo emergência ativo até {until}. Commits locais passam mesmo sem o serviço do GitPass; o push continua bloqueado.");
+            if let Some(r) = reason {
+                println!("Motivo: {r}");
+            }
+        }
+        _ => println!("Modo emergência desligado."),
     }
-    cfg.ui.last_active_repo_binding_id = Some(bid);
-    cfg.save().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-    Ok(())
+}
+
+fn emergency_cmd(cmd: EmergencyCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+    let result = match cmd {
+        EmergencyCmd::On { minutes, reason } => emergency::start_now(minutes, &reason, "cli"),
+        EmergencyCmd::Off => emergency::stop_now("cli"),
+        EmergencyCmd::Status => emergency::expire_now().and_then(|_| emergency::view_now()),
+    };
+    match result {
+        Ok(v) => {
+            print_emergency(&v);
+            Ok(0)
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            Ok(1)
+        }
+    }
 }
 
 fn ui_cmd(cmd: UiCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
@@ -465,6 +502,7 @@ fn ui_cmd(cmd: UiCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
                 )
             })?;
             cfg.ui.pinned_repo_binding_id = Some(bid);
+            cfg.ui.pinned_at = Some(audit::now_rfc3339());
             cfg.save()?;
             println!("ok: pinned repo binding {bid} (menu bar tooltip)");
             println!("config: {}", config_file_path()?.display());
@@ -473,6 +511,7 @@ fn ui_cmd(cmd: UiCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         UiCmd::Unpin => {
             let mut cfg = AppConfig::load_or_default()?;
             cfg.ui.pinned_repo_binding_id = None;
+            cfg.ui.pinned_at = None;
             cfg.save()?;
             println!("ok: cleared pinned repo");
             println!("config: {}", config_file_path()?.display());
@@ -628,73 +667,154 @@ fn repo_cmd(cmd: RepoCmd) -> Result<i32, Box<dyn std::error::Error + Send + Sync
     }
 }
 
+/// Saves the verdict for the menu bar (`recent.json`) and the audit log. Never fails the hook.
+fn note_outcome(cwd: &std::path::Path, cfg: Option<&AppConfig>, outcome: &HookOutcome) {
+    let Ok(dir) = app_support_dir() else { return };
+    let Ok(root) = git_work_tree_root(Some(cwd)) else { return };
+    let root = root.canonicalize().unwrap_or(root);
+    let loaded;
+    let cfg = match cfg {
+        Some(c) => Some(c),
+        None => {
+            loaded = AppConfig::load_or_default().ok();
+            loaded.as_ref()
+        }
+    };
+    let _ = recent::note_hook_outcome_in(&dir, cfg, &root, outcome);
+}
+
+fn note_ci_bypass(cwd: &std::path::Path, phase: &str) {
+    let Ok(dir) = app_support_dir() else { return };
+    let root = git_work_tree_root(Some(cwd)).ok();
+    let cfg = AppConfig::load_or_default().ok();
+    let repo = root.as_deref().map(|r| {
+        let name = cfg.as_ref().and_then(|c| recent::binding_for_root(c, r)).and_then(recent::full_name);
+        recent::repo_label(name.as_deref(), r)
+    });
+    let _ = audit::append_in(
+        &dir,
+        AuditKind::CiBypass,
+        repo.as_deref(),
+        None,
+        &format!("Verificações ignoradas em ambiente de CI autorizado ({phase})."),
+    );
+}
+
+fn blocked(code: &str, message: String) -> HookOutcome {
+    HookOutcome { verdict: Verdict::Blocked, code: Some(code.into()), message: Some(message), emergency: None }
+}
+
 fn run_hook(phase: &str) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     HookPhase::from_str(phase)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
+    let quiet = std::env::var("GITPASS_QUIET_HOOK").ok().as_deref() == Some("1");
+    let validated = is_validated_phase(phase);
+    let cwd = std::env::current_dir()?;
+
     if ci_bypass_from_env() {
-        let quiet = std::env::var("GITPASS_QUIET_HOOK").ok().as_deref() == Some("1");
         if !quiet {
             eprintln!("GitPass: ambiente de CI autorizado — verificações ignoradas em {phase}.");
+        }
+        if validated {
+            note_ci_bypass(&cwd, phase);
         }
         return Ok(0);
     }
 
-    let cwd = std::env::current_dir()?;
     let ctx = HookContext {
         phase: phase.to_string(),
         cwd,
     };
 
-    let quiet = std::env::var("GITPASS_QUIET_HOOK").ok().as_deref() == Some("1");
-
     #[cfg(unix)]
-    {
-        let sock = ipc_socket_path()?;
-        if sock.exists() {
-            match ipc_validate_hook_sync(&ctx) {
-                Ok(v) => {
-                    let code = handle_validate_outcome(v, quiet);
-                    if code == 0 {
-                        let _ = update_last_active_repo(&ctx.cwd);
-                    }
-                    return Ok(code);
-                }
-                Err(_) => {
-                    if !quiet {
-                        eprintln!("GitPass: aviso: o serviço do GitPass não respondeu; conferindo sem ele.");
-                    }
-                }
+    let unreachable = match ipc_validate_hook_sync(&ctx) {
+        Ok(v) => {
+            let outcome = outcome_of_response(&v);
+            let code = handle_validate_outcome(v, quiet);
+            if validated {
+                note_outcome(&ctx.cwd, None, &outcome);
             }
+            return Ok(code);
         }
-    }
+        Err(reason) => reason,
+    };
+    #[cfg(not(unix))]
+    let unreachable = DaemonUnreachable::NotRunning;
 
     // Offline: re-read config in the hook process (may differ until we add SIGHUP reload in daemon).
     let cfg = AppConfig::load_or_default()?;
-    if let ValidateFail::Err { code, message } = policy_when_daemon_unreachable(phase, &cfg) {
-        if !quiet {
-            eprintln!("GitPass [{code}] {message}");
+    let allowance = match offline_policy(phase, &cfg, unreachable) {
+        Ok(a) => a,
+        Err(ValidateFail::Err { code, mut message }) => {
+            if phase == "pre-push" && emergency::is_active(&cfg) {
+                message.push_str(" O modo emergência libera só commits locais; o push continua bloqueado.");
+            }
+            if !quiet {
+                eprintln!("GitPass [{code}] {message}");
+            }
+            note_outcome(&ctx.cwd, Some(&cfg), &blocked(code, message));
+            return Ok(1);
         }
-        return Ok(1);
+        Err(_) => return Ok(1),
+    };
+    if !validated {
+        return Ok(0);
     }
-    match validate_repo_for_hook(&ctx, &cfg) {
-        ValidateFail::Ok => {
-            let _ = update_last_active_repo(&ctx.cwd);
-            Ok(0)
+    let emergency = match allowance {
+        OfflineAllowance::Emergency => Some(EmergencyVia::Toggle),
+        OfflineAllowance::EmergencyEnv => Some(EmergencyVia::Env),
+        OfflineAllowance::NotValidated | OfflineAllowance::PushOverride => None,
+    };
+    if !quiet {
+        if emergency.is_some() {
+            eprintln!("GitPass: aviso: o serviço do GitPass não respondeu. O modo emergência está ativo: o commit local é conferido só aqui no Mac, e o push continua bloqueado.");
+        } else {
+            eprintln!("GitPass: aviso: o serviço do GitPass não respondeu; conferindo sem ele.");
         }
+    }
+    let (exit, outcome) = match validate_repo_for_hook(&ctx, &cfg) {
+        ValidateFail::Ok => (0, HookOutcome { verdict: Verdict::Ok, code: None, message: None, emergency }),
         ValidateFail::OkUnconfirmed { warning } => {
             if !quiet {
                 eprintln!("{warning}");
             }
-            let _ = update_last_active_repo(&ctx.cwd);
-            Ok(0)
+            (0, HookOutcome { verdict: Verdict::Unconfirmed, code: None, message: Some(warning), emergency })
+        }
+        // Confirming an org/collaborator repository needs the account's access, which only the
+        // service reads; in an emergency the commit goes on unconfirmed (the push is checked again).
+        ValidateFail::Err { code: "GP-OAUTH", .. } if emergency.is_some() => {
+            let warning = "GitPass: aviso: sem o serviço do GitPass não deu para confirmar a conta deste repositório no GitHub. O commit local foi liberado pelo modo emergência; a conta será conferida de novo no push.".to_string();
+            if !quiet {
+                eprintln!("{warning}");
+            }
+            (0, HookOutcome { verdict: Verdict::Unconfirmed, code: Some("GP-OAUTH".into()), message: Some(warning), emergency })
         }
         ValidateFail::Err { code, message } => {
             if !quiet {
                 eprintln!("GitPass [{code}] {message}");
             }
-            Ok(1)
+            (1, blocked(code, message))
         }
+    };
+    note_outcome(&ctx.cwd, Some(&cfg), &outcome);
+    Ok(exit)
+}
+
+fn outcome_of_response(v: &IpcResponse) -> HookOutcome {
+    match v {
+        IpcResponse::ValidateResult { ok: true, unconfirmed, warning, .. } => HookOutcome {
+            verdict: if *unconfirmed { Verdict::Unconfirmed } else { Verdict::Ok },
+            code: None,
+            message: warning.clone().filter(|_| *unconfirmed),
+            emergency: None,
+        },
+        IpcResponse::ValidateResult { ok: false, code, message, .. } => blocked(
+            code.as_deref().unwrap_or("GP-IPC"),
+            message.clone().unwrap_or_else(|| "O serviço do GitPass enviou uma resposta inválida.".into()),
+        ),
+        IpcResponse::Error { code, message } => blocked(code, message.clone()),
+        IpcResponse::Pong { .. } => blocked("GP-IPC", "O serviço do GitPass enviou uma resposta que não entendemos.".into()),
     }
 }
 
@@ -743,27 +863,30 @@ fn handle_validate_outcome(v: IpcResponse, quiet: bool) -> i32 {
     }
 }
 
+/// Asks the daemon, waiting through restarts and slow GitHub answers (see `gitpass_core::ipc_client`).
 #[cfg(unix)]
-fn ipc_validate_hook_sync(ctx: &HookContext) -> Result<IpcResponse, Box<dyn std::error::Error + Send + Sync>> {
-    let path = ipc_socket_path()?;
-    let mut stream = StdUnixStream::connect(&path)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-
+fn ipc_validate_hook_sync(ctx: &HookContext) -> Result<IpcResponse, DaemonUnreachable> {
+    let path = ipc_socket_path().map_err(|_| DaemonUnreachable::NotRunning)?;
     let req = IpcRequest::ValidateHook {
         phase: ctx.phase.clone(),
         cwd: ctx.cwd.clone(),
     };
-    let line = encode_line(&req)?;
-    stream.write_all(line.as_bytes())?;
-
-    let mut reader = BufReader::new(&stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    if line.is_empty() {
-        return Err("empty response".into());
+    let mut timeouts = IpcTimeouts::default();
+    // Debug builds only (integration tests): do not wait for a daemon that is never started.
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var("GITPASS_TEST_IPC_CONNECT_WAIT_MS").ok().and_then(|v| v.parse().ok()) {
+        timeouts.connect_wait = Duration::from_millis(ms);
     }
-    Ok(decode_response_line(&line)?)
+    if !is_validated_phase(&ctx.phase) {
+        // Nothing to block in these phases: don't make Git wait for a daemon that is off.
+        timeouts.connect_wait = Duration::ZERO;
+    }
+    // Debug builds only (integration tests without a daemon). Release builds always wait.
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var("GITPASS_TEST_IPC_CONNECT_WAIT_MS").ok().and_then(|v| v.parse().ok()) {
+        timeouts.connect_wait = Duration::from_millis(ms);
+    }
+    ipc_client::request(&path, &req, timeouts)
 }
 
 async fn ping_async() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
@@ -812,5 +935,33 @@ async fn ping_async() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
             eprintln!("unexpected response from gitpassd");
             Ok(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(ok: bool, unconfirmed: bool, code: Option<&str>, message: Option<&str>, warning: Option<&str>) -> IpcResponse {
+        IpcResponse::ValidateResult {
+            ok,
+            unconfirmed,
+            code: code.map(String::from),
+            message: message.map(String::from),
+            warning: warning.map(String::from),
+        }
+    }
+
+    #[test]
+    fn daemon_replies_become_hook_verdicts() {
+        let ok = outcome_of_response(&result(true, false, None, None, None));
+        assert_eq!((ok.verdict, ok.code.as_deref(), ok.message.as_deref()), (Verdict::Ok, None, None));
+        let warn = outcome_of_response(&result(true, true, None, None, Some("GitPass: aviso: x")));
+        assert_eq!((warn.verdict, warn.message.as_deref()), (Verdict::Unconfirmed, Some("GitPass: aviso: x")));
+        let no = outcome_of_response(&result(false, false, Some("GP-OWNER"), Some("m"), None));
+        assert_eq!((no.verdict, no.code.as_deref(), no.message.as_deref()), (Verdict::Blocked, Some("GP-OWNER"), Some("m")));
+        let err = outcome_of_response(&IpcResponse::Error { code: "GP-IPC-DECODE".into(), message: "x".into() });
+        assert_eq!((err.verdict, err.code.as_deref()), (Verdict::Blocked, Some("GP-IPC-DECODE")));
+        assert!([ok, warn, no, err].iter().all(|o| o.emergency.is_none()));
     }
 }

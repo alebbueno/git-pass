@@ -92,8 +92,13 @@ pub struct RepoBinding {
 /// Menu bar / UI state (non-sensitive).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
-    #[serde(default)]
+    /// Repository the menu bar shows regardless of focus or recent activity (DL-004).
+    #[serde(default, alias = "pinned_binding_id")]
     pub pinned_repo_binding_id: Option<Uuid>,
+    /// RFC 3339, when the pin was set.
+    #[serde(default)]
+    pub pinned_at: Option<String>,
+    /// Legacy (before `recent.json`); no longer written.
     #[serde(default)]
     pub last_active_repo_binding_id: Option<Uuid>,
     #[serde(default)]
@@ -104,29 +109,27 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             pinned_repo_binding_id: None,
+            pinned_at: None,
             last_active_repo_binding_id: None,
             emergency: EmergencyState::default(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmergencyState {
-    /// If set and `now < until`, local commits may be allowed when daemon IPC fails (policy in daemon).
+    /// If set and `now < until`, local commits may be allowed when daemon IPC fails (policy in `gitpass hook`).
     #[serde(default)]
     pub allow_local_commit_until: Option<String>,
-    /// `env` | `menubar` | `cli` for audit trail.
+    /// `app` | `menubar` | `cli` for audit trail.
     #[serde(default)]
     pub allow_local_commit_via: Option<String>,
-}
-
-impl Default for EmergencyState {
-    fn default() -> Self {
-        Self {
-            allow_local_commit_until: None,
-            allow_local_commit_via: None,
-        }
-    }
+    /// RFC 3339, when emergency mode was turned on.
+    #[serde(default)]
+    pub started_at: Option<String>,
+    /// Why the user turned it on (required, 3–200 characters).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Error)]

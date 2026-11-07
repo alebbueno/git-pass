@@ -2,91 +2,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cmd_accounts;
+mod cmd_branches;
 mod cmd_cloud;
 mod cmd_integration;
+mod cmd_push;
 mod cmd_repos;
+mod cmd_system;
 #[cfg(test)]
 mod contract_tests;
+mod focus;
+mod tray;
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gitpass_core::{
     config_file_path, decode_response_line, encode_line, git_log_lines,
     load_oauth_env_file_if_needed, resolve_oauth_client_id, AppConfig, IpcRequest, IpcResponse,
-    RepoBinding, KEYCHAIN_SERVICE,
+    KEYCHAIN_SERVICE,
 };
-use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Listener, Manager};
-
-const TRAY_ID: &str = "gitpass-tray";
-
-fn tray_icon_from_build() -> Result<Image<'static>, String> {
-    let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/trayTemplate.png"));
-    Image::from_bytes(bytes).map_err(|e| e.to_string())
-}
-
-fn shorten_path(p: &Path) -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
-        if p.starts_with(&home) {
-            if let Ok(rest) = p.strip_prefix(&home) {
-                return format!("~{}", rest.display());
-            }
-        }
-    }
-    p.display().to_string()
-}
-
-fn tray_tooltip(cfg: &AppConfig) -> String {
-    let binding: Option<&RepoBinding> = if let Some(rid) = cfg
-        .ui
-        .pinned_repo_binding_id
-        .or(cfg.ui.last_active_repo_binding_id)
-    {
-        cfg.repos.iter().find(|r| r.id == rid)
-    } else if cfg.repos.len() == 1 {
-        cfg.repos.first()
-    } else {
-        None
-    };
-
-    let Some(b) = binding else {
-        return "GitPass — conecte contas e vincule repositórios".to_string();
-    };
-
-    let acc = cfg.accounts.iter().find(|a| a.id == b.account_id);
-    let login = acc
-        .and_then(|a| a.github_login.as_deref())
-        .unwrap_or("?");
-    let path = shorten_path(&b.root_path);
-    let gh = match (&b.github_owner, &b.github_repo) {
-        (Some(o), Some(r)) => format!(" — {o}/{r}"),
-        _ => String::new(),
-    };
-
-    format!("GitPass — @{login}{gh}\n{path}")
-}
-
-fn refresh_tray_tooltip(app: &AppHandle) {
-    let tip = match AppConfig::load_or_default() {
-        Ok(c) => tray_tooltip(&c),
-        Err(_) => "GitPass".to_string(),
-    };
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(tip.as_str()));
-    }
-}
-
-fn initial_tooltip() -> String {
-    match AppConfig::load_or_default() {
-        Ok(c) => tray_tooltip(&c),
-        Err(_) => "GitPass".to_string(),
-    }
-}
+use tauri::{Listener, Manager};
 
 // --- Tauri commands ---
 
@@ -289,8 +226,18 @@ fn main() {
             cmd_repos::repos_fix_identity,
             cmd_repos::repos_discover,
             cmd_repos::repos_pick_folder,
+            cmd_repos::repos_map_folder,
             cmd_repos::repos_open_in_finder,
             cmd_repos::repos_open_in_terminal,
+            cmd_push::repos_outgoing,
+            cmd_push::repos_commit_files,
+            cmd_push::repos_push,
+            cmd_push::repos_fix_authors,
+            cmd_push::repos_pull,
+            cmd_branches::repos_branches,
+            cmd_branches::repos_checkout,
+            cmd_branches::repos_merge_preview,
+            cmd_branches::repos_merge_apply,
             cmd_cloud::cloud_repos,
             cmd_cloud::cloud_clone,
             cmd_cloud::cloud_choose_folder,
@@ -299,79 +246,75 @@ fn main() {
             cmd_integration::integration_undo,
             cmd_integration::integration_daemon_restart,
             cmd_integration::integration_daemon_stop,
+            cmd_system::system_current_repo,
+            cmd_system::system_pin_repo,
+            cmd_system::system_emergency_state,
+            cmd_system::system_emergency_start,
+            cmd_system::system_emergency_stop,
+            cmd_system::system_audit,
+            cmd_system::system_diagnostics,
+            cmd_system::system_export_logs,
+            cmd_system::system_open_accessibility_settings,
         ])
         .setup(|app| {
             cmd_integration::spawn_autostart(app.handle().clone());
             let handle = app.handle().clone();
-            app.listen("gitpass-config-changed", move |_| refresh_tray_tooltip(&handle));
+            app.listen("gitpass-config-changed", move |_| cmd_system::refresh_soon(&handle, true));
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.set_focus();
             }
 
-            let icon = tray_icon_from_build().map_err(|e| format!("tray icon: {e}"))?;
+            let icon = tray::icon().map_err(|e| format!("tray icon: {e}"))?;
+            // Placeholder until the watcher's first refresh fills in the current repository.
+            let show = MenuItem::with_id(app, tray::MENU_SHOW, "Abrir GitPass", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, tray::MENU_QUIT, "Sair do GitPass", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
 
-            let show = MenuItem::with_id(app, "show", "Abrir GitPass", true, None::<&str>)?;
-            let hide = MenuItem::with_id(app, "hide", "Ocultar", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Sair do GitPass", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &hide, &sep, &quit])?;
-
-            let _tray = TrayIconBuilder::with_id(TRAY_ID)
+            let _tray = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .icon(icon)
                 .menu(&menu)
-                .tooltip(initial_tooltip())
+                .tooltip("GitPass")
                 .icon_as_template(true)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    match event.id.as_ref() {
-                        "show" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                            refresh_tray_tooltip(app);
-                        }
-                        "hide" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.hide();
-                            }
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    tray::MENU_SHOW => {
+                        tray::show_main(app);
+                        cmd_system::refresh_soon(app, false);
                     }
+                    tray::MENU_HIDE => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                    }
+                    tray::MENU_QUIT => app.exit(0),
+                    id => cmd_system::on_tray_menu(app, id),
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        refresh_tray_tooltip(&app);
-                        if let Some(w) = app.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
-                            } else {
-                                let _ = w.show();
-                                let _ = w.set_focus();
+                    let app = tray.app_handle();
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                if w.is_visible().unwrap_or(false) {
+                                    let _ = w.hide();
+                                } else {
+                                    tray::show_main(app);
+                                }
                             }
+                            cmd_system::refresh_soon(app, false);
                         }
-                    }
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Right,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        refresh_tray_tooltip(tray.app_handle());
+                        // Hovering shows the tooltip: bring it up to date (the app in focus may have changed).
+                        TrayIconEvent::Enter { .. } => cmd_system::refresh_soon(app, false),
+                        _ => {}
                     }
                 })
                 .build(app)?;
 
+            cmd_system::spawn_watcher(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -1,21 +1,30 @@
 //! Tauri commands for this area. Registered in main.rs `generate_handler!`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gitpass_core::bindings::{
     change_binding_account, create_binding, decide_account, default_discover_roots, discover_unbound_repos,
-    expected_identity, fix_binding_identity, github_https_url, identity_state, read_head, read_origin_url,
-    read_repo_identity, remote_url_has_credentials, remove_binding, suggest_account_offline, AccountDecision,
-    IdentityState, SuggestionReason, DISCOVER_MAX_DEPTH,
+    expected_identity, fix_binding_identity, github_https_url, identity_state, pick_remote, read_head,
+    read_origin_url, read_remotes, read_repo_identity, remote_url_has_credentials, remove_binding,
+    suggest_account_offline, AccountDecision, IdentityState, RemotePick, SuggestionReason, DISCOVER_MAX_DEPTH,
 };
 use gitpass_core::github_api::{token_can_push_for_account, GithubApiError};
-use gitpass_core::{git_work_tree_root, parse_github_remote, AppConfig, RepoBinding};
+use gitpass_core::repo_map::{
+    map_projects, resolve_map_root, scan_projects, MappedProject, MAP_BUDGET, MAP_MAX_DEPTH, MAP_MAX_PROJECTS,
+};
+use gitpass_core::outgoing::{GitRepo, SyncSummary};
+use gitpass_core::{git_work_tree_root, parse_github_remote, AppConfig, GithubRepoSummary, RepoBinding};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
+use crate::cmd_cloud::list_account_repos;
+
 const CONFIG_CHANGED_EVENT: &str = "gitpass-config-changed";
+pub(crate) const MAP_PROGRESS_EVENT: &str = "repos-map-progress";
+const MAP_PROGRESS_EVERY: Duration = Duration::from_millis(150);
 const DISCOVER_BUDGET: Duration = Duration::from_millis(2500);
 const MAX_DISCOVER_ROOTS: usize = 32;
 const MAX_BIND_MANY: usize = 500;
@@ -49,6 +58,8 @@ pub struct RepoRow {
     branch: Option<String>,
     detached_at: Option<String>,
     identity: IdentityRow,
+    /// Local ahead/behind and pending changes (no network); `None` when the folder is missing.
+    sync: Option<SyncSummary>,
 }
 
 #[derive(Serialize)]
@@ -111,6 +122,36 @@ pub struct DiscoverResult {
     elapsed_ms: u64,
 }
 
+/// `repos-map-progress` payload. `phase`: `scanning`, `github` or `matching`.
+#[derive(Clone, Serialize)]
+pub(crate) struct MapProgress {
+    pub(crate) phase: &'static str,
+    /// Projects found so far.
+    pub(crate) found: usize,
+}
+
+#[derive(Serialize)]
+pub(crate) struct MapAccountRow {
+    pub(crate) account_id: String,
+    /// The account's repo list was fetched.
+    pub(crate) ok: bool,
+    pub(crate) error: Option<String>,
+    pub(crate) repo_count: usize,
+}
+
+#[derive(Serialize)]
+pub(crate) struct MapResult {
+    /// The mapped folder, canonical.
+    pub(crate) root: String,
+    pub(crate) items: Vec<MappedProject>,
+    pub(crate) accounts: Vec<MapAccountRow>,
+    /// Not every folder was visited (time ran out or `max_projects` was reached).
+    pub(crate) truncated: bool,
+    pub(crate) limit_reached: bool,
+    pub(crate) max_projects: usize,
+    pub(crate) elapsed_ms: u64,
+}
+
 async fn blocking<T, F>(f: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -121,7 +162,7 @@ where
         .map_err(|e| format!("Algo deu errado no app: {e}"))?
 }
 
-fn load_config() -> Result<AppConfig, String> {
+pub(crate) fn load_config() -> Result<AppConfig, String> {
     AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass: {e}"))
 }
 
@@ -129,7 +170,7 @@ fn parse_id(raw: &str, what: &str) -> Result<Uuid, String> {
     Uuid::parse_str(raw).map_err(|_| format!("Identificador de {what} inválido."))
 }
 
-fn notify(app: &AppHandle) {
+pub(crate) fn notify(app: &AppHandle) {
     let _ = app.emit(CONFIG_CHANGED_EVENT, ());
 }
 
@@ -145,6 +186,7 @@ fn build_row(cfg: &AppConfig, b: &RepoBinding) -> RepoRow {
     } else {
         (None, Default::default(), None)
     };
+    let sync = if exists { GitRepo::new(&b.root_path).sync_summary() } else { None };
 
     let parsed = origin.as_deref().and_then(parse_github_remote);
     let (owner, repo) = match parsed {
@@ -182,10 +224,11 @@ fn build_row(cfg: &AppConfig, b: &RepoBinding) -> RepoRow {
             expected_name: expected.name,
             expected_email: expected.email,
         },
+        sync,
     }
 }
 
-fn row_for(cfg: &AppConfig, binding_id: Uuid) -> Result<RepoRow, String> {
+pub(crate) fn row_for(cfg: &AppConfig, binding_id: Uuid) -> Result<RepoRow, String> {
     cfg.repos
         .iter()
         .find(|r| r.id == binding_id)
@@ -208,12 +251,20 @@ fn inspect_folder(path: &Path) -> Result<RepoTarget, String> {
         "A pasta escolhida não é um repositório Git. Escolha a pasta de um clone (com .git) ou clone o repositório na aba Nuvem.".to_string()
     })?;
     let root = root.canonicalize().unwrap_or(root);
-    let url = read_origin_url(&root).ok_or_else(|| {
-        "Este repositório não tem o remoto `origin`. Adicione um (por exemplo, no GitHub Desktop) e tente de novo.".to_string()
-    })?;
-    let gh = parse_github_remote(&url).ok_or_else(|| {
-        "O `origin` deste repositório não aponta para github.com. O GitPass só cuida de repositórios do GitHub.".to_string()
-    })?;
+    let gh = match pick_remote(&read_remotes(&root)) {
+        RemotePick::GitHub { id, .. } => id,
+        RemotePick::Other { name, .. } => {
+            return Err(format!(
+                "O remoto `{name}` deste repositório não aponta para github.com. O GitPass só cuida de repositórios do GitHub."
+            ));
+        }
+        RemotePick::None => {
+            return Err(
+                "Este repositório não tem o remoto `origin`. Adicione um (por exemplo, no GitHub Desktop) e tente de novo."
+                    .to_string(),
+            );
+        }
+    };
     Ok(RepoTarget {
         root,
         owner: gh.owner,
@@ -288,7 +339,7 @@ fn choose_account(cfg: &AppConfig, target: &RepoTarget) -> (AccountDecision, Vec
 }
 
 #[cfg(target_os = "macos")]
-fn osascript(script: &str) -> Result<Result<Option<PathBuf>, String>, String> {
+pub(crate) fn osascript(script: &str) -> Result<Result<Option<PathBuf>, String>, String> {
     let out = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -591,6 +642,108 @@ pub async fn repos_pick_folder() -> Result<Option<String>, String> {
     blocking(|| Ok(pick_folder("Escolha uma pasta onde procurar repositórios")?.map(|p| p.display().to_string()))).await
 }
 
+static MAP_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Only one mapping at a time: each one walks the disk and calls GitHub for every account.
+struct MapRunGuard;
+
+impl MapRunGuard {
+    fn acquire() -> Result<Self, String> {
+        if MAP_RUNNING.swap(true, Ordering::SeqCst) {
+            return Err("Já existe um mapeamento em andamento. Espere ele terminar.".to_string());
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for MapRunGuard {
+    fn drop(&mut self) {
+        MAP_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
+fn map_folder(app: &AppHandle, raw_root: &str) -> Result<MapResult, String> {
+    let started = Instant::now();
+    let root = resolve_map_root(raw_root, dirs_home().as_deref())?;
+    let cfg = load_config()?;
+    let emit = |phase: &'static str, found: usize| {
+        let _ = app.emit(MAP_PROGRESS_EVENT, MapProgress { phase, found });
+    };
+    emit("scanning", 0);
+
+    let (scan, projects, fetched) = std::thread::scope(|s| {
+        // Each account's list is fetched once, in parallel, while the disk is scanned.
+        let fetches: Vec<_> = cfg
+            .accounts
+            .iter()
+            .map(|a| {
+                let id = a.id;
+                (id, s.spawn(move || list_account_repos(id)))
+            })
+            .collect();
+
+        let mut last = Instant::now();
+        let scan = scan_projects(&root, MAP_MAX_DEPTH, MAP_MAX_PROJECTS, started + MAP_BUDGET, |n| {
+            if last.elapsed() >= MAP_PROGRESS_EVERY {
+                last = Instant::now();
+                emit("scanning", n);
+            }
+        });
+        emit("scanning", scan.projects.len());
+        let projects: Vec<(PathBuf, Vec<(String, String)>)> =
+            scan.projects.iter().map(|p| (p.clone(), read_remotes(p))).collect();
+
+        emit("github", projects.len());
+        let fetched: Vec<(Uuid, Result<Vec<GithubRepoSummary>, String>)> = fetches
+            .into_iter()
+            .map(|(id, h)| {
+                let res = h
+                    .join()
+                    .unwrap_or_else(|_| Err("Algo deu errado ao consultar o GitHub. Tente de novo.".to_string()));
+                (id, res)
+            })
+            .collect();
+        (scan, projects, fetched)
+    });
+
+    emit("matching", projects.len());
+    let accounts = fetched
+        .iter()
+        .map(|(id, res)| MapAccountRow {
+            account_id: id.to_string(),
+            ok: res.is_ok(),
+            error: res.as_ref().err().cloned(),
+            repo_count: res.as_ref().map(Vec::len).unwrap_or(0),
+        })
+        .collect();
+    let lists: Vec<(Uuid, Vec<GithubRepoSummary>)> =
+        fetched.into_iter().filter_map(|(id, res)| res.ok().map(|v| (id, v))).collect();
+    let items = map_projects(&cfg, &lists, &projects);
+
+    Ok(MapResult {
+        root: root.display().to_string(),
+        items,
+        accounts,
+        truncated: scan.truncated(),
+        limit_reached: scan.limit_reached,
+        max_projects: MAP_MAX_PROJECTS,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// "Mapear pasta": every Git project under `root` (absolute or `~/…`), classified against the config
+/// and each connected account's GitHub repos. Emits `repos-map-progress` while running. Binding is
+/// done afterwards with `repos_bind_many`.
+#[tauri::command]
+pub async fn repos_map_folder(app: AppHandle, root: String) -> Result<MapResult, String> {
+    let guard = MapRunGuard::acquire()?;
+    blocking(move || {
+        let _guard = guard;
+        map_folder(&app, &root)
+    })
+    .await
+}
+
 #[tauri::command]
 pub fn repos_open_in_finder(path: String) -> Result<(), String> {
     open_with(&[], &bound_repo_root(&path)?)
@@ -628,6 +781,7 @@ mod tests {
                 expected_name: None,
                 expected_email: None,
             },
+            sync: Some(SyncSummary { ahead: 1, behind: 0, has_upstream: true, dirty: false }),
         }
     }
 
@@ -639,12 +793,14 @@ mod tests {
             keys(&r),
             expect(&[
                 "id", "account_id", "account_login", "account_label", "account_missing", "root_path", "github_owner",
-                "github_repo", "remote_url", "remote_has_credentials", "exists", "branch", "detached_at", "identity"
+                "github_repo", "remote_url", "remote_has_credentials", "exists", "branch", "detached_at", "identity",
+                "sync"
             ])
         );
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(keys(&r.identity), expect(&["state", "local_name", "local_email", "expected_name", "expected_email"]));
         assert_eq!(v["identity"]["state"], "not_set");
+        assert_eq!(keys(&v["sync"]), expect(&["ahead", "behind", "has_upstream", "dirty"]));
 
         assert_eq!(keys(&BindOutcome::Cancelled), expect(&["status"]));
         assert_eq!(keys(&BindOutcome::Bound { repo: row(), reason: Some(SuggestionReason::OnlyAccount) }), expect(&["status", "repo", "reason"]));

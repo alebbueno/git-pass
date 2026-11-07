@@ -1,50 +1,13 @@
 //! Cloning GitHub repositories with an OAuth token.
 //!
-//! The token is handed to `git` **only through the environment**
-//! (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` → `http.extraheader`), so it never shows up in
-//! `ps`, in the stored `origin` URL, in `.git/config` or in logs.
+//! The token is handed to `git` **only through the environment** (see [`crate::git_auth`]), so it never
+//! shows up in `ps`, in the stored `origin` URL, in `.git/config` or in logs.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
-
-/// One progress sample parsed from `git clone --progress` (stderr).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct CloneProgress {
-    /// `counting`, `compressing`, `receiving`, `resolving` or `checkout`.
-    pub phase: &'static str,
-    /// 0..=100.
-    pub percent: u8,
-}
-
-/// Parses a single progress line such as `Receiving objects:  45% (450/1000), 1.2 MiB | 2.0 MiB/s`
-/// (an optional `remote: ` prefix is accepted). Returns `None` for lines without a percentage.
-pub fn parse_progress_line(line: &str) -> Option<CloneProgress> {
-    let line = line.trim();
-    let line = line.strip_prefix("remote:").unwrap_or(line).trim_start();
-    let (label, rest) = line.split_once(':')?;
-    let phase = match label.trim() {
-        "Counting objects" | "Enumerating objects" => "counting",
-        "Compressing objects" => "compressing",
-        "Receiving objects" => "receiving",
-        "Resolving deltas" => "resolving",
-        "Updating files" | "Checking out files" => "checkout",
-        _ => return None,
-    };
-    let rest = rest.trim_start();
-    let digits_end = rest.find(|c: char| !c.is_ascii_digit())?;
-    if digits_end == 0 || !rest[digits_end..].starts_with('%') {
-        return None;
-    }
-    let percent: u32 = rest[..digits_end].parse().ok()?;
-    Some(CloneProgress {
-        phase,
-        percent: percent.min(100) as u8,
-    })
-}
+use crate::git_auth::{apply_git_env, for_each_line, git_program, redact, spawn_error};
+pub use crate::git_auth::{parse_progress_line, GitProgress as CloneProgress};
 
 /// Splits `owner/repo`, rejecting anything that could escape the destination folder.
 pub fn split_full_name(full_name: &str) -> Result<(String, String), String> {
@@ -155,11 +118,6 @@ fn starts_with_ci(path: &Path, prefix: &Path) -> bool {
     })
 }
 
-/// Value of the `Authorization` header used for HTTPS access to github.com with an OAuth token.
-fn auth_header_value(token: &str) -> String {
-    format!("AUTHORIZATION: basic {}", B64.encode(format!("x-access-token:{token}")))
-}
-
 fn is_github_https(url: &str) -> bool {
     url.starts_with("https://github.com/") && !url.contains('@') && !url.contains(char::is_whitespace)
 }
@@ -194,16 +152,6 @@ pub fn friendly_clone_error(stderr: &str) -> String {
     } else {
         format!("Não foi possível clonar: {last}")
     }
-}
-
-fn redact(text: &str, token: &str) -> String {
-    let mut out = text.to_string();
-    for secret in [token.to_string(), B64.encode(format!("x-access-token:{token}"))] {
-        if !secret.is_empty() {
-            out = out.replace(&secret, "***");
-        }
-    }
-    out
 }
 
 /// Clones `clone_url` (must be `https://github.com/...`) into `dest_dir` using `token`.
@@ -246,52 +194,25 @@ pub fn clone_repo(
             .map_err(|e| format!("Não foi possível criar a pasta `{}`: {e}", parent.display()))?;
     }
 
-    let mut child = Command::new("git")
-        .args(["clone", "--progress", "--", clone_url])
-        .arg(dest_dir)
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader")
-        .env("GIT_CONFIG_VALUE_0", auth_header_value(token))
-        // Empty helper resets every configured helper (global and `credential.<url>.helper`): if the
-        // token is rejected, Git must not fall back to another account's credentials, nor erase them.
-        .env("GIT_CONFIG_KEY_1", "credential.helper")
-        .env("GIT_CONFIG_VALUE_1", "")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env_remove("GIT_ASKPASS")
-        .env_remove("SSH_ASKPASS")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_CONFIG_PARAMETERS")
-        // Progress/error parsing relies on English output.
-        .env("LC_ALL", "C")
+    let mut cmd = Command::new(git_program());
+    cmd.args(["clone", "--progress", "--", clone_url]).arg(dest_dir);
+    apply_git_env(&mut cmd, Some(token));
+    let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "O Git não está instalado. Instale as Xcode Command Line Tools (`xcode-select --install`).".to_string()
-            } else {
-                format!("Não foi possível rodar o Git: {e}")
-            }
-        })?;
+        .map_err(spawn_error)?;
 
-    let mut stderr = child.stderr.take().ok_or_else(|| "Não foi possível ler a saída do Git.".to_string())?;
+    let stderr = child.stderr.take().ok_or_else(|| "Não foi possível ler a saída do Git.".to_string())?;
 
     let mut other_lines: Vec<String> = Vec::new();
     let mut last: Option<CloneProgress> = None;
-    let mut pending: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 4096];
-
-    let mut handle_line = |bytes: &[u8], cb: &mut dyn FnMut(CloneProgress)| {
-        if bytes.is_empty() {
-            return;
-        }
-        let line = String::from_utf8_lossy(bytes);
-        if let Some(p) = parse_progress_line(&line) {
+    for_each_line(stderr, |line| {
+        if let Some(p) = parse_progress_line(line) {
             if last.as_ref() != Some(&p) {
                 last = Some(p.clone());
-                cb(p);
+                progress_cb(p);
             }
         } else if !line.trim().is_empty() && !line.starts_with("Cloning into") {
             other_lines.push(line.trim().to_string());
@@ -299,25 +220,7 @@ pub fn clone_repo(
                 other_lines.remove(0);
             }
         }
-    };
-
-    loop {
-        let n = match stderr.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        };
-        for &b in &buf[..n] {
-            if b == b'\r' || b == b'\n' {
-                handle_line(&pending, &mut progress_cb);
-                pending.clear();
-            } else {
-                pending.push(b);
-            }
-        }
-    }
-    handle_line(&pending, &mut progress_cb);
+    });
 
     let status = child.wait().map_err(|e| format!("Algo deu errado ao esperar o Git terminar: {e}"))?;
     if status.success() {
@@ -391,12 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn auth_header_is_basic_x_access_token() {
-        let h = auth_header_value("abc");
-        assert_eq!(h, format!("AUTHORIZATION: basic {}", B64.encode("x-access-token:abc")));
-    }
-
-    #[test]
     fn only_clean_github_https_urls_are_accepted() {
         assert!(is_github_https("https://github.com/o/r.git"));
         assert!(!is_github_https("https://tok@github.com/o/r.git"));
@@ -410,14 +307,6 @@ mod tests {
         assert!(friendly_clone_error("fatal: Authentication failed for 'https://github.com/o/r.git/'").contains("autenticação"));
         assert!(friendly_clone_error("fatal: unable to access: Could not resolve host: github.com").contains("conexão"));
         assert!(friendly_clone_error("something odd").starts_with("Não foi possível clonar: something odd"));
-    }
-
-    #[test]
-    fn redact_hides_token() {
-        let t = "gho_secret";
-        let text = format!("oops {t} and {}", B64.encode(format!("x-access-token:{t}")));
-        let r = redact(&text, t);
-        assert!(!r.contains(t) && !r.contains(&B64.encode(format!("x-access-token:{t}"))));
     }
 
     /// Under `/tmp`: macOS's per-user temp dir lives in `/private/var`, which clones refuse.

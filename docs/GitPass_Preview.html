@@ -1,0 +1,1366 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>GitPass · Prévia de design</title>
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #18192e;
+    --muted: #565c74;
+    --dim: #646b84;
+    --canvas: #f4f5fb;
+    --surface: #fcfcff;
+    --inset: #eff0f8;
+    --line: #dce0ed;
+    --soft-line: #e7e9f3;
+    --accent: #5138c9;
+    --accent-on: #fff;
+    --accent-soft: #eeeafd;
+    --accent-line: #d9cffb;
+    --sidebar: #eef0f9e8;
+    --bar: #f9faffdb;
+    --highlight: #fffdfd;
+    --primary-fill: linear-gradient(122deg, #6649dc, #4a34bd 72%, #4b49be);
+    --surface-sheen: linear-gradient(145deg, #fff, #fafaff 62%);
+    --good: #146347;
+    --good-bg: #e2f6ec;
+    --warn: #865415;
+    --warn-bg: #fff0d7;
+    --iris: #5535b3;
+    --iris-bg: #eee9fd;
+    --aqua: #126477;
+    --aqua-bg: #e1f4f8;
+    --rose: #9b3b64;
+    --rose-bg: #f9e6ee;
+    --outer: #e1e4f4;
+    --outer-light: #f1e8ff;
+    --outer-cool: #d0e9f1;
+    --shadow: 0 1px 3px #2721490a, 0 22px 64px #2d265424, 0 4px 14px #30275014;
+    --float-shadow: 0 24px 85px #18122a50, 0 5px 18px #19132926;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --ease: cubic-bezier(.2,.78,.2,1);
+    --sheet-ease: cubic-bezier(.22,.79,.23,1);
+    --sheet-time: .46s;
+    --frame-gap: 26px;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #f1f2ff;
+    --muted: #b7bdd6;
+    --dim: #9ca5c5;
+    --canvas: #0e1120;
+    --surface: #161a2d;
+    --inset: #111526;
+    --line: #2d3550;
+    --soft-line: #242b43;
+    --accent: #beb0ff;
+    --accent-on: #17142b;
+    --accent-soft: #252342;
+    --accent-line: #554979;
+    --sidebar: #141729f4;
+    --bar: #101426e4;
+    --highlight: #b2bdff18;
+    --primary-fill: linear-gradient(120deg, #ab96ff, #c6b7ff 56%, #a4dbf5);
+    --surface-sheen: linear-gradient(145deg, #1a1d32, #15192c 62%);
+    --good: #9be7c7;
+    --good-bg: #193a36;
+    --warn: #ffcf8e;
+    --warn-bg: #3e2d27;
+    --iris: #d4c3ff;
+    --iris-bg: #392d56;
+    --aqua: #a0e4eb;
+    --aqua-bg: #1e3a47;
+    --rose: #fac0d9;
+    --rose-bg: #492c41;
+    --outer: #0a0c19;
+    --outer-light: #2b2150;
+    --outer-cool: #143243;
+    --shadow: 0 1px 2px #0707104d, 0 24px 68px #06060d80;
+    --float-shadow: 0 26px 90px #06060dbd, 0 5px 24px #08080d70;
+  }
+  * { box-sizing: border-box; }
+  html { min-height: 100%; }
+  body {
+    margin: 0;
+    min-height: 100svh;
+    padding: var(--frame-gap);
+    display: grid;
+    place-items: center;
+    color: var(--ink);
+    background: radial-gradient(ellipse at 11% 9%, var(--outer-light), transparent 53%),
+      radial-gradient(ellipse at 89% 80%, var(--outer-cool), transparent 50%), var(--outer);
+    font: 14px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select { font: inherit; }
+  button { cursor: pointer; color: inherit; }
+  button:disabled { cursor: default; opacity: .65; }
+  button, a, input, select { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  h1, h2, h3, p { margin: 0; }
+  code, .mono { font-family: var(--mono); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+  .ico { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: middle; }
+  .truncate { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .muted { color: var(--muted); }
+  .caption { font-size: 12px; }
+  .eyebrow {
+    color: var(--dim); font-size: 10px; font-weight: 720;
+    letter-spacing: .115em; text-transform: uppercase;
+  }
+  .app {
+    --rail-width: 223px;
+    position: relative;
+    isolation: isolate;
+    width: min(100%, 1440px);
+    height: calc(100svh - var(--frame-gap) * 2);
+    min-height: 550px;
+    display: grid;
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+    border: 1px solid color-mix(in srgb, var(--line) 70%, var(--accent-line));
+    border-radius: 23px;
+    overflow: hidden;
+    background: var(--canvas);
+    box-shadow: var(--shadow);
+  }
+  .rail {
+    position: relative;
+    z-index: 3;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+    scrollbar-width: thin;
+    padding: 0 13px 13px;
+    border-right: 1px solid var(--line);
+    background: radial-gradient(ellipse at 20% 8%, color-mix(in srgb, var(--accent-line) 38%, transparent), transparent 42%),
+      radial-gradient(ellipse at 0% 95%, color-mix(in srgb, var(--aqua-bg) 38%, transparent), transparent 37%), var(--sidebar);
+    -webkit-backdrop-filter: blur(22px);
+    backdrop-filter: blur(22px);
+  }
+  .traffic {
+    height: 51px;
+    min-height: 51px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-left: 10px;
+  }
+  .traffic span { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 -1px 1px #37223119; }
+  .traffic span:nth-child(1) { background: #f57371; }
+  .traffic span:nth-child(2) { background: #efbd58; }
+  .traffic span:nth-child(3) { background: #58bf84; }
+  .brand { display: flex; align-items: center; gap: 10px; margin: 5px 7px 31px; min-width: 0; }
+  .brand-icon {
+    display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; color: #fff;
+    border-radius: 13px; border: 1px solid #b0a1fb83;
+    background: radial-gradient(ellipse at 0% 0%, #d8bbff, transparent 57%),
+      radial-gradient(ellipse at 100% 100%, #3f92bd, transparent 56%), linear-gradient(140deg, #6d51df, #29225e);
+    box-shadow: inset 0 1px 1px #f1eaff8f, inset 0 -1px 3px #22204e95, 0 5px 17px #6654b45e;
+  }
+  .brand-icon .ico { width: 26px; height: 26px; }
+  .brand-name { font-size: 21px; font-weight: 780; letter-spacing: -.055em; line-height: 1.1; }
+  .brand-note { margin-top: 3px; color: var(--muted); font-size: 11px; }
+  .rail .eyebrow { margin: 0 8px 8px; }
+  .nav { display: grid; gap: 3px; }
+  .nav-item, .rail-profile {
+    width: 100%; display: flex; align-items: center; gap: 10px; min-height: 38px;
+    padding: 0 9px; border: 1px solid transparent; border-radius: 10px;
+    text-align: left; background: transparent; font-size: 13px;
+    transition: background .18s var(--ease), border-color .18s var(--ease), color .18s var(--ease);
+  }
+  .nav-item .ico { width: 17px; height: 17px; color: var(--muted); }
+  .nav-item:hover, .rail-profile:hover { background: color-mix(in srgb, var(--surface) 60%, transparent); }
+  .nav-item[aria-current="page"] {
+    color: var(--ink); font-weight: 700; border-color: var(--accent-line);
+    background: linear-gradient(100deg, var(--accent-soft), var(--surface));
+    box-shadow: inset 0 1px var(--highlight), 0 2px 7px #15162d14;
+  }
+  .nav-item[aria-current="page"] .ico { color: var(--accent); }
+  .nav-count {
+    margin-left: auto; min-width: 21px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 5px;
+    color: var(--muted); text-align: center; font: 10px/1.5 var(--mono);
+  }
+  .rail-profiles { margin-top: 29px; }
+  .rail-profile { min-height: 34px; gap: 8px; }
+  .rail-profile .avatar { --size: 22px; font-size: 9px; }
+  .rail-foot { padding-top: 20px; margin-top: auto; }
+  .rail-integration {
+    display: flex; align-items: center; gap: 9px; width: 100%; min-height: 46px; text-align: left;
+    padding: 8px; border-radius: 11px; border: 1px solid var(--line); background: var(--surface);
+    transition: border-color .18s var(--ease), background .18s var(--ease);
+  }
+  .rail-integration:hover { border-color: var(--accent-line); background: var(--inset); }
+  .integration-icon {
+    display: grid; place-items: center; width: 25px; height: 25px; flex-shrink: 0;
+    border-radius: 8px; color: var(--good); background: var(--good-bg);
+  }
+  .rail-integration strong { display: block; font-size: 11px; font-weight: 700; }
+  .rail-integration small { display: block; font-size: 10px; color: var(--muted); }
+  .rail-integration > .ico { margin-left: auto; width: 13px; color: var(--dim); }
+  .workspace {
+    min-width: 0; min-height: 0; display: grid; grid-template-rows: 51px minmax(0,1fr);
+    background: radial-gradient(ellipse at 80% 0%, color-mix(in srgb, var(--accent-soft) 62%, transparent), transparent 57%);
+  }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    min-width: 0; padding: 0 25px; border-bottom: 1px solid var(--line); background: var(--bar);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  }
+  .crumbs, .top-actions { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .crumbs { color: var(--muted); font-size: 12px; }
+  .crumbs strong { color: var(--ink); font-weight: 660; }
+  .crumbs .ico { width: 13px; height: 13px; }
+  .preview-label {
+    color: var(--muted); font-size: 11px; white-space: nowrap; background: var(--inset);
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px;
+  }
+  .screen { min-width: 0; min-height: 0; overflow: auto; scrollbar-width: thin; padding: 0 28px 28px; container-type: inline-size; }
+  .screen:focus { outline: none; }
+  .screen-inner { max-width: 1120px; margin-inline: auto; animation: arrive .2s var(--ease); }
+  .page-head {
+    display: flex; justify-content: space-between; align-items: end; gap: 18px;
+    padding: 30px 0 22px;
+  }
+  .heading-group { min-width: 0; }
+  .heading-group h1 { font-size: clamp(28px,3.6vw,46px); line-height: 1.04; letter-spacing: -.065em; font-weight: 760; }
+  .heading-group p { margin-top: 7px; font-size: 13px; color: var(--muted); }
+  .control, .icon-button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    min-height: 35px; padding: 0 11px; color: var(--ink); white-space: nowrap;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+    font-size: 12px; font-weight: 640; text-decoration: none;
+    transition: background .18s var(--ease), border-color .18s var(--ease), transform .18s var(--ease), box-shadow .18s var(--ease), filter .18s var(--ease);
+  }
+  .control .ico { width: 15px; height: 15px; }
+  .control:hover, .icon-button:hover { border-color: var(--accent-line); background: var(--inset); }
+  .control:active, .icon-button:active { transform: translateY(1px) scale(.985); }
+  .control.primary {
+    min-height: 38px; padding: 0 13px; background: var(--primary-fill); color: var(--accent-on); border-color: transparent;
+    box-shadow: inset 0 1px 0 #ffffff50, inset 0 -1px 0 #20164d3b, 0 4px 13px color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+  .control.primary:hover {
+    background: var(--primary-fill); filter: brightness(1.09);
+    box-shadow: inset 0 1px 0 #ffffff6b, 0 5px 17px color-mix(in srgb, var(--accent) 37%, transparent);
+  }
+  .control.ghost, .icon-button.ghost { background: transparent; border-color: transparent; box-shadow: none; }
+  .control.ghost:hover, .icon-button.ghost:hover { background: var(--inset); border-color: var(--line); }
+  .icon-button { width: 33px; height: 33px; min-height: 33px; padding: 0; color: var(--muted); }
+  .icon-button .ico { width: 15px; height: 15px; }
+  .filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 13px; }
+  .search {
+    display: flex; align-items: center; gap: 8px; width: min(100%, 363px); min-height: 36px;
+    padding: 0 9px; color: var(--dim); background: var(--surface); border: 1px solid var(--line);
+    border-radius: 9px; transition: border-color .18s var(--ease), box-shadow .18s var(--ease);
+  }
+  .search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .search input {
+    width: 100%; min-width: 0; outline: none; border: 0; background: transparent; color: var(--ink);
+    padding: 7px 0; font-size: 12.5px;
+  }
+  .search input::placeholder { color: var(--dim); }
+  kbd {
+    display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
+    min-width: 26px; padding: 1px 4px; font: 10px var(--mono); white-space: nowrap;
+    border: 1px solid var(--line); border-radius: 5px; background: var(--inset); color: var(--muted);
+  }
+  .select-wrap { display: inline-flex; position: relative; min-width: 152px; max-width: 100%; color: var(--muted); }
+  .select-wrap > .ico { position: absolute; left: 9px; top: 10px; pointer-events: none; }
+  select {
+    min-height: 36px; padding: 0 10px; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 9px; font-size: 12px; cursor: pointer;
+  }
+  .select-wrap select { width: 100%; padding-left: 32px; }
+  .filter-review[aria-pressed="true"] { background: var(--warn-bg); border-color: transparent; color: var(--warn); }
+  .filter-count { margin-left: auto; padding-left: 4px; white-space: nowrap; color: var(--muted); font-size: 12px; }
+  .list-frame {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: 0 6px 23px #171a360d; overflow: hidden;
+  }
+  .columns, .project-row {
+    display: grid; grid-template-columns: minmax(160px, 2.08fr) minmax(130px, 1.28fr) minmax(90px, .85fr) minmax(100px, .8fr) 18px;
+    gap: 12px; align-items: center; padding-inline: 16px;
+  }
+  .columns {
+    min-height: 37px; background: var(--surface-sheen); border-bottom: 1px solid var(--line);
+    color: var(--dim); font: 10px var(--mono); letter-spacing: .075em; text-transform: uppercase;
+  }
+  .projects { padding: 0; margin: 0; list-style: none; }
+  .projects li + li { border-top: 1px solid var(--soft-line); }
+  .project-row {
+    width: 100%; min-height: 60px; text-align: left; background: var(--surface); border: 0;
+    transition: background .18s var(--ease), box-shadow .18s var(--ease);
+  }
+  .project-row:hover {
+    background: color-mix(in srgb, var(--profile-bg) 34%, var(--surface));
+    box-shadow: inset 2px 0 color-mix(in srgb, var(--profile) 60%, transparent);
+  }
+  .project-row[aria-expanded="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+  .project-row:focus-visible { outline-offset: -3px; border-radius: 7px; }
+  .project-row:active { background: var(--accent-soft); }
+  .project-name, .project-profile, .project-branch, .project-status { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .repo-mark {
+    display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px;
+    background: linear-gradient(142deg, var(--profile-bg, var(--accent-soft)), var(--inset));
+    color: var(--profile, var(--accent)); border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--profile, var(--accent)) 21%, var(--line));
+    box-shadow: inset 0 1px var(--highlight);
+    transition: transform .22s var(--ease), box-shadow .22s var(--ease);
+  }
+  .project-row:hover .repo-mark { transform: translateY(-2px); box-shadow: 0 4px 13px var(--profile-bg); }
+  .repo-mark .ico { width: 17px; height: 17px; }
+  .project-name strong, .project-name code { display: block; }
+  .project-name strong { font-size: 13px; font-weight: 720; line-height: 1.3; }
+  .project-name code { color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+  .project-branch { color: var(--muted); gap: 5px; font: 11px/1.4 var(--mono); }
+  .project-branch .ico { width: 13px; height: 13px; }
+  .project-chevron { color: var(--dim); transition: transform .18s var(--ease), color .18s var(--ease); }
+  .project-row:hover .project-chevron { color: var(--accent); transform: translateX(2px); }
+  .project-profile .pill { max-width: 100%; }
+  .iris { --profile: var(--iris); --profile-bg: var(--iris-bg); --signal: #bbabff; }
+  .aqua { --profile: var(--aqua); --profile-bg: var(--aqua-bg); --signal: #8fe9e1; }
+  .rose { --profile: var(--rose); --profile-bg: var(--rose-bg); --signal: #ffadd3; }
+  .avatar {
+    --size: 31px;
+    display: grid; place-items: center; width: var(--size); height: var(--size); flex: 0 0 var(--size);
+    border-radius: calc(var(--size) * .32); color: var(--profile); background: var(--profile-bg);
+    font-size: 11px; font-weight: 780; letter-spacing: -.02em;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; min-width: 0;
+    border-radius: 7px; background: var(--profile-bg); color: var(--profile); font-size: 11px; font-weight: 670;
+  }
+  .pill .avatar {
+    --size: 16px; font-size: 7px; background: color-mix(in srgb, var(--profile) 14%, var(--profile-bg));
+  }
+  .state {
+    display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 7px; border-radius: 6px;
+    color: var(--good); background: var(--good-bg); font-size: 10.5px; font-weight: 680; white-space: nowrap;
+  }
+  .state .ico { width: 12px; height: 12px; }
+  .state.warning { color: var(--warn); background: var(--warn-bg); }
+  .state.neutral { color: var(--muted); background: var(--inset); }
+  .project-status .state:not(.warning) { background: transparent; }
+  .list-note {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 0 0; color: var(--muted); font-size: 11.5px;
+  }
+  .list-note .ico { width: 13px; margin-right: 4px; }
+  .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+  .empty strong { display: block; color: var(--ink); margin-bottom: 4px; }
+  .surface { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-sheen); box-shadow: inset 0 1px var(--highlight), 0 4px 15px #10152910; }
+  .section-title { margin-bottom: 11px; font-size: 15px; font-weight: 720; letter-spacing: -.015em; }
+  .stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat { display: grid; gap: 8px; min-height: 119px; }
+  .stat-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+  .stat-label .ico { color: var(--accent); }
+  .stat-value { font-size: 26px; line-height: 1.1; font-weight: 750; letter-spacing: -.045em; font-variant-numeric: tabular-nums; }
+  .stat-hint { font-size: 11px; color: var(--muted); }
+  .home-attention {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 19px; padding: 12px 14px;
+    background: var(--warn-bg); color: var(--warn); border-radius: 11px; font-size: 12px;
+  }
+  .home-attention > span { flex: 1; min-width: 150px; }
+  .accounts { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+  .account-card { min-width: 0; display: flex; flex-direction: column; gap: 15px; }
+  .account-card .state { align-self: start; }
+  .account-top { display: flex; align-items: center; gap: 10px; }
+  .account-top .avatar { --size: 42px; font-size: 14px; }
+  .account-top h2 { font-size: 15px; font-weight: 720; }
+  .account-top .muted { font-size: 11px; }
+  .account-email {
+    padding: 10px; background: var(--inset); border: 1px solid var(--soft-line); border-radius: 9px;
+    overflow-wrap: anywhere; min-height: 73px;
+  }
+  .account-email code { display: block; margin-top: 5px; font-size: 11px; }
+  .account-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+  .settings { display: grid; gap: 12px; max-width: 760px; }
+  .settings-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .settings-row + .settings-row { margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--soft-line); }
+  .theme-options { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--inset); }
+  .theme-options .control { border-color: transparent; background: transparent; }
+  .theme-options .control[aria-pressed="true"] { border-color: var(--line); background: var(--surface); color: var(--accent); }
+  .cloud-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; min-height: 58px; }
+  .cloud-row .project-name { flex: 1; }
+  .cloud-row .state { margin-left: auto; }
+  .cloud-row + .cloud-row { border-top: 1px solid var(--soft-line); }
+  .drawer {
+    position: absolute; inset: 0 0 0 var(--rail-width); z-index: 2; min-width: 0;
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden; background: var(--canvas);
+    box-shadow: -24px 0 60px #0608194d, -1px 0 var(--accent-line);
+    transform: translate3d(100%, 0, 0); visibility: hidden;
+    transition: transform var(--sheet-time) var(--sheet-ease), visibility 0s linear var(--sheet-time);
+  }
+  .app[data-inspecting] .drawer {
+    transform: none; visibility: visible;
+    transition: transform var(--sheet-time) var(--sheet-ease);
+  }
+  .drawer::before {
+    content: ""; position: absolute; z-index: 3; inset: 0 auto 0 0; width: 2px; pointer-events: none;
+    background: linear-gradient(0deg, transparent, #a2eaf0, #c1acff, transparent);
+    box-shadow: 0 0 15px #b7a7ff; opacity: 0;
+  }
+  .app[data-inspecting] .drawer::before { animation: edge-glint .82s ease-out; }
+  .drawer-top {
+    background: var(--bar);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  }
+  .drawer-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    min-height: 51px; padding-inline: clamp(12px, 2vw, 26px); border-bottom: 1px solid var(--line);
+  }
+  .drawer-nav, .drawer-actions { display: flex; min-width: 0; align-items: center; gap: 6px; }
+  .drawer-nav > .ico { color: var(--dim); width: 12px; }
+  .drawer-nav .control { min-height: 31px; padding-inline: 7px; }
+  .drawer-close { min-height: 31px; padding-inline: 7px; }
+  .drawer-body {
+    min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+    padding: 24px clamp(16px, 2.7vw, 38px) 30px; container: inspector / inline-size;
+    background: radial-gradient(ellipse at 71% -10%, color-mix(in srgb, var(--accent-soft) 60%, transparent), transparent 67%);
+  }
+  .drawer-inner, .drawer-footer-inner { width: min(100%, 1112px); margin-inline: auto; }
+  .repo-hero {
+    --glint-x: 75%;
+    --glint-y: 25%;
+    position: relative; isolation: isolate; min-height: 214px; display: grid; align-items: center; overflow: hidden;
+    padding: 25px 28px; border-radius: 20px; border: 1px solid #b7b1ff4d;
+    color: #f7f6ff;
+    background:
+      radial-gradient(ellipse at var(--glint-x) var(--glint-y), color-mix(in srgb, var(--signal) 20%, transparent), transparent 46%),
+      radial-gradient(ellipse at 100% 92%, color-mix(in srgb, var(--signal) 14%, #14223e), transparent 62%),
+      linear-gradient(110deg, #201b41 2%, #191a36 45%, #121b32);
+    box-shadow: inset 0 1px #f4edff23, 0 12px 34px #09092023;
+  }
+  .repo-hero::before {
+    content: ""; position: absolute; z-index: -1; inset: 0;
+    background-image: radial-gradient(#d6ddff34 .65px, transparent .75px);
+    background-size: 16px 16px;
+    mask-image: linear-gradient(90deg, transparent 17%, #0009 50%, #000);
+  }
+  .hero-copy { min-width: 0; width: 57%; }
+  .hero-label {
+    display: flex; align-items: center; gap: 8px; color: #dfdcf7;
+    text-transform: uppercase; letter-spacing: .14em; font: 10px/1.5 var(--mono);
+  }
+  .hero-label::before {
+    content: ""; flex: 0 0 6px; height: 6px; border-radius: 50%; background: var(--signal);
+    box-shadow: 0 0 11px var(--signal);
+  }
+  .repo-hero h2 {
+    margin: 9px 0 2px; font-size: clamp(30px, 4.5vw, 55px); line-height: 1.05;
+    font-weight: 765; letter-spacing: -.062em; overflow-wrap: anywhere;
+  }
+  .repo-hero h2:focus { outline: none; }
+  .hero-origin { color: #c1c3e0; font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
+  .hero-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 17px; }
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px;
+    color: #e7e6fb; background: #dfdaff12; border: 1px solid #d1d2ff33; border-radius: 7px;
+    font-size: 11px;
+  }
+  .hero-tag .ico { width: 13px; height: 13px; color: var(--signal); }
+  .hero-tag .avatar { --size: 17px; font-size: 7px; }
+  .route-art {
+    position: absolute; z-index: -1; inset: 0 0 0 auto; width: min(53%, 568px); height: 100%;
+    color: var(--signal); pointer-events: none;
+  }
+  .art-label { fill: #d6d8ef; font: 8.5px var(--mono); letter-spacing: .13em; }
+  .art-initials { fill: #f2fffe; font: 650 20px var(--sans); letter-spacing: -.04em; }
+  .signal-streak { stroke-dasharray: .17 1; stroke-dashoffset: 1; opacity: 0; }
+  .app[data-inspecting] .hero-copy { animation: rise-in .54s .1s var(--ease) both; }
+  .app[data-inspecting] .route-art { animation: light-in .72s .17s var(--ease) both; }
+  .app[data-inspecting] .signal-streak { animation: travel 1.24s .38s ease-in-out both; }
+  .tabs {
+    position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: max-content; max-width: 100%; margin: 17px 0 14px; padding: 3px;
+    background: var(--inset); border: 1px solid var(--line); border-radius: 11px;
+  }
+  .tabs::before {
+    content: ""; position: absolute; z-index: -1; inset: 3px auto 3px 3px; width: calc((100% - 6px) / 2);
+    border-radius: 8px; border: 1px solid var(--line); background: var(--surface-sheen);
+    box-shadow: inset 0 1px var(--highlight), 0 2px 7px #0b0d221a;
+    transition: transform .3s var(--ease);
+  }
+  .tabs[data-tab="history"]::before { transform: translateX(100%); }
+  .tab {
+    display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 4px 14px;
+    border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 640;
+  }
+  .tab .ico { width: 14px; height: 14px; }
+  .tab[aria-selected="true"] { color: var(--accent); }
+  .tab:hover { color: var(--ink); }
+  .drawer-panel { animation: rise-in .32s var(--ease) both; }
+  .repo-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 13px; }
+  .identity, .drawer-section {
+    min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 16px;
+    background: var(--surface-sheen); box-shadow: inset 0 1px var(--highlight);
+  }
+  .identity-head, .identity-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .identity-head h3, .drawer-section h3 { font-size: 15px; font-weight: 730; letter-spacing: -.025em; }
+  .identity-head h3 .ico, .drawer-section h3 .ico { color: var(--accent); width: 15px; height: 15px; margin-right: 6px; }
+  .identity-route {
+    display: grid; grid-template-columns: minmax(0, 1fr) 29px minmax(0, 1fr); align-items: center; margin-top: 13px;
+  }
+  .identity-point {
+    min-width: 0; align-self: stretch; padding: 9px 10px 10px; background: var(--inset);
+    border: 1px solid var(--soft-line); border-radius: 10px;
+  }
+  .identity-point .eyebrow { font-size: 9px; letter-spacing: .085em; }
+  .identity-person { display: flex; min-width: 0; align-items: center; gap: 7px; margin: 6px 0 4px; }
+  .identity-person .avatar { --size: 26px; font-size: 9px; }
+  .identity-person strong { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+  .identity-point code { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+  .identity-join {
+    display: grid; place-items: center; width: 29px; height: 24px; color: var(--good);
+    background: linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat;
+  }
+  .identity-join .ico { width: 20px; height: 20px; padding: 3px; background: var(--good-bg); border-radius: 50%; }
+  .identity-join.warning { color: var(--warn); }
+  .identity-join.warning .ico { background: var(--warn-bg); }
+  .identity-actions { margin-top: 12px; }
+  .identity-actions .control { min-height: 30px; margin-left: auto; font-size: 11px; }
+  .identity-warning { flex: 1 1 170px; color: var(--warn); font-size: 11px; }
+  .identity[data-updated] { animation: identity-confirm .85s var(--ease); }
+  .identity[data-updated] .identity-join .ico { animation: check-pop .5s var(--ease) both; }
+  .profile-editor { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 9px; }
+  .profile-editor select { flex: 1; min-width: 120px; }
+  .repo-meta { display: grid; gap: 5px; margin: 9px 0 0; }
+  .meta-field {
+    padding: 7px 8px; min-width: 0; display: flex; gap: 8px; align-items: center;
+    border: 1px solid transparent; border-radius: 8px; transition: background .2s var(--ease), border-color .2s var(--ease);
+  }
+  .meta-field:hover { background: var(--inset); border-color: var(--soft-line); }
+  .meta-field > .ico { color: var(--dim); }
+  .meta-field > div { flex: 1; min-width: 0; }
+  .meta-label { color: var(--muted); font-size: 10px; }
+  .meta-field code { display: block; color: var(--ink); font-size: 11px; margin-top: 1px; overflow-wrap: anywhere; }
+  .meta-field .icon-button { width: 27px; height: 27px; min-height: 27px; }
+  .commit-list { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
+  .commit-list li {
+    display: flex; align-items: start; gap: 9px; padding: 11px 0; border-bottom: 1px solid var(--soft-line);
+    animation: rise-in .32s var(--entry, 0ms) var(--ease) both;
+  }
+  .commit-list li:last-child { border-bottom: 0; }
+  .commit-list li > .ico { color: var(--accent); margin-top: 2px; }
+  .commit-text { flex: 1; min-width: 0; }
+  .commit-text strong { display: block; font-size: 12px; }
+  .commit-text time { display: block; color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+  .commit-list code { flex-shrink: 0; color: var(--accent); background: var(--accent-soft); padding: 2px 5px; border-radius: 5px; font-size: 10px; }
+  .drawer-footer {
+    padding: 10px clamp(12px, 2.7vw, 38px); border-top: 1px solid var(--line);
+    background: var(--bar); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  }
+  .drawer-footer-inner {
+    display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .drawer-footer .left-actions { display: flex; align-items: center; gap: 6px; }
+  .drawer-footer .control { font-size: 12px; min-height: 34px; }
+  .toast {
+    display: flex; align-items: center; gap: 8px; position: fixed; z-index: 9; bottom: 37px; right: 39px;
+    max-width: min(330px,calc(100% - 36px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--surface); color: var(--ink); box-shadow: var(--float-shadow); font-size: 12px; animation: arrive .2s var(--ease);
+  }
+  #drawer-feedback { position: absolute; inset: 0; pointer-events: none; }
+  .drawer .toast { position: absolute; bottom: 67px; right: 16px; }
+  .toast .ico { color: var(--accent); }
+  @keyframes arrive { from { opacity: 0; transform: translateY(4px); } }
+  @keyframes rise-in { from { opacity: 0; transform: translateY(10px); } }
+  @keyframes light-in { from { opacity: 0; transform: translateX(16px) scale(.985); } }
+  @keyframes edge-glint { 0%, 100% { opacity: 0; } 32% { opacity: .85; } }
+  @keyframes travel {
+    0% { opacity: 0; stroke-dashoffset: .16; }
+    18%, 81% { opacity: 1; }
+    100% { opacity: 0; stroke-dashoffset: -1; }
+  }
+  @keyframes identity-confirm {
+    from { border-color: var(--good); box-shadow: 0 0 22px color-mix(in srgb, var(--good) 22%, transparent); }
+  }
+  @keyframes check-pop {
+    0% { transform: scale(.76); }
+    52% { transform: scale(1.18); }
+  }
+  @media (max-width: 1070px) {
+    :root { --frame-gap: 18px; }
+    .app { --rail-width: 187px; }
+    .screen { padding-inline: 20px; }
+    .topbar { padding-inline: 18px; }
+    .columns, .project-row { gap: 9px; padding-inline: 12px; }
+  }
+  @media (max-width: 870px) {
+    .app { --rail-width: 65px; }
+    .rail { padding-inline: 7px; }
+    .traffic { margin-left: 4px; gap: 4px; }
+    .traffic span { width: 7px; height: 7px; }
+    .brand { margin-inline: 4px; justify-content: center; }
+    .brand-copy, .rail .eyebrow, .rail-profiles, .nav-item span, .rail-integration span:not(.integration-icon), .rail-integration > .ico { display: none; }
+    .nav-item, .rail-integration { justify-content: center; }
+    .accounts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  }
+  @media (max-width: 760px) {
+    :root { --frame-gap: 0px; }
+    .app { border: 0; border-radius: 0; min-height: 490px; }
+    .screen { padding-inline: 12px; }
+    .topbar { padding-inline: 12px; }
+    .page-head { padding-top: 19px; align-items: start; flex-wrap: wrap; gap: 11px; }
+    .project-name { gap: 5px; }
+    .repo-mark { width: 26px; height: 26px; flex-basis: 26px; border-radius: 8px; }
+    .repo-mark .ico { width: 13px; height: 13px; }
+    .project-name strong { font-size: 12px; }
+    .project-name code { font-size: 9px; }
+    .pill { font-size: 10px; }
+    .preview-label { display: none; }
+    .stats, .accounts { grid-template-columns: minmax(0,1fr); }
+  }
+  @media (max-width: 430px) {
+    .crumbs > span { display: none; }
+    .drawer-toolbar, .drawer-body, .drawer-footer { padding-inline: 10px; }
+    .drawer-nav > span, .drawer-nav > .ico, .drawer-close kbd { display: none; }
+  }
+  @container inspector (max-width: 740px) {
+    .repo-layout { grid-template-columns: minmax(0, 1fr); }
+    .repo-hero { padding: 22px; }
+  }
+  @container inspector (max-width: 480px) {
+    .repo-hero { min-height: 0; padding: 17px; }
+    .hero-copy { width: 100%; }
+    .repo-hero h2 { font-size: clamp(26px, 7.7vw, 40px); }
+    .hero-origin { font-size: 11px; }
+    .route-art { width: 70%; height: 100%; opacity: .25; }
+    .identity, .drawer-section { padding: 12px; }
+    .tab { padding-inline: 11px; }
+  }
+  @container inspector (max-width: 280px) {
+    .identity-route { grid-template-columns: minmax(0, 1fr); }
+    .identity-join {
+      margin-inline: auto; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat;
+    }
+  }
+  @container (max-width: 690px) {
+    .search { flex: 1 1 180px; max-width: 363px; }
+    .search kbd { display: none; }
+  }
+  @container (max-width: 580px) {
+    .columns, .project-row {
+      grid-template-columns: minmax(120px, 1.75fr) minmax(84px, 1fr) minmax(72px, .75fr) 14px;
+      gap: 8px; padding-inline: 10px;
+    }
+    .columns .col-branch, .project-branch { display: none; }
+  }
+  @container (max-width: 550px) {
+    .search { flex-basis: 100%; max-width: none; }
+  }
+  @container (max-width: 470px) {
+    .page-head { align-items: start; flex-wrap: wrap; gap: 11px; }
+    .stats { grid-template-columns: minmax(0,1fr); }
+  }
+  @container (max-width: 337px) {
+    .columns, .project-row { grid-template-columns: minmax(90px,1.7fr) minmax(76px,1fr) 12px; gap: 6px; }
+    .columns .col-status, .project-status, .cloud-row .pill { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .rail, .topbar, .drawer-top, .drawer-footer { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="app" id="gitpass">
+    <aside class="rail" aria-label="Barra lateral">
+      <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="brand"><span class="brand-icon" id="brand-icon"></span><div class="brand-copy"><div class="brand-name">GitPass</div><p class="brand-note">Identidades Git</p></div></div>
+      <p class="eyebrow">Área de trabalho</p>
+      <nav class="nav" id="navigation" aria-label="Seções do GitPass"></nav>
+      <section class="rail-profiles" aria-label="Perfis">
+        <h2 class="eyebrow">Perfis conectados</h2>
+        <div id="rail-profiles"></div>
+      </section>
+      <div class="rail-foot" id="rail-foot"></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="crumbs"><span>Área de trabalho</span><span id="crumb-arrow"></span><strong id="crumb-page">Repositórios</strong></div>
+        <div class="top-actions"><span class="preview-label">Prévia de design</span><button type="button" id="theme-toggle" class="icon-button ghost"></button></div>
+      </header>
+      <main class="screen" id="screen" tabindex="-1"></main>
+    </div>
+    <aside class="drawer" id="repo-drawer" aria-labelledby="drawer-title" inert>
+      <header class="drawer-top" id="drawer-head"></header>
+      <div class="drawer-body" id="drawer-scroll">
+        <div class="drawer-inner">
+          <div class="repo-hero" id="drawer-hero"></div>
+          <div class="tabs" id="drawer-tabs" role="tablist" aria-label="Informações do repositório"></div>
+          <div id="drawer-body"></div>
+        </div>
+      </div>
+      <footer class="drawer-footer" id="drawer-footer"></footer>
+      <div id="drawer-feedback" role="status" aria-live="polite"></div>
+    </aside>
+  </div>
+  <div id="feedback" role="status" aria-live="polite"></div>
+  <script>
+
+  const icons = {
+    logo: '<path d="M6.5 7.3 12 12.8l5.5-5.5M12 12.8v4.1" stroke-width="2.25"/><circle cx="6" cy="6.5" r="2.45" fill="currentColor" stroke="none"/><circle cx="18" cy="6.5" r="2.45" fill="currentColor" stroke="none"/><circle cx="12" cy="18.3" r="2.45" fill="currentColor" stroke="none"/>',
+    dashboard: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>',
+    repo: '<path d="M6.5 18a2 2 0 0 1 2-2H19M6.5 18a2 2 0 0 0 2 2H19V4H8.5a2 2 0 0 0-2 2v12ZM10 8h5M10 11h3"/>',
+    users: '<circle cx="10" cy="8" r="3"/><path d="M4 20v-1.5a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4V20M17 5.5a3 3 0 0 1 0 5.8M20.5 20v-1.5a4 4 0 0 0-2.2-3.6"/>',
+    cloud: '<path d="M6.5 18.5h11a4 4 0 0 0 .4-8 5.7 5.7 0 0 0-10.8-.8h-.6a4.4 4.4 0 0 0 0 8.8Z"/>',
+    settings: '<path d="m9.7 4 .5-1.3h3.6l.5 1.3.5 1.3 1.1.7 1.4-.2 1.5-.2 1.8 3.2-.9 1.1-.9 1.1v1.4l.9 1.1.9 1.1-1.8 3.2-1.5-.2-1.4-.2-1.1.7-.5 1.3-.5 1.3h-3.6l-.5-1.3-.5-1.3-1.1-.7-1.4.2-1.5.2-1.8-3.2.9-1.1.9-1.1V11l-.9-1.1-.9-1.1 1.8-3.2 1.5.2 1.4.2 1.1-.7Z"/><circle cx="12" cy="12" r="3"/>',
+    search: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/>',
+    chevron: '<path d="m9 6 6 6-6 6"/>',
+    back: '<path d="m10 6-6 6 6 6M4 12h15"/>',
+    shield: '<path d="M12 21s6.5-3.2 6.5-8V6L12 3.5 5.5 6v7c0 4.8 6.5 8 6.5 8Z"/><path d="m9.4 12.2 1.8 1.8 3.5-3.8"/>',
+    check: '<path d="m5.5 12 4 4 9-9"/>',
+    sun: '<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v2m0 15v2M2.5 12h2m15 0h2M5.3 5.3l1.4 1.4m10.6 10.6 1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+    moon: '<path d="M20.2 15.5a8.8 8.8 0 0 1-11.7-11.7A8.8 8.8 0 1 0 20.2 15.5Z"/>',
+    monitor: '<rect x="3" y="4.5" width="18" height="12.5" rx="2"/><path d="M12 17v3m-4 0h8"/>',
+    alert: '<path d="m10.4 4.7-7.1 12.7a1.7 1.7 0 0 0 1.5 2.6h14.4a1.7 1.7 0 0 0 1.5-2.6L13.6 4.7a1.8 1.8 0 0 0-3.2 0Z"/><path d="M12 9v4m0 3h.01"/>',
+    folder: '<path d="M3.5 7a2 2 0 0 1 2-2H9l2 2.3h7.5a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>',
+    close: '<path d="m6.5 6.5 11 11m-11 0 11-11"/>',
+    terminal: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m7 9 3 3-3 3m6 0h4"/>',
+    external: '<path d="M13 4.5h6.5V11m0-6.5L10 14m7.5-1v4.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2H11"/>',
+    history: '<path d="M4 11.5a8 8 0 1 1 1.7 5M4 6v5.5h5.5M12 8v4l3 1.5"/>',
+    branch: '<circle cx="7" cy="5" r="2"/><circle cx="17" cy="7" r="2"/><circle cx="7" cy="19" r="2"/><path d="M7 7v10m10-8c0 5-4 5-6 5a4 4 0 0 0-4 3"/>',
+    commit: '<circle cx="12" cy="12" r="3.5"/><path d="M3.5 12h5m7 0h5"/>',
+    info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11.5v4m0-7h.01"/>',
+    link: '<path d="m10 14 4-4m-6.5.5-2 2a4.2 4.2 0 0 0 6 6l2-2m-3-9 2-2a4.2 4.2 0 0 1 6 6l-2 2"/>'
+  };
+
+  function icon(name) {
+    return `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
+  }
+
+  const profiles = [
+    { id: "personal", name: "Marina Costa", handle: "marina-dev", initials: "MC", color: "iris", email: "marina@exemplo.dev" },
+    { id: "studio", name: "Órbita Studio", handle: "orbita-studio", initials: "OS", color: "aqua", email: "git@orbita.example" },
+    { id: "team", name: "Equipe Atlas", handle: "equipe-atlas", initials: "EA", color: "rose", email: "dev@atlas.example" }
+  ];
+  const repos = [
+    { name: "forma-web", owner: "marina-dev", dir: "Pessoal", profile: "personal", branch: "main" },
+    { name: "atlas-dashboard", owner: "equipe-atlas", dir: "Atlas", profile: "team", branch: "develop" },
+    { name: "orbit-engine", owner: "orbita-studio", dir: "Orbita", profile: "studio", branch: "feat/render", localProfile: "personal" },
+    { name: "portal-web", owner: "orbita-studio", dir: "Orbita", profile: "studio", branch: "main" },
+    { name: "design-system", owner: "equipe-atlas", dir: "Atlas", profile: "team", branch: "main" },
+    { name: "playground", owner: "marina-dev", dir: "Pessoal", profile: "personal", branch: "sandbox" },
+    { name: "ops-tools", owner: "orbita-studio", dir: "Orbita", profile: "studio", branch: "main" },
+    { name: "docs", owner: "equipe-atlas", dir: "Atlas", profile: "team", branch: "docs/guia" }
+  ];
+  const history = [
+    { hash: "e27d53a", text: "Ajustar estados de carregamento", date: "2026-11-06", when: "Hoje, 10:42" },
+    { hash: "b9a218f", text: "Atualizar dependências do projeto", date: "2026-11-05", when: "Ontem, 17:18" },
+    { hash: "f043bd8", text: "Refinar mensagens de erro", date: "2026-11-05", when: "Ontem, 14:06" },
+    { hash: "a6e3c92", text: "Adicionar notas de configuração", date: "2026-11-04", when: "4 nov., 11:26" }
+  ];
+  const sections = [
+    { id: "home", name: "Painel", icon: "dashboard" },
+    { id: "repos", name: "Repositórios", icon: "repo", count: repos.length },
+    { id: "accounts", name: "Contas", icon: "users", count: profiles.length },
+    { id: "cloud", name: "Na nuvem", icon: "cloud" },
+    { id: "settings", name: "Configurações", icon: "settings" }
+  ];
+
+  const app = document.querySelector("#gitpass");
+  const workspace = document.querySelector(".workspace");
+  const screen = document.querySelector("#screen");
+  const navigation = document.querySelector("#navigation");
+  const themeToggle = document.querySelector("#theme-toggle");
+  const drawer = document.querySelector("#repo-drawer");
+  const drawerHead = document.querySelector("#drawer-head");
+  const drawerScroll = document.querySelector("#drawer-scroll");
+  const drawerHero = document.querySelector("#drawer-hero");
+  const drawerTabs = document.querySelector("#drawer-tabs");
+  const drawerBody = document.querySelector("#drawer-body");
+  const drawerFooter = document.querySelector("#drawer-footer");
+  const drawerFeedback = document.querySelector("#drawer-feedback");
+  const feedback = document.querySelector("#feedback");
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const filters = { text: "", profile: "", review: false };
+  const toastTimers = new Map();
+  let section = "repos";
+  let theme = "dark";
+  let activeRepo;
+  let activeTab = "details";
+  let editingProfile = false;
+  let restoreFocus;
+
+  const getProfile = (id) => profiles.find((profile) => profile.id === id);
+  const needsReview = (repo) => Boolean(repo.localProfile && repo.localProfile !== repo.profile);
+  const repoPath = (repo) => `/Users/demo/Projetos/${repo.dir}/${repo.name}`;
+  const remote = (repo) => `github.com/${repo.owner}/${repo.name}`;
+  const projectCount = (count) => `${count} ${count === 1 ? "repositório" : "repositórios"}`;
+  const normalize = (text) => text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+  function avatar(profile) {
+    return `<span class="avatar ${profile.color}" aria-hidden="true">${profile.initials}</span>`;
+  }
+
+  function pill(profile) {
+    return `<span class="pill ${profile.color}">${avatar(profile)}<span class="truncate">${profile.name}</span></span>`;
+  }
+
+  function badge(label, glyph, tone = "") {
+    return `<span class="state ${tone}">${icon(glyph)}${label}</span>`;
+  }
+
+  function repoStatus(repo, full = false) {
+    return needsReview(repo)
+      ? badge(full ? "Identidade divergente" : "Revisar", "alert", "warning")
+      : badge(full ? "Identidade correta" : "Correta", "check");
+  }
+
+  function profileOptions(selected, all = false) {
+    const options = profiles.map((profile) =>
+      `<option value="${profile.id}" ${profile.id === selected ? "selected" : ""}>${profile.name}</option>`
+    );
+    return (all ? '<option value="">Todos os perfis</option>' : "") + options.join("");
+  }
+
+  function heading(title, subtitle, action = "") {
+    return `<div class="page-head"><div class="heading-group"><h1>${title}</h1><p>${subtitle}</p></div>${action}</div>`;
+  }
+
+  function action(label, glyph, name, variant = "") {
+    return `<button type="button" class="control ${variant}" data-action="${name}">${icon(glyph)}${label}</button>`;
+  }
+
+  function repoList(list) {
+    if (!list.length) {
+      return '<div class="list-frame empty"><strong>Nenhum repositório encontrado</strong>Experimente outra busca ou ajuste os filtros.</div>';
+    }
+    return `<div class="list-frame">
+      <div class="columns" aria-hidden="true"><span>Repositório local</span><span>Conta vinculada</span><span class="col-branch">Branch</span><span class="col-status">Identidade</span><span></span></div>
+      <ul class="projects" aria-label="Repositórios locais">${list.map((repo) => `
+        <li><button type="button" class="project-row ${getProfile(repo.profile).color}" data-repo="${repo.name}" aria-controls="repo-drawer" aria-expanded="${repo === activeRepo}">
+          <span class="project-name"><span class="repo-mark">${icon("repo")}</span><span class="truncate"><strong class="truncate">${repo.name}</strong><code class="truncate">~/Projetos/${repo.dir}/${repo.name}</code></span></span>
+          <span class="project-profile">${pill(getProfile(repo.profile))}</span>
+          <span class="project-branch">${icon("branch")}<span class="truncate">${repo.branch}</span></span>
+          <span class="project-status">${repoStatus(repo)}</span>
+          <span class="project-chevron">${icon("chevron")}</span>
+        </button></li>`).join("")}</ul>
+    </div>`;
+  }
+
+  function updateRepoList() {
+    const query = normalize(filters.text.trim());
+    const list = repos.filter((repo) => {
+      const profile = getProfile(repo.profile);
+      const searchText = normalize([repoPath(repo), remote(repo), repo.branch, profile.name, profile.handle].join(" "));
+      return searchText.includes(query) && (!filters.profile || repo.profile === filters.profile) &&
+        (!filters.review || needsReview(repo));
+    });
+    document.querySelector("#repo-list").innerHTML = repoList(list);
+    document.querySelector("#repo-count").textContent = projectCount(list.length);
+  }
+
+  function repositories() {
+    return `${heading("Repositórios", "Gerencie a conta Git vinculada a cada projeto local.", action("Vincular repositório", "plus", "link-demo", "primary"))}
+      <div class="filterbar" aria-label="Filtros dos repositórios">
+        <label class="search">${icon("search")}<span class="sr-only">Buscar repositório</span><input type="search" id="repo-search" placeholder="Buscar repositório" title="Busque por nome, pasta, branch ou perfil" autocomplete="off"><kbd aria-hidden="true" id="search-key">⌘ K</kbd></label>
+        <label class="select-wrap">${icon("users")}<span class="sr-only">Filtrar por perfil</span><select id="repo-profile">${profileOptions(filters.profile, true)}</select></label>
+        <button type="button" class="control filter-review" data-action="filter-review" aria-pressed="${filters.review}">${icon("alert")}Para revisar</button>
+        <span class="filter-count" id="repo-count" role="status"></span>
+      </div>
+      <div id="repo-list"></div>
+      <div class="list-note"><span>${icon("info")}Selecione um repositório para abrir os detalhes.</span></div>`;
+  }
+
+  function dashboard() {
+    const review = repos.filter(needsReview).length;
+    const stats = [
+      ["repo", "Projetos vinculados", repos.length, "Repositórios locais gerenciados"],
+      ["users", "Contas conectadas", profiles.length, "Perfis de GitHub disponíveis"],
+      ["shield", "Identidades corretas", `${repos.length - review} / ${repos.length}`, review ? "Uma identidade para revisar" : "Tudo em dia"]
+    ];
+    return `${heading("Painel", "Acompanhe as contas e as identidades dos seus projetos.")}
+      <div class="stats">${stats.map(([glyph, label, value, hint]) => `<section class="surface stat"><div class="stat-label">${icon(glyph)}${label}</div><div class="stat-value">${value}</div><p class="stat-hint">${hint}</p></section>`).join("")}</div>
+      ${review ? `<div class="home-attention">${icon("alert")}<span>Um projeto está com a identidade local diferente da conta vinculada.</span>${action("Revisar identidade", "chevron", "go-review")}</div>` : ""}
+      <h2 class="section-title">Repositórios recentes</h2>
+      ${repoList(repos.slice(0, 4))}`;
+  }
+
+  function accounts() {
+    return `${heading("Contas", "Gerencie os perfis usados nos seus projetos.", action("Conectar conta", "plus", "connect-demo", "primary"))}
+      <div class="accounts">${profiles.map((profile) => `
+        <section class="surface account-card">
+          <div class="account-top">${avatar(profile)}<div><h2>${profile.name}</h2><p class="muted">@${profile.handle}</p></div></div>
+          <div class="account-email"><p class="caption muted">E-mail de commit</p><code>${profile.email}</code></div>
+          ${badge("Conta conectada", "check")}
+          <div class="account-foot"><span class="caption muted">${projectCount(repos.filter((repo) => repo.profile === profile.id).length)}</span>
+            <button class="control" type="button" data-profile-filter="${profile.id}">Ver projetos${icon("chevron")}</button>
+          </div>
+        </section>`).join("")}</div>`;
+  }
+
+  function cloud() {
+    const cloudRepos = [
+      ...repos.slice(0, 3),
+      { name: "release-kit", owner: "orbita-studio", profile: "studio", cloudOnly: true },
+      { name: "portfolio", owner: "marina-dev", profile: "personal", cloudOnly: true }
+    ];
+    return `${heading("Na nuvem", "Repositórios disponíveis nas suas contas GitHub.")}
+      <div class="list-frame">${cloudRepos.map((repo) => `
+        <div class="cloud-row">
+          <span class="project-name"><span class="repo-mark">${icon("repo")}</span><span class="truncate"><strong class="truncate">${repo.name}</strong><code class="truncate">${repo.owner}/${repo.name}</code></span></span>
+          ${pill(getProfile(repo.profile))}
+          ${repo.cloudOnly
+            ? action("Clonar", "plus", "clone-demo")
+            : `<button type="button" class="control" data-repo="${repo.name}" aria-controls="repo-drawer" aria-expanded="${repo === activeRepo}">Abrir${icon("chevron")}</button>`}
+        </div>`).join("")}</div>`;
+  }
+
+  function settings() {
+    const modes = [["auto", "Sistema", "monitor"], ["light", "Claro", "sun"], ["dark", "Escuro", "moon"]];
+    return `${heading("Configurações", "Personalize a aparência e acompanhe a integração com o Git.")}
+      <div class="settings">
+        <section class="surface"><h2 class="section-title">Aparência</h2><div class="settings-row">
+          <div><strong>Tema</strong><p class="caption muted">Escolha como o GitPass aparece neste dispositivo.</p></div>
+          <div class="theme-options" role="group" aria-label="Tema">${modes.map(([id, label, glyph]) =>
+            `<button type="button" class="control" data-theme-choice="${id}" aria-pressed="${theme === id}">${icon(glyph)}${label}</button>`
+          ).join("")}</div>
+        </div></section>
+        <section class="surface"><h2 class="section-title">Integração com o Git</h2>
+          <div class="settings-row"><div><strong>Identidade por projeto</strong><p class="caption muted">Cada repositório tem uma conta vinculada.</p></div>${badge("Ativa", "check")}</div>
+          <div class="settings-row"><div><strong>Contas GitHub</strong><p class="caption muted">Perfis disponíveis para os seus projetos.</p></div>${badge("3 conectadas", "users", "neutral")}</div>
+        </section>
+      </div>`;
+  }
+
+  const pages = { home: dashboard, repos: repositories, accounts, cloud, settings };
+
+  function renderPage(focus = false) {
+    navigation.innerHTML = sections.map((item) => `
+      <button type="button" class="nav-item" data-page="${item.id}" aria-label="${item.name}" title="${item.name}" ${section === item.id ? 'aria-current="page"' : ""}>
+        ${icon(item.icon)}<span>${item.name}</span>${item.count ? `<span class="nav-count">${item.count}</span>` : ""}
+      </button>`).join("");
+    document.querySelector("#crumb-page").textContent = sections.find((item) => item.id === section).name;
+    screen.innerHTML = `<div class="screen-inner">${pages[section]()}</div>`;
+    screen.scrollTop = 0;
+    if (section === "repos") {
+      document.querySelector("#repo-search").value = filters.text;
+      document.querySelector("#search-key").textContent = /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
+      updateRepoList();
+    }
+    if (focus) screen.focus({ preventScroll: true });
+  }
+
+  function navigate(page) {
+    closeDrawer(false);
+    section = page;
+    renderPage(true);
+  }
+
+  function applyTheme() {
+    const dark = theme === "dark" || (theme === "auto" && systemDark.matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    const label = dark ? "Ativar tema claro" : "Ativar tema escuro";
+    for (const button of [themeToggle, ...drawerHead.querySelectorAll('[data-action="toggle-theme"]')]) {
+      button.innerHTML = icon(dark ? "sun" : "moon");
+      button.setAttribute("aria-label", label);
+      button.title = label;
+    }
+    document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.themeChoice === theme));
+    });
+  }
+
+  function toggleTheme() {
+    theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme();
+  }
+
+  document.querySelector("#brand-icon").innerHTML = icon("logo");
+  document.querySelector("#crumb-arrow").innerHTML = icon("chevron");
+  document.querySelector("#rail-profiles").innerHTML = profiles.map((profile) =>
+    `<button type="button" class="rail-profile" data-profile-filter="${profile.id}" title="Ver projetos de ${profile.name}">${avatar(profile)}<span class="truncate">${profile.name}</span></button>`
+  ).join("");
+  document.querySelector("#rail-foot").innerHTML = `<button type="button" class="rail-integration" data-page="settings" aria-label="Configurações da integração com o Git" title="Integração com o Git"><span class="integration-icon">${icon("shield")}</span><span><strong>Integração ativa</strong><small>Git local</small></span>${icon("chevron")}</button>`;
+
+  renderPage();
+  applyTheme();
+  systemDark.addEventListener("change", applyTheme);
+
+  function iconButton(label, glyph, name) {
+    return `<button type="button" class="icon-button ghost" data-action="${name}" aria-label="${label}" title="${label}">${icon(glyph)}</button>`;
+  }
+
+  function metaField(label, value, glyph, copy) {
+    return `<div class="meta-field">${icon(glyph)}<div><div class="meta-label">${label}</div><code>${value}</code></div>
+      ${copy ? iconButton(`Copiar ${label.toLowerCase()}`, "copy", copy) : ""}</div>`;
+  }
+
+
+  function routeArt(profile) {
+    const path = "M74 152h58c42 0 41-46 86-46h85c39 0 44-43 86-43h41";
+    return `<svg class="route-art" viewBox="0 0 520 220" aria-hidden="true" focusable="false">
+      <defs>
+        <radialGradient id="route-aura">
+          <stop stop-color="currentColor" stop-opacity=".25"/>
+          <stop offset="1" stop-color="currentColor" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="route-ink">
+          <stop stop-color="#b69dff"/>
+          <stop offset=".53" stop-color="currentColor"/>
+          <stop offset="1" stop-color="#a2baff"/>
+        </linearGradient>
+        <linearGradient id="route-glass" x1="0" y1="0" x2=".8" y2="1">
+          <stop stop-color="#33395f"/>
+          <stop offset=".51" stop-color="#252a49"/>
+          <stop offset="1" stop-color="#151c32"/>
+        </linearGradient>
+        <linearGradient id="route-facet" x1="0" y1="0" x2=".85" y2="1">
+          <stop stop-color="#e4eaff" stop-opacity=".36"/>
+          <stop offset=".56" stop-color="currentColor" stop-opacity=".12"/>
+          <stop offset="1" stop-color="#1b2545" stop-opacity=".3"/>
+        </linearGradient>
+      </defs>
+      <ellipse cx="257" cy="109" rx="210" ry="101" fill="url(#route-aura)"/>
+      <g fill="none" stroke="#dce2ff" stroke-opacity=".19">
+        <ellipse cx="263" cy="110" rx="211" ry="60" transform="rotate(-17 263 110)"/>
+        <ellipse cx="263" cy="110" rx="224" ry="73" transform="rotate(-17 263 110)" stroke-dasharray="2 7"/>
+        <path d="M17 169 503 43M91 211l361-99" stroke-opacity=".14"/>
+      </g>
+      <g fill="#ced7ff" opacity=".55">
+        <circle cx="29" cy="95" r="1.2"/><circle cx="151" cy="55" r="1.2"/><circle cx="169" cy="177" r="1.5"/>
+        <circle cx="333" cy="33" r="1.5"/><circle cx="470" cy="130" r="1.3"/><circle cx="390" cy="151" r="1.4"/>
+      </g>
+      <path d="${path}" fill="none" stroke="url(#route-ink)" stroke-width="8" stroke-opacity=".13"/>
+      <path d="${path}" fill="none" stroke="url(#route-ink)" stroke-width="1.55" stroke-opacity=".79"/>
+      <path class="signal-streak" d="${path}" pathLength="1" fill="none" stroke="#ecfcff" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="134" cy="152" r="3" fill="#cbb4ff"/><circle cx="359" cy="79" r="3" fill="currentColor"/>
+      <g transform="translate(74 152)">
+        <rect x="-26" y="-23" width="54" height="54" rx="15" fill="#11162f" stroke="#a992fd" stroke-opacity=".3"/>
+        <rect x="-27" y="-27" width="54" height="54" rx="15" fill="url(#route-glass)" stroke="#c2a9ff" stroke-opacity=".83"/>
+        <path d="M-17-22h29q9 0 10 9" fill="none" stroke="#eee0ff" stroke-opacity=".44"/>
+        <svg x="-13" y="-13" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d7c7ff" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">${icons.repo}</svg>
+        <text class="art-label" text-anchor="middle" x="0" y="46">PROJETO</text>
+      </g>
+      <g transform="translate(257 106)">
+        <circle r="54" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-dasharray="2 5"/>
+        <circle r="46" fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".31"/>
+        <rect x="-35" y="-29" width="72" height="72" rx="22" fill="#0c172e" stroke="currentColor" stroke-opacity=".37"/>
+        <rect x="-36" y="-36" width="72" height="72" rx="22" fill="url(#route-glass)" stroke="currentColor"/>
+        <rect x="-35" y="-35" width="70" height="70" rx="21" fill="url(#route-facet)"/>
+        <path d="M-23-29h34q16 0 18 15M-23 30h34" fill="none" stroke="#e7fffa" stroke-opacity=".53"/>
+        <text class="art-initials" text-anchor="middle" x="0" y="7">${profile.initials}</text>
+        <text class="art-label" text-anchor="middle" x="0" y="72">CONTA</text>
+      </g>
+      <g transform="translate(430 63)">
+        <rect x="-26" y="-23" width="54" height="54" rx="15" fill="#10152c" stroke="#96b6ff" stroke-opacity=".3"/>
+        <rect x="-27" y="-27" width="54" height="54" rx="15" fill="url(#route-glass)" stroke="#a6c0ff" stroke-opacity=".85"/>
+        <path d="M-17-22h29q9 0 10 9" fill="none" stroke="#d7e8ff" stroke-opacity=".47"/>
+        <svg x="-12" y="-12" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#bed4ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${icons.branch}</svg>
+        <text class="art-label" text-anchor="middle" x="0" y="46">BRANCH</text>
+      </g>
+    </svg>`;
+  }
+
+  function renderHero() {
+    const repo = activeRepo;
+    const profile = getProfile(repo.profile);
+    drawerHero.className = `repo-hero ${profile.color}`;
+    drawerHero.innerHTML = `
+      ${routeArt(profile)}
+      <div class="hero-copy">
+        <p class="hero-label">Repositório local</p>
+        <h2 id="drawer-title" tabindex="-1">${repo.name}</h2>
+        <p class="hero-origin">${repo.owner}/${repo.name}</p>
+        <div class="hero-tags">
+          <span class="hero-tag">${icon("branch")}<code class="truncate">${repo.branch}</code></span>
+          <span class="hero-tag">${avatar(profile)}<span class="truncate">${profile.name}</span></span>
+        </div>
+      </div>`;
+  }
+
+  function identityPoint(label, profile) {
+    return `<div class="identity-point">
+      <p class="eyebrow">${label}</p>
+      <div class="identity-person">${avatar(profile)}<strong>${profile.name}</strong></div>
+      <code>${profile.email}</code>
+    </div>`;
+  }
+
+  function repoDetails(repo) {
+    const profile = getProfile(repo.profile);
+    const local = getProfile(repo.localProfile || repo.profile);
+    const review = needsReview(repo);
+    return `<div class="repo-layout">
+      <section class="identity" aria-label="Identidade do Git">
+        <div class="identity-head"><h3>${icon("shield")}Identidade do Git</h3>${repoStatus(repo, true)}</div>
+        <div class="identity-route">
+          ${identityPoint("Conta vinculada", profile)}
+          <span class="identity-join ${review ? "warning" : ""}" aria-hidden="true">${icon(review ? "alert" : "check")}</span>
+          ${identityPoint("Identidade local", local)}
+        </div>
+        <div class="identity-actions">
+          ${review ? '<p class="identity-warning">O nome e o e-mail no Git local diferem da conta vinculada.</p>' : ""}
+          ${action("Trocar conta", "users", "edit-profile")}
+        </div>
+        ${editingProfile ? `<form class="profile-editor" id="profile-editor">
+          <label class="sr-only" for="drawer-profile">Nova conta vinculada</label>
+          <select id="drawer-profile">${profileOptions(repo.profile)}</select>
+          <button type="submit" class="control primary">Aplicar</button>
+          ${action("Cancelar", "close", "cancel-profile", "ghost")}
+        </form>` : ""}
+      </section>
+      <section class="drawer-section"><h3>${icon("repo")}Dados do repositório</h3>
+        <div class="repo-meta">
+          ${metaField("Branch atual", repo.branch, "branch")}
+          ${metaField("Pasta local", repoPath(repo), "folder", "copy-path")}
+          ${metaField("Remoto", remote(repo), "link", "copy-remote")}
+        </div>
+      </section>
+    </div>`;
+  }
+
+  function commits() {
+    return `<section class="drawer-section">
+      <h3>${icon("history")}Histórico de commits</h3>
+      <ul class="commit-list">${history.map((commit, index) => `
+        <li style="--entry:${index * 45}ms">${icon("commit")}<div class="commit-text"><strong>${commit.text}</strong><time datetime="${commit.date}">${commit.when}</time></div><code>${commit.hash}</code></li>`
+      ).join("")}</ul>
+    </section>`;
+  }
+
+  const tabs = [
+    { id: "details", label: "Visão geral", glyph: "repo" },
+    { id: "history", label: "Histórico", glyph: "history" }
+  ];
+
+  function renderDrawer() {
+    const repo = activeRepo;
+    drawerTabs.dataset.tab = activeTab;
+    drawerTabs.innerHTML = tabs.map(({ id, label, glyph }) => `
+      <button type="button" class="tab" role="tab" id="tab-${id}" data-tab="${id}"
+        aria-selected="${id === activeTab}" aria-controls="pane-${id}" tabindex="${id === activeTab ? 0 : -1}">${icon(glyph)}${label}</button>`
+    ).join("");
+    drawerBody.innerHTML = `
+      <div class="drawer-panel" role="tabpanel" id="pane-details" aria-labelledby="tab-details" ${activeTab === "details" ? "" : "hidden"}>${activeTab === "details" ? repoDetails(repo) : ""}</div>
+      <div class="drawer-panel" role="tabpanel" id="pane-history" aria-labelledby="tab-history" tabindex="0" ${activeTab === "history" ? "" : "hidden"}>${activeTab === "history" ? commits() : ""}</div>`;
+    drawerFooter.innerHTML = `<div class="drawer-footer-inner">
+        <div class="left-actions">
+          ${action("Finder", "folder", "finder-demo")}
+          ${action("Terminal", "terminal", "terminal-demo")}
+        </div>
+        ${needsReview(repo) ? action("Corrigir identidade", "shield", "fix-identity", "primary") : action("Concluir", "check", "close-drawer", "ghost")}
+      </div>`;
+  }
+
+  function openRepo(repoName, trigger) {
+    const repo = repos.find((item) => item.name === repoName);
+    if (!repo) return;
+    if (activeRepo !== repo) {
+      screen.querySelector('[data-repo][aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+      activeRepo = repo;
+      activeTab = "details";
+      editingProfile = false;
+      drawerFeedback.replaceChildren();
+      const previousPage = sections.find((item) => item.id === section).name;
+      drawerHead.innerHTML = `<div class="drawer-toolbar">
+        <div class="drawer-nav">
+          ${action(previousPage, "back", "close-drawer", "ghost")}
+          ${icon("chevron")}<span class="caption muted">Detalhes</span>
+        </div>
+        <div class="drawer-actions">
+          ${iconButton("Alternar tema", "sun", "toggle-theme")}
+          <button type="button" class="control ghost drawer-close" data-action="close-drawer" aria-label="Fechar detalhes" title="Fechar detalhes (Esc)"><kbd aria-hidden="true">Esc</kbd>${icon("close")}</button>
+        </div>
+      </div>`;
+      drawerHero.style.removeProperty("--glint-x");
+      drawerHero.style.removeProperty("--glint-y");
+      renderHero();
+      renderDrawer();
+      applyTheme();
+      drawerScroll.scrollTop = 0;
+    }
+    restoreFocus = trigger;
+    trigger.setAttribute("aria-expanded", "true");
+    app.setAttribute("data-inspecting", "");
+    drawer.inert = false;
+    drawerHero.querySelector("h2").focus({ preventScroll: true });
+    workspace.inert = true;
+  }
+
+  function closeDrawer(returnFocus = drawer.contains(document.activeElement)) {
+    if (!activeRepo) return;
+    const selected = screen.querySelector('[data-repo][aria-expanded="true"]');
+    app.removeAttribute("data-inspecting");
+    drawer.inert = true;
+    workspace.inert = false;
+    drawerFeedback.replaceChildren();
+    selected?.setAttribute("aria-expanded", "false");
+    if (returnFocus) {
+      const target = restoreFocus?.isConnected ? restoreFocus : selected || screen.querySelector(".filter-review") || screen;
+      target.focus({ preventScroll: true });
+    }
+    activeRepo = undefined;
+    restoreFocus = undefined;
+  }
+
+  function showTab(tab) {
+    activeTab = tab;
+    editingProfile = false;
+    renderDrawer();
+    document.querySelector(`#tab-${tab}`).focus({ preventScroll: true });
+  }
+
+  function toast(message, glyph = "info", region = feedback) {
+    const content = document.createElement("span");
+    content.className = "toast";
+    content.innerHTML = icon(glyph);
+    content.append(document.createTextNode(message));
+    region.replaceChildren(content);
+    window.clearTimeout(toastTimers.get(region));
+    toastTimers.set(region, window.setTimeout(() => region.replaceChildren(), 2900));
+  }
+
+  async function copyValue(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.style.cssText = "position:absolute;opacity:0;pointer-events:none";
+      const previousFocus = document.activeElement;
+      drawer.append(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      previousFocus?.focus({ preventScroll: true });
+      return copied;
+    }
+    return true;
+  }
+
+  function updateIdentity(profileId, message) {
+    const scrollTop = screen.scrollTop;
+    const profileChanged = activeRepo.profile !== profileId;
+    activeRepo.profile = profileId;
+    activeRepo.localProfile = profileId;
+    editingProfile = false;
+    activeTab = "details";
+    if (section === "repos") updateRepoList();
+    else renderPage();
+    screen.scrollTop = scrollTop;
+    if (profileChanged) renderHero();
+    renderDrawer();
+    drawerBody.querySelector(".identity").setAttribute("data-updated", "");
+    drawerBody.querySelector('[data-action="edit-profile"]').focus({ preventScroll: true });
+    toast(message, "check", drawerFeedback);
+  }
+
+  const demoMessages = {
+    "link-demo": "No app, esta ação abre o seletor de pastas do macOS.",
+    "connect-demo": "No app, esta ação inicia a conexão com o GitHub.",
+    "clone-demo": "No app, você escolhe uma pasta para clonar com este perfil.",
+    "finder-demo": "No app, esta ação abre a pasta do projeto no Finder.",
+    "terminal-demo": "No app, esta ação abre o Terminal na pasta do projeto."
+  };
+
+  const actions = {
+    "close-drawer": () => closeDrawer(true),
+    "toggle-theme": toggleTheme,
+    "filter-review": (button) => {
+      filters.review = !filters.review;
+      button.setAttribute("aria-pressed", String(filters.review));
+      updateRepoList();
+    },
+    "go-review": () => {
+      Object.assign(filters, { text: "", profile: "", review: true });
+      navigate("repos");
+    },
+    "edit-profile": () => {
+      editingProfile = true;
+      renderDrawer();
+      document.querySelector("#drawer-profile").focus();
+    },
+    "cancel-profile": () => {
+      editingProfile = false;
+      renderDrawer();
+      drawerBody.querySelector('[data-action="edit-profile"]').focus();
+    },
+    "fix-identity": () => updateIdentity(activeRepo.profile, "Identidade local atualizada na prévia."),
+    "copy-path": async () => {
+      const repo = activeRepo;
+      const copied = await copyValue(repoPath(repo));
+      toast(copied ? "Pasta local copiada." : "Selecione o caminho para copiá-lo.", copied ? "check" : "info", repo === activeRepo ? drawerFeedback : feedback);
+    },
+    "copy-remote": async () => {
+      const repo = activeRepo;
+      const copied = await copyValue(`https://${remote(repo)}.git`);
+      toast(copied ? "URL remota copiada." : "Selecione a URL para copiá-la.", copied ? "check" : "info", repo === activeRepo ? drawerFeedback : feedback);
+    }
+  };
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    const { page, repo, tab, themeChoice, profileFilter, action: name } = button.dataset;
+    if (page && page === section && activeRepo) closeDrawer(true);
+    else if (page) navigate(page);
+    else if (repo) openRepo(repo, button);
+    else if (tab) showTab(tab);
+    else if (profileFilter) {
+      Object.assign(filters, { text: "", profile: profileFilter, review: false });
+      navigate("repos");
+    } else if (themeChoice) {
+      theme = themeChoice;
+      applyTheme();
+    } else if (actions[name]) actions[name](button);
+    else if (demoMessages[name]) toast(demoMessages[name], "info", drawer.contains(button) ? drawerFeedback : feedback);
+  });
+  themeToggle.addEventListener("click", toggleTheme);
+  drawerHero.addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "mouse" || reducedMotion.matches) return;
+    const { left, top, width, height } = drawerHero.getBoundingClientRect();
+    drawerHero.style.setProperty("--glint-x", `${(event.clientX - left) / width * 100}%`);
+    drawerHero.style.setProperty("--glint-y", `${(event.clientY - top) / height * 100}%`);
+  });
+  screen.addEventListener("input", (event) => {
+    if (event.target.id !== "repo-search") return;
+    filters.text = event.target.value;
+    updateRepoList();
+  });
+  screen.addEventListener("change", (event) => {
+    if (event.target.id !== "repo-profile") return;
+    filters.profile = event.target.value;
+    updateRepoList();
+  });
+  drawer.addEventListener("submit", (event) => {
+    if (event.target.id !== "profile-editor") return;
+    event.preventDefault();
+    const selected = document.querySelector("#drawer-profile").value;
+    updateIdentity(selected, "Conta vinculada e identidade atualizadas na prévia.");
+  });
+  document.addEventListener("keydown", (event) => {
+    const arrowKeys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (activeRepo && event.key === "Escape") {
+      event.preventDefault();
+      closeDrawer();
+    } else if (activeRepo && event.target.matches('[role="tab"]') && arrowKeys.includes(event.key)) {
+      event.preventDefault();
+      const target = event.key === "Home" ? "details" : event.key === "End" ? "history" : activeTab === "details" ? "history" : "details";
+      showTab(target);
+    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      if (section !== "repos") navigate("repos");
+      else closeDrawer(false);
+      document.querySelector("#repo-search").focus();
+    }
+  });
+  </script>
+</body>
+</html>

@@ -1,0 +1,289 @@
+/* Tela Diagnóstico (#diagnostics): checklist agrupada, exportar logs, versões. */
+
+.diag-page {
+  display: grid;
+  gap: 12px;
+  max-width: 880px;
+}
+
+.diag-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.diag-section .gp-group {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.diag-section .diag-item {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.diag-summary-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.diag-summary-warning .diag-summary-icon {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.diag-summary-error .diag-summary-icon {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.diag-summary-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.diag-summary-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.diag-summary-meta {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+}
+
+.diag-counts {
+  display: flex;
+  gap: var(--sp-2);
+  margin: 0;
+}
+
+.diag-count {
+  min-width: 64px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--inset);
+  text-align: center;
+}
+
+.diag-count dt {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.diag-count dd {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.diag-count-error dd {
+  color: var(--bad);
+}
+
+.diag-count-warning dd {
+  color: var(--warn);
+}
+
+.diag-count-ok dd {
+  color: var(--good);
+}
+
+.diag-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diag-group-error .diag-group-title {
+  color: var(--bad);
+}
+
+.diag-group-warning .diag-group-title {
+  color: var(--warn);
+}
+
+.diag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.diag-item {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: var(--sp-3);
+  align-items: start;
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.diag-item + .diag-item {
+  border-top: 1px solid var(--soft-line);
+}
+
+.diag-item-state {
+  display: grid;
+  margin-top: 1px;
+  color: var(--good);
+}
+
+.diag-item-info .diag-item-state {
+  color: var(--accent);
+}
+
+.diag-item-warning .diag-item-state {
+  color: var(--warn);
+}
+
+.diag-item-error .diag-item-state {
+  color: var(--bad);
+}
+
+.diag-item-kind {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-xs);
+  background: var(--inset);
+  color: var(--muted);
+}
+
+.diag-item-text {
+  min-width: 0;
+}
+
+.diag-item-label {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.diag-item-detail {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.diag-item-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  max-width: 300px;
+}
+
+.diag-versions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.diag-version {
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.diag-version + .diag-version {
+  border-left: 1px solid var(--soft-line);
+}
+
+.diag-version dt {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.diag-version dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.diag-exported {
+  margin-top: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  white-space: normal;
+}
+
+.diag-exported p {
+  margin: 0;
+}
+
+.diag-exported-path {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-top: 2px !important;
+  overflow-wrap: anywhere;
+}
+
+.diag-exported .btn {
+  color: inherit;
+}
+
+.diag-sk-summary {
+  height: 96px;
+  margin: var(--sp-2) 0 var(--sp-6);
+  border-radius: var(--r-xl);
+}
+
+.diag-sk-row {
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.diag-sk-row + .diag-sk-row {
+  border-top: 1px solid var(--soft-line);
+}
+
+.diag-sk-row .skeleton {
+  height: 32px;
+}
+
+@media (max-width: 1080px) {
+  .diag-summary {
+    flex-wrap: wrap;
+  }
+  .diag-counts {
+    width: 100%;
+  }
+  .diag-count {
+    flex: 1;
+  }
+  .diag-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .diag-item-kind {
+    display: none;
+  }
+  .diag-item-side {
+    grid-column: 2;
+    justify-content: flex-start;
+    max-width: none;
+  }
+  .diag-versions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .diag-version + .diag-version {
+    border-left: 0;
+    border-top: 1px solid var(--soft-line);
+  }
+}

@@ -62,7 +62,11 @@ struct RawResponse {
 }
 
 fn client() -> Result<Client, GithubApiError> {
-    Ok(Client::builder().user_agent("gitpass-desktop").build()?)
+    Ok(Client::builder()
+        .user_agent("gitpass-desktop")
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?)
 }
 
 fn get(url: &str, token: &str) -> Result<RawResponse, GithubApiError> {

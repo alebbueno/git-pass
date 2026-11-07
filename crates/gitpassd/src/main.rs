@@ -4,8 +4,8 @@ use std::path::Path;
 
 use gitpass_core::{
     config_file_path, decode_request_line, encode_line, ensure_app_support_exists,
-    ipc_socket_path, AppConfig, HookContext, IpcRequest, IpcResponse, ValidateFail,
-    validate_repo_for_hook_daemon,
+    ipc_client, ipc_socket_path, validate_repo_for_hook_daemon_within, AppConfig, HookContext,
+    IpcRequest, IpcResponse, ValidateFail,
 };
 use tokio::io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -52,6 +52,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sock_path = ipc_socket_path()?;
     ensure_app_support_exists()?;
     ensure_socket_parent(&sock_path)?;
+    if ipc_client::socket_in_use(&sock_path) {
+        // Replacing a live daemon's socket would leave it serving nobody; take over once it stops.
+        info!(path = %sock_path.display(), "another gitpassd is listening; waiting for it to stop");
+        while ipc_client::socket_in_use(&sock_path) {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    }
     if sock_path.exists() {
         // Remove stale socket from a prior crash.
         std::fs::remove_file(&sock_path)?;
@@ -107,7 +114,12 @@ async fn handle_client(
                         .unwrap_or(false);
                     let allow_ambiguous = !strict_api;
                     match AppConfig::load_or_default() {
-                        Ok(cfg) => validate_repo_for_hook_daemon(&ctx, &cfg, allow_ambiguous),
+                        Ok(cfg) => validate_repo_for_hook_daemon_within(
+                            &ctx,
+                            &cfg,
+                            allow_ambiguous,
+                            ipc_client::DAEMON_VALIDATE_DEADLINE,
+                        ),
                         Err(e) => ValidateFail::Err {
                             code: "GP-CONFIG",
                             message: format!("{e}"),

@@ -8,9 +8,12 @@ import {
   type CloudRepo,
 } from "../lib/api-cloud";
 import { errMessage, esc, relativeTime, shortenPath, showToast, withBusy } from "../lib/dom";
+import { errorView } from "../lib/errors";
 import { icon } from "../lib/icons";
-import { profileChip, profileName } from "../lib/profile";
+import { profileChip, profileFamily, profileName } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
+import { drawerRoute } from "./repo-detail";
+import { plural } from "./repos-ui";
 
 const PAGE_SIZE = 50;
 
@@ -83,72 +86,60 @@ function overallPercent(job: CloneJob): number {
 
 // ---------- Permissões ----------
 
-const svg = (inner: string) =>
-  `<svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
-const ICON_SHIELD = svg('<path d="M12 3 4 6v6c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>');
-const ICON_PENCIL = svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>');
-const ICON_EYE = svg('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
-const ICON_ARCHIVE = svg('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>');
-
 function canWrite(r: CloudRepo): boolean {
   const p = r.permissions;
   return !!p && (p.admin || p.maintain || p.push);
 }
 
-function permissionBadge(r: CloudRepo): string {
+function permissionTag(r: CloudRepo): string {
   const p = r.permissions;
   if (!p) return "";
-  if (p.admin) return `<span class="badge success" title="Administrador do repositório">${ICON_SHIELD}Admin</span>`;
+  if (p.admin) return `<span class="cloud-tag" title="Administrador do repositório">${icon("shieldCheck", 11)}Admin</span>`;
   if (p.maintain || p.push) {
     const title = p.maintain && !p.push ? "Manutenção (pode escrever)" : "Pode enviar alterações (push)";
-    return `<span class="badge success" title="${title}">${ICON_PENCIL}Escrita</span>`;
+    return `<span class="cloud-tag" title="${title}">${icon("edit", 11)}Escrita</span>`;
   }
-  if (p.triage || p.pull) return `<span class="badge" title="Só leitura">${ICON_EYE}Leitura</span>`;
+  if (p.triage || p.pull) return `<span class="cloud-tag" title="Só leitura">${icon("file", 11)}Leitura</span>`;
   return "";
 }
 
-export const mount: MountView = (root, ctx) => {
-  // Estado em memória enquanto a tela está montada
+type Entry = { account: AccountRow; repo: CloudRepo; local: boolean; bindingId: string | null };
+
+export const mount: MountView = (root, ctx, _param, initialQuery) => {
   let accounts: AccountRow[] = [];
   let bindings: BindingRow[] = [];
   let loadedAccounts = false;
   let loadError: string | null = null;
   const repoStates = new Map<string, RepoState>();
-  const expanded = new Set<string>();
+  let showAll = false;
   let query = "";
   let localFilter: LocalFilter = "all";
   let permFilter: PermFilter = "all";
-  let profileFilter = "all";
+  let profileFilter = initialQuery?.get("profile") ?? "all";
   let popover: Popover | null = null;
   let focusPopover = false;
   let generation = 0;
   let alive = true;
 
   root.innerHTML = `
-    <header class="view-header">
-      <div>
-        <h1 class="view-title">Na nuvem</h1>
-        <p class="view-sub">Repositórios no GitHub, por perfil. Clone com a conta certa.</p>
-      </div>
-      <div class="view-actions">
-        <button type="button" class="btn ghost" id="cloud-refresh">${icon("refresh")}<span>Atualizar</span></button>
-      </div>
-    </header>
-    <div class="cloud-toolbar" id="cloud-toolbar" hidden>
-      <label class="cloud-search">
-        <span class="cloud-search-icon">${icon("search")}</span>
-        <input type="search" class="input" id="cloud-search" placeholder="Filtrar por nome (dono/repositório)" aria-label="Filtrar repositórios por nome" autocomplete="off" spellcheck="false" />
+    <div class="page-head">
+      <div class="heading-group"><h1>Na nuvem</h1><p>Repositórios disponíveis nas suas contas GitHub.</p></div>
+      <button type="button" class="icon-button" id="cloud-refresh" aria-label="Atualizar a lista" title="Atualizar">${icon("refresh")}</button>
+    </div>
+    <div class="filterbar" id="cloud-toolbar" role="search" aria-label="Filtros da nuvem" hidden>
+      <label class="search">${icon("search")}<span class="sr-only">Buscar na nuvem</span>
+        <input type="search" id="cloud-search" placeholder="Buscar repositório" title="Busque por dono ou nome" autocomplete="off" spellcheck="false" />
       </label>
-      <div class="segmented" id="cloud-local-filter" role="group" aria-label="Filtrar por clone local">
-        <button type="button" data-local="all" aria-pressed="true">Todos</button>
-        <button type="button" data-local="local" aria-pressed="false">Com clone local</button>
-        <button type="button" data-local="cloud" aria-pressed="false">Só na nuvem</button>
-      </div>
-      <div class="segmented" id="cloud-perm-filter" role="group" aria-label="Filtrar por permissão">
-        <button type="button" data-perm="all" aria-pressed="true">Qualquer acesso</button>
-        <button type="button" data-perm="write" aria-pressed="false">Posso escrever</button>
-      </div>
-      <div class="segmented" id="cloud-profile-filter" role="group" aria-label="Filtrar por perfil" hidden></div>
+      <label class="select-wrap" id="cloud-profile-wrap">${icon("user")}<span class="sr-only">Filtrar por perfil</span><select id="cloud-profile"></select></label>
+      <label class="select-wrap">${icon("folder")}<span class="sr-only">Filtrar por clone local</span>
+        <select id="cloud-local">
+          <option value="all">Todos</option>
+          <option value="local">Com clone local</option>
+          <option value="cloud">Só na nuvem</option>
+        </select>
+      </label>
+      <button type="button" class="control filter-toggle" id="cloud-write" aria-pressed="false">${icon("edit")}<span>Posso escrever</span></button>
+      <span class="filter-count" id="cloud-count" role="status" aria-live="polite"></span>
     </div>
     <div class="cloud-body" id="cloud-body"></div>
   `;
@@ -156,25 +147,20 @@ export const mount: MountView = (root, ctx) => {
   const refreshBtn = root.querySelector<HTMLButtonElement>("#cloud-refresh")!;
   const toolbar = root.querySelector<HTMLElement>("#cloud-toolbar")!;
   const searchInput = root.querySelector<HTMLInputElement>("#cloud-search")!;
-  const localGroup = root.querySelector<HTMLElement>("#cloud-local-filter")!;
-  const permGroup = root.querySelector<HTMLElement>("#cloud-perm-filter")!;
-  const profileGroup = root.querySelector<HTMLElement>("#cloud-profile-filter")!;
+  const profileSelect = root.querySelector<HTMLSelectElement>("#cloud-profile")!;
+  const profileWrap = root.querySelector<HTMLElement>("#cloud-profile-wrap")!;
+  const localSelect = root.querySelector<HTMLSelectElement>("#cloud-local")!;
+  const writeBtn = root.querySelector<HTMLButtonElement>("#cloud-write")!;
+  const countEl = root.querySelector<HTMLElement>("#cloud-count")!;
   const body = root.querySelector<HTMLElement>("#cloud-body")!;
 
   // ---------- Dados ----------
 
-  function localKeys(accountId: string): Set<string> {
-    const keys = new Set<string>();
-    for (const b of bindings) {
-      if (b.account_id === accountId && b.github_owner && b.github_repo) {
-        keys.add(`${b.github_owner}/${b.github_repo}`.toLowerCase());
-      }
-    }
-    return keys;
-  }
-
-  function isLocalRepo(accountId: string, r: CloudRepo, locals: Set<string>): boolean {
-    return !!r.local_binding_id || locals.has(r.full_name.toLowerCase()) || clonedKeys.has(rowKey(accountId, r.full_name));
+  function localBinding(accountId: string, r: CloudRepo): string | null {
+    if (r.local_binding_id) return r.local_binding_id;
+    const name = r.full_name.toLowerCase();
+    const b = bindings.find((x) => x.account_id === accountId && x.github_owner && x.github_repo && `${x.github_owner}/${x.github_repo}`.toLowerCase() === name);
+    return b?.id ?? null;
   }
 
   async function fetchRepos(account: AccountRow, gen: number, silent = false): Promise<void> {
@@ -250,6 +236,7 @@ export const mount: MountView = (root, ctx) => {
       const path = await apiCloud.clone(p.accountId, p.fullName, p.parent);
       clonedKeys.add(key);
       showToast(`${p.fullName} clonado em ${shortenPath(path)}.`, "ok");
+      ctx.notifyDataChanged();
     } catch (e) {
       showToast(errMessage(e));
     } finally {
@@ -262,22 +249,11 @@ export const mount: MountView = (root, ctx) => {
 
   function renderToolbar(): void {
     toolbar.hidden = accounts.length === 0;
-    for (const btn of localGroup.querySelectorAll<HTMLButtonElement>("button")) {
-      btn.setAttribute("aria-pressed", String(btn.dataset.local === localFilter));
-    }
-    for (const btn of permGroup.querySelectorAll<HTMLButtonElement>("button")) {
-      btn.setAttribute("aria-pressed", String(btn.dataset.perm === permFilter));
-    }
-    if (accounts.length > 1) {
-      profileGroup.hidden = false;
-      const opts = [{ id: "all", label: "Todos os perfis" }, ...accounts.map((a) => ({ id: a.id, label: profileName(a) }))];
-      profileGroup.innerHTML = opts
-        .map((o) => `<button type="button" data-profile="${esc(o.id)}" aria-pressed="${o.id === profileFilter}">${esc(o.label)}</button>`)
-        .join("");
-    } else {
-      profileGroup.hidden = true;
-      profileGroup.innerHTML = "";
-    }
+    localSelect.value = localFilter;
+    writeBtn.setAttribute("aria-pressed", String(permFilter === "write"));
+    profileWrap.hidden = accounts.length < 2;
+    profileSelect.innerHTML = [`<option value="all">Todos os perfis</option>`, ...accounts.map((a) => `<option value="${esc(a.id)}">${esc(profileName(a))}</option>`)].join("");
+    profileSelect.value = profileFilter;
   }
 
   function renderAll(): void {
@@ -292,172 +268,157 @@ export const mount: MountView = (root, ctx) => {
       <div class="cloud-progress" role="progressbar" aria-label="Clonando ${esc(job.fullName)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
         <span class="cloud-progress-fill" style="width:${pct}%"></span>
       </div>
-      <span class="cloud-progress-label small muted"><span class="cloud-progress-phase">${esc(label)}</span> · <span class="cloud-progress-pct">${pct}%</span></span>
+      <span class="cloud-progress-label caption muted"><span class="cloud-progress-phase">${esc(label)}</span> · <span class="cloud-progress-pct">${pct}%</span></span>
     </div>`;
   }
 
   function popoverHtml(p: Popover, account: AccountRow): string {
     return `<div class="cloud-popover" role="dialog" aria-label="Clonar ${esc(p.fullName)}">
       <div class="field-label">Destino</div>
-      <div class="cloud-dest mono small" title="${esc(destLabel(p))}">${icon("folder", 14)}<span class="truncate">${esc(destLabel(p))}</span></div>
+      <div class="cloud-dest" title="${esc(destLabel(p))}">${icon("folder")}<code class="truncate">${esc(destLabel(p))}</code></div>
       <div class="cloud-popover-choose">
-        <button type="button" class="btn" data-pop-choose>${icon("folder")}<span>Escolher pasta…</span></button>
-        ${p.parent ? `<button type="button" class="btn ghost" data-pop-reset>Usar a pasta padrão</button>` : ""}
+        <button type="button" class="control" data-pop-choose>${icon("folder")}<span>Escolher pasta…</span></button>
+        ${p.parent ? `<button type="button" class="control ghost" data-pop-reset>Usar a pasta padrão</button>` : ""}
       </div>
-      <p class="muted small cloud-popover-hint">O GitPass clona com o perfil ${esc(profileName(account))} e vincula a pasta a ele.</p>
+      <p class="caption muted">O GitPass clona com o perfil ${esc(profileName(account))} e vincula a pasta a ele.</p>
       <div class="cloud-popover-actions">
-        <button type="button" class="btn ghost" data-pop-cancel>Cancelar</button>
-        <button type="button" class="btn primary" data-pop-confirm>${icon("cloud")}<span>Clonar</span></button>
+        <button type="button" class="control ghost" data-pop-cancel>Cancelar</button>
+        <button type="button" class="control primary" data-pop-confirm>${icon("download")}<span>Clonar</span></button>
       </div>
     </div>`;
   }
 
-  function repoRow(a: AccountRow, r: CloudRepo, isLocal: boolean): string {
+  function repoRow(e: Entry): string {
+    const { account: a, repo: r, local } = e;
     const key = rowKey(a.id, r.full_name);
     const job = activeClones.get(key);
+    const fam = profileFamily(a.id);
+    const tags = [
+      r.private ? `<span class="cloud-tag">${icon("lock", 11)}Privado</span>` : "",
+      r.archived ? `<span class="cloud-tag warn" title="Repositório arquivado (só leitura)">${icon("alert", 11)}Arquivado</span>` : "",
+      r.fork ? `<span class="cloud-tag" title="Fork de outro repositório">${icon("branch", 11)}Fork</span>` : "",
+      permissionTag(r),
+    ].join("");
+    const meta = [r.default_branch ? `${icon("branch", 11)}${esc(r.default_branch)}` : "", r.pushed_at ? `Último push ${esc(relativeTime(r.pushed_at))}` : ""]
+      .filter(Boolean)
+      .join(" · ");
 
-    const privateBadge = r.private
-      ? `<span class="badge cloud-badge-private">${icon("lock", 12)}Privado</span>`
-      : "";
-    const archivedBadge = r.archived
-      ? `<span class="badge warning" title="Repositório arquivado (só leitura)">${ICON_ARCHIVE}Arquivado</span>`
-      : "";
-    const forkBadge = r.fork ? `<span class="badge" title="Fork de outro repositório">${icon("branch", 12)}Fork</span>` : "";
-    const localBadge = isLocal && !job ? `<span class="badge success">${icon("check", 12)}Clone local</span>` : "";
-    const branch = r.default_branch
-      ? `<span class="cloud-branch mono muted small" title="Branch padrão">${icon("branch", 13)}<span class="truncate">${esc(r.default_branch)}</span></span>`
-      : "";
-    const pushed = r.pushed_at
-      ? `<span class="cloud-pushed muted small" title="Último push">${esc(relativeTime(r.pushed_at))}</span>`
-      : "";
-    const desc = r.description
-      ? `<span class="cloud-desc muted small truncate" title="${esc(r.description)}">${esc(r.description)}</span>`
-      : "";
-
-    let action = "";
+    let action: string;
     if (job) {
-      action = `<span class="badge cloud-cloning" role="status"><span class="spinner cloud-mini-spinner" aria-hidden="true"></span>Clonando…</span>`;
-    } else if (isLocal) {
-      action = `<button type="button" class="btn" data-open-local>${icon("repo")}<span>Abrir</span></button>`;
+      action = `<span class="state neutral" role="status"><span class="spinner" aria-hidden="true"></span>Clonando…</span>`;
+    } else if (local) {
+      action = `<button type="button" class="control" data-open-local${e.bindingId ? ` data-binding="${esc(e.bindingId)}" aria-controls="repo-drawer"` : ""}>Abrir${icon("chevronRight")}</button>`;
     } else {
       const open = popover?.key === key;
-      action = `<button type="button" class="btn primary" data-clone-open aria-haspopup="dialog" aria-expanded="${open}">${icon("plus")}<span>Clonar</span></button>`;
+      action = `<button type="button" class="control" data-clone-open aria-haspopup="dialog" aria-expanded="${open}">${icon("plus")}<span>Clonar</span></button>`;
     }
-
-    const pop = popover?.key === key && !job && !isLocal ? popoverHtml(popover, a) : "";
+    const pop = popover?.key === key && !job && !local ? popoverHtml(popover, a) : "";
 
     return `<li class="cloud-item" data-key="${esc(key)}" data-account="${esc(a.id)}" data-full="${esc(r.full_name)}">
-      <div class="list-row cloud-row">
-        <div class="cloud-row-main">
-          <span class="cloud-row-name mono truncate" title="${esc(r.full_name)}">${esc(r.full_name)}</span>
-          ${desc}
-        </div>
-        <span class="cloud-row-meta">${permissionBadge(r)}${privateBadge}${archivedBadge}${forkBadge}${localBadge}${branch}</span>
-        ${pushed}
+      <div class="cloud-row">
+        <span class="project-name"><span class="repo-mark">${icon("repo")}</span><span class="truncate">
+          <strong class="truncate" title="${esc(r.description ?? r.name)}">${esc(r.name)}${local && !job ? `<span class="cloud-local" title="Clone local vinculado">${icon("check", 11)}Local</span>` : ""}</strong>
+          <code class="truncate" title="${esc(r.full_name)}">${esc(r.full_name)}</code>
+        </span></span>
+        <span class="cloud-meta">${tags}${meta ? `<span class="cloud-sub">${meta}</span>` : ""}</span>
+        ${profileChip(a)}
         <span class="cloud-actions">
           ${action}
-          <button type="button" class="btn ghost icon-only" data-open-url="${esc(r.html_url)}" aria-label="Abrir ${esc(r.full_name)} no GitHub" title="Abrir no GitHub">${icon("external", 15)}</button>
+          <button type="button" class="icon-button" data-open-url="${esc(r.html_url)}" aria-label="Abrir ${esc(r.full_name)} no GitHub" title="Abrir no GitHub">${icon("external")}</button>
         </span>
-        ${job ? progressHtml(job) : ""}
       </div>
+      ${job ? progressHtml(job) : ""}
       ${pop}
     </li>`;
   }
 
-  function sectionHead(a: AccountRow, countText: string, extra = ""): string {
-    return `<div class="cloud-section-head">
-      ${profileChip(a, { size: "md" })}
-      ${a.login ? `<span class="mono muted small">@${esc(a.login)}</span>` : ""}
-      ${countText ? `<span class="cloud-count muted small">${esc(countText)}</span>` : ""}
-      ${extra}
-    </div>`;
+  function noticeHtml(a: AccountRow): string {
+    if (!a.has_token) {
+      return `<div class="callout warning cloud-notice">${icon("alert")}<span><strong>${esc(profileName(a))}</strong> não está conectado ao GitHub, então não dá para listar os repositórios.</span>
+        <button type="button" class="control" data-action="accounts">${icon("key")}<span>Conectar de novo</span></button></div>`;
+    }
+    const st = repoStates.get(a.id);
+    if (st?.status === "error") {
+      return errorView({
+        title: `Não foi possível buscar os repositórios de ${profileName(a)}`,
+        error: st.message,
+        compact: true,
+        tone: "warning",
+        actions: [{ label: "Tentar de novo", action: "retry-profile", icon: "refresh", data: { retry: a.id } }],
+      });
+    }
+    return "";
   }
 
-  function sectionHtml(a: AccountRow): string {
-    if (!a.has_token) {
-      return `<section class="cloud-section" aria-label="${esc(profileName(a))}">
-        ${sectionHead(a, "", `<span class="badge warning">${icon("alert", 12)}Desconectado</span>`)}
-        <div class="cloud-notoken">
-          <p class="muted small">Este perfil não está conectado ao GitHub, então não dá para listar os repositórios.</p>
-          <button type="button" class="btn" data-action="accounts">${icon("key")}<span>Gerenciar contas</span></button>
-        </div>
-      </section>`;
-    }
-    const state = repoStates.get(a.id) ?? { status: "loading" };
-    if (state.status === "loading") {
-      return `<section class="cloud-section" aria-label="${esc(profileName(a))}" aria-busy="true">
-        ${sectionHead(a, "", `<span class="spinner cloud-head-spinner" role="status" aria-label="Carregando"></span>`)}
-        <div class="cloud-skeletons">${'<div class="skeleton cloud-skeleton-row"></div>'.repeat(3)}</div>
-      </section>`;
-    }
-    if (state.status === "error") {
-      return `<section class="cloud-section" aria-label="${esc(profileName(a))}">
-        ${sectionHead(a, "")}
-        <div class="callout error" role="alert">
-          ${icon("alert")}
-          <div class="cloud-error-body">
-            <div><strong>Não foi possível buscar os repositórios.</strong></div>
-            <div class="cloud-error-msg">${esc(state.message)}</div>
-          </div>
-          <button type="button" class="btn" data-retry="${esc(a.id)}">${icon("refresh")}<span>Tentar de novo</span></button>
-        </div>
-      </section>`;
-    }
-
-    const locals = localKeys(a.id);
+  function entries(shown: AccountRow[]): { list: Entry[]; total: number } {
     const q = query.trim().toLowerCase();
-    const filtered = state.repos.filter((r) => {
-      if (q && !r.full_name.toLowerCase().includes(q)) return false;
-      const isLocal = isLocalRepo(a.id, r, locals);
-      if (localFilter === "local" && !isLocal) return false;
-      if (localFilter === "cloud" && isLocal) return false;
-      if (permFilter === "write" && !canWrite(r)) return false;
-      return true;
-    });
-    const filtering = q !== "" || localFilter !== "all" || permFilter !== "all";
-    const total = state.repos.length;
-    const countText = filtering
-      ? `${filtered.length} de ${total} ${total === 1 ? "repositório" : "repositórios"}`
-      : `${total} ${total === 1 ? "repositório" : "repositórios"}`;
-
-    let content: string;
-    if (total === 0) {
-      content = `<p class="muted small cloud-empty">Sem repositórios nesta conta.</p>`;
-    } else if (filtered.length === 0) {
-      content = `<p class="muted small cloud-empty">Nenhum repositório corresponde ao filtro.</p>`;
-    } else {
-      const showAll = expanded.has(a.id);
-      const visible = showAll ? filtered : filtered.slice(0, PAGE_SIZE);
-      const more = filtered.length - visible.length;
-      content = `<ul class="list">${visible.map((r) => repoRow(a, r, isLocalRepo(a.id, r, locals))).join("")}</ul>
-        ${more > 0 ? `<div class="cloud-more"><button type="button" class="btn" data-more="${esc(a.id)}">Mostrar mais (${more})</button></div>` : ""}`;
+    let total = 0;
+    const list: Entry[] = [];
+    for (const a of shown) {
+      const st = repoStates.get(a.id);
+      if (st?.status !== "ok") continue;
+      total += st.repos.length;
+      for (const r of st.repos) {
+        const bindingId = localBinding(a.id, r);
+        const local = !!bindingId || clonedKeys.has(rowKey(a.id, r.full_name));
+        if (q && !r.full_name.toLowerCase().includes(q) && !(r.description ?? "").toLowerCase().includes(q)) continue;
+        if (localFilter === "local" && !local) continue;
+        if (localFilter === "cloud" && local) continue;
+        if (permFilter === "write" && !canWrite(r)) continue;
+        list.push({ account: a, repo: r, local, bindingId });
+      }
     }
-    return `<section class="cloud-section" aria-label="${esc(profileName(a))}">
-      ${sectionHead(a, countText)}
-      ${content}
-    </section>`;
+    list.sort((x, y) => Number(y.local) - Number(x.local) || (y.repo.pushed_at ?? "").localeCompare(x.repo.pushed_at ?? "") || x.repo.full_name.localeCompare(y.repo.full_name));
+    return { list, total };
   }
 
   function renderBody(): void {
     if (!loadedAccounts) {
-      body.innerHTML = `<div class="cloud-skeletons">${'<div class="skeleton cloud-skeleton-row"></div>'.repeat(3)}</div>`;
+      countEl.textContent = "";
+      body.innerHTML = `<div class="list-frame" aria-busy="true"><span class="sr-only">Carregando…</span>${'<div class="cloud-sk-row"><span class="skeleton"></span></div>'.repeat(4)}</div>`;
       return;
     }
     if (loadError) {
-      body.innerHTML = `<div class="callout error" role="alert">${icon("alert")}<div class="cloud-error-body"><div><strong>Não foi possível carregar os perfis.</strong></div><div class="cloud-error-msg">${esc(loadError)}</div></div><button type="button" class="btn" data-action="reload">${icon("refresh")}<span>Tentar de novo</span></button></div>`;
+      body.innerHTML = errorView({
+        title: "Não foi possível carregar os perfis",
+        error: loadError,
+        actions: [{ label: "Tentar de novo", action: "reload", icon: "refresh", primary: true }],
+      });
       return;
     }
     if (accounts.length === 0) {
-      body.innerHTML = `<div class="panel"><div class="empty-state">
-        <span class="empty-icon">${icon("cloud", 26)}</span>
-        <h3>Nenhum perfil conectado</h3>
-        <p>Conecte um perfil do GitHub para ver aqui os repositórios que você tem na nuvem.</p>
-        <button type="button" class="btn primary" data-action="accounts">${icon("plus")}<span>Conectar um perfil</span></button>
-      </div></div>`;
+      countEl.textContent = "";
+      body.innerHTML = `<section class="surface"><div class="empty-state">
+        <span class="empty-icon">${icon("cloud")}</span>
+        <h3>Nenhuma conta conectada</h3>
+        <p>Conecte uma conta do GitHub para ver aqui os repositórios que você tem na nuvem.</p>
+        <button type="button" class="control primary" data-action="accounts">${icon("plus")}<span>Conectar conta</span></button>
+      </div></section>`;
       return;
     }
     const shown = accounts.filter((a) => profileFilter === "all" || a.id === profileFilter);
-    body.innerHTML = shown.map(sectionHtml).join("");
+    const notices = shown.map(noticeHtml).join("");
+    const loading = shown.filter((a) => repoStates.get(a.id)?.status === "loading");
+    const { list, total } = entries(shown);
+    const filtering = query.trim() !== "" || localFilter !== "all" || permFilter !== "all";
+    countEl.textContent = filtering ? `${list.length} de ${total}` : plural(total, "repositório", "repositórios");
+    const visible = showAll ? list : list.slice(0, PAGE_SIZE);
+    const more = list.length - visible.length;
+    const loadingNote = loading.length
+      ? `<p class="cloud-loading caption muted" role="status"><span class="spinner" aria-hidden="true"></span>Buscando os repositórios de ${esc(loading.map(profileName).join(", "))}…</p>`
+      : "";
+    let listHtml: string;
+    if (visible.length) {
+      listHtml = `<ul class="list-frame cloud-list" aria-label="Repositórios na nuvem">${visible.map(repoRow).join("")}</ul>
+        ${more > 0 ? `<div class="cloud-more"><button type="button" class="control" data-more>Mostrar mais (${more})</button></div>` : ""}`;
+    } else if (loading.length && total === 0) {
+      listHtml = `<div class="list-frame" aria-busy="true">${'<div class="cloud-sk-row"><span class="skeleton"></span></div>'.repeat(3)}</div>`;
+    } else if (total === 0) {
+      listHtml = notices ? "" : `<div class="list-frame empty"><strong>Nenhum repositório</strong>As contas conectadas ainda não têm repositórios no GitHub.</div>`;
+    } else {
+      listHtml = `<div class="list-frame empty"><strong>Nenhum repositório encontrado</strong>Experimente outra busca ou ajuste os filtros.</div>`;
+    }
+    body.innerHTML = `${notices}${loadingNote}${listHtml}`;
     if (focusPopover) {
       focusPopover = false;
       body.querySelector<HTMLElement>("[data-pop-confirm]")?.focus();
@@ -486,28 +447,17 @@ export const mount: MountView = (root, ctx) => {
     query = searchInput.value;
     renderBody();
   });
-
-  localGroup.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-local]");
-    if (!btn) return;
-    localFilter = btn.dataset.local as LocalFilter;
-    renderToolbar();
+  localSelect.addEventListener("change", () => {
+    localFilter = localSelect.value as LocalFilter;
     renderBody();
   });
-
-  permGroup.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-perm]");
-    if (!btn) return;
-    permFilter = btn.dataset.perm as PermFilter;
-    renderToolbar();
+  profileSelect.addEventListener("change", () => {
+    profileFilter = profileSelect.value || "all";
     renderBody();
   });
-
-  profileGroup.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-profile]");
-    if (!btn) return;
-    profileFilter = btn.dataset.profile ?? "all";
-    renderToolbar();
+  writeBtn.addEventListener("click", () => {
+    permFilter = permFilter === "write" ? "all" : "write";
+    writeBtn.setAttribute("aria-pressed", String(permFilter === "write"));
     renderBody();
   });
 
@@ -525,9 +475,8 @@ export const mount: MountView = (root, ctx) => {
       if (acc) void fetchRepos(acc, generation);
       return;
     }
-    const more = el.closest<HTMLElement>("[data-more]")?.dataset.more;
-    if (more) {
-      expanded.add(more);
+    if (el.closest("[data-more]")) {
+      showAll = true;
       renderBody();
       return;
     }
@@ -537,7 +486,8 @@ export const mount: MountView = (root, ctx) => {
       api.openExternal(url).catch((e) => showToast(errMessage(e)));
       return;
     }
-    if (el.closest("[data-open-local]")) return ctx.navigate("repos");
+    const openLocal = el.closest<HTMLElement>("[data-open-local]");
+    if (openLocal) return ctx.navigate(openLocal.dataset.binding ? drawerRoute(openLocal.dataset.binding) : "repos");
 
     const item = el.closest<HTMLElement>(".cloud-item");
     const accountId = item?.dataset.account;
@@ -599,15 +549,25 @@ export const mount: MountView = (root, ctx) => {
   };
   const onKey = (ev: KeyboardEvent) => {
     if (ev.key === "Escape" && popover) {
+      const key = popover.key;
       popover = null;
       renderBody();
+      body.querySelector<HTMLElement>(`.cloud-item[data-key="${CSS.escape(key)}"] [data-clone-open]`)?.focus();
     }
   };
   document.addEventListener("click", onDocClick);
   document.addEventListener("keydown", onKey);
 
   refreshBtn.addEventListener("click", () => {
-    void withBusy(refreshBtn, "Atualizando…", loadAll).catch((e) => showToast(errMessage(e)));
+    void withBusy(refreshBtn, "", loadAll).catch((e) => showToast(errMessage(e)));
+  });
+
+  ctx.onRoute((_p, q) => {
+    const prof = q?.get("profile");
+    if (prof && prof !== profileFilter) {
+      profileFilter = prof;
+      renderAll();
+    }
   });
 
   const onDataChanged = () => void loadAll(false);

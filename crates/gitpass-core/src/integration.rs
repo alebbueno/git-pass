@@ -521,7 +521,7 @@ pub fn launch_agent_plist(daemon_bin: &Path, log_file: &Path) -> String {
 
 // --- Filesystem helpers ---
 
-fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path without parent"))?;

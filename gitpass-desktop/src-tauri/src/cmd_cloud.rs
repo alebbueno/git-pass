@@ -48,14 +48,14 @@ fn now_epoch() -> i64 {
         .unwrap_or(0)
 }
 
-fn load_bundle(id: Uuid) -> Result<GithubTokenBundle, String> {
+pub(crate) fn load_bundle(id: Uuid) -> Result<GithubTokenBundle, String> {
     github_token_load(id)
         .map_err(|e| format!("Não foi possível ler o acesso nas Chaves do macOS: {e}"))?
         .ok_or_else(|| "Esta conta não tem acesso salvo. Conecte a conta do GitHub em «Contas».".to_string())
 }
 
 /// Exchanges the stored refresh token for a new bundle and saves it.
-fn refresh_bundle(id: Uuid, bundle: &GithubTokenBundle) -> Result<GithubTokenBundle, String> {
+pub(crate) fn refresh_bundle(id: Uuid, bundle: &GithubTokenBundle) -> Result<GithubTokenBundle, String> {
     let expired_msg = "O acesso ao GitHub expirou. Reconecte a conta em «Contas».".to_string();
     let refresh = bundle.refresh_token.as_deref().ok_or_else(|| expired_msg.clone())?;
     let new_bundle = if bundle.oauth_via_device {
@@ -76,7 +76,7 @@ fn refresh_bundle(id: Uuid, bundle: &GithubTokenBundle) -> Result<GithubTokenBun
 }
 
 /// Access token for the account, refreshed beforehand when it is about to expire.
-fn current_token(id: Uuid) -> Result<String, String> {
+pub(crate) fn current_token(id: Uuid) -> Result<String, String> {
     let bundle = load_bundle(id)?;
     let about_to_expire = bundle.expires_at_epoch.map(|e| e <= now_epoch() + 60).unwrap_or(false);
     if about_to_expire && bundle.refresh_token.is_some() {
@@ -87,7 +87,7 @@ fn current_token(id: Uuid) -> Result<String, String> {
     Ok(bundle.access_token)
 }
 
-fn api_error_message(e: GithubApiError) -> String {
+pub(crate) fn api_error_message(e: GithubApiError) -> String {
     match e {
         GithubApiError::Http { status: 401, .. } => {
             "O GitHub recusou o acesso (ele expirou ou foi cancelado). Reconecte a conta em «Contas».".to_string()
@@ -105,7 +105,9 @@ fn api_error_message(e: GithubApiError) -> String {
     }
 }
 
-fn list_repos_blocking(id: Uuid) -> Result<Vec<GithubRepoSummary>, String> {
+/// Every repo the account can access on GitHub, with its permissions (blocking HTTP). The token comes
+/// from the Keychain and is refreshed first when about to expire, or once when GitHub rejects it.
+pub(crate) fn list_account_repos(id: Uuid) -> Result<Vec<GithubRepoSummary>, String> {
     let bundle = load_bundle(id)?;
     let token = current_token(id)?;
     match list_user_repos(&token) {
@@ -128,7 +130,7 @@ pub async fn cloud_repos(account_id: String) -> Result<Vec<CloudRepo>, String> {
         if !cfg.accounts.iter().any(|a| a.id == id) {
             return Err("Conta desconhecida.".to_string());
         }
-        let repos = list_repos_blocking(id)?;
+        let repos = list_account_repos(id)?;
         Ok(repos
             .into_iter()
             .map(|repo| {

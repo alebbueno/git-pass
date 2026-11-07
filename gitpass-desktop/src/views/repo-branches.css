@@ -1,0 +1,127 @@
+/* Aba Branches: lista de branches do repositório e ações por branch */
+
+.branches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.branches .callout {
+  white-space: normal;
+}
+
+.callout.branches-dirty {
+  align-items: center;
+  margin: 0;
+}
+
+.branches-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.branches-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-3);
+  border-top: 1px solid var(--line);
+}
+
+.branches-row:first-child {
+  border-top: 0;
+}
+
+.branches-row.current {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+
+.branches-row.has-new::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.branches-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.branches-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.branches-name > .mono {
+  overflow-wrap: anywhere;
+}
+
+.badge.branches-badge-current {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.badge.branches-badge-new {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.branches-last {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  min-width: 0;
+}
+
+.branches-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branches-last time {
+  flex: none;
+}
+
+.branches-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+.branches-reason {
+  flex-basis: 100%;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .branches-actions {
+    justify-content: flex-start;
+  }
+  .branches-reason {
+    text-align: left;
+  }
+}

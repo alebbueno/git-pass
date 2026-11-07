@@ -11,6 +11,7 @@ import {
 import { reposApi, type DiscoveredRepo, type SuggestionReason } from "../lib/api-repos";
 import { DeviceFlowModal } from "../lib/device-flow";
 import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
+import { errorView } from "../lib/errors";
 import { brandSymbol, icon } from "../lib/icons";
 import { getOnboarding, setOnboarding, WELCOME_REQUEST_EVENT } from "../lib/onboarding";
 import { profileChip, profileName } from "../lib/profile";
@@ -127,20 +128,15 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
   let unlistenIntegration: (() => void) | null = null;
 
   root.innerHTML = `
-    <header class="view-header">
-      <div>
-        <h1 class="view-title">Boas-vindas</h1>
-        <p class="view-sub">Três passos, sem terminal.</p>
-      </div>
-      <div class="view-actions">
-        <button type="button" class="btn ghost" data-action="skip" title="Você pode voltar a este guia pelo Painel">Pular</button>
-      </div>
-    </header>
+    <div class="page-head">
+      <div class="heading-group"><h1>Boas-vindas</h1><p>Três passos, sem terminal.</p></div>
+      <button type="button" class="control ghost" data-action="skip" title="Você pode voltar a este guia pelo Painel">Pular</button>
+    </div>
     <p class="sr-only" role="status" aria-live="polite" data-ref="live"></p>
     <div class="welcome">
       <section class="welcome-hero" aria-labelledby="welcome-hero-title">
         <div class="welcome-hero-text">
-          <p class="welcome-eyebrow">Boas-vindas</p>
+          <p class="eyebrow">Boas-vindas</p>
           <h2 class="welcome-hero-title" id="welcome-hero-title">A conta certa em cada projeto.</h2>
           <p class="welcome-hero-sub">Conecte o GitHub e encontre seus repositórios. Depois disso, o Git usa sozinho a conta e a identidade certas em cada commit e push.</p>
         </div>
@@ -244,14 +240,14 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const unavailable = state.oauthOk === false;
     return `
       <div class="welcome-step-body">
-        <p class="welcome-lead">Conecte a conta GitHub que você usa neste Mac. Uma janela mostra um código: copie, autorize no GitHub e volte aqui. Sua senha nunca passa pelo app.</p>
+        <p class="welcome-lead">Conecte a conta do GitHub que você usa neste Mac. Uma janela mostra um código: copie, autorize no GitHub e volte aqui. Sua senha nunca passa pelo app.</p>
         ${
           unavailable
             ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>${esc(OAUTH_UNAVAILABLE)}</span></div>`
             : ""
         }
         <div class="welcome-actions">
-          <button type="button" class="btn primary lg welcome-cta" data-action="connect"${unavailable ? " disabled" : ""}>${icon("key", 18)}<span>Conectar conta GitHub</span></button>
+          <button type="button" class="btn primary lg welcome-cta" data-action="connect"${unavailable ? " disabled" : ""}>${icon("key", 18)}<span>Conectar conta</span></button>
         </div>
         <p class="muted small welcome-hint">Você pode conectar mais contas depois (por exemplo, pessoal e do trabalho).</p>
       </div>`;
@@ -356,7 +352,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     if (d.status === "error") {
       return `
         <div class="welcome-step-body">
-          <div class="callout error" role="alert">${icon("alert", 16)}<span>Não foi possível buscar os repositórios.\n${esc(d.message)}</span></div>
+          ${errorView({ title: "Não foi possível buscar os repositórios", error: d.message, compact: true })}
           <div class="welcome-actions">
             <button type="button" class="btn primary lg" data-action="retry-discover">${icon("refresh", 16)}<span>Tentar de novo</span></button>
             ${cloudBtn()}
@@ -532,7 +528,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     if (it.status === "error") {
       return `
         <div class="welcome-step-body">
-          <div class="callout error" role="alert">${icon("alert", 16)}<span>Não foi possível verificar a integração com o Git.\n${esc(it.message)}</span></div>
+          ${errorView({ title: "Não foi possível verificar a integração com o Git", error: it.message, compact: true })}
           <div class="welcome-actions">
             <button type="button" class="btn lg" data-action="retry-integration">${icon("refresh", 16)}<span>Tentar de novo</span></button>
             <button type="button" class="btn primary lg" data-action="finish">Ir para o Painel</button>
@@ -547,9 +543,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
     const warnings = state.applyWarnings.length
       ? `<div class="callout warning" role="status">${icon("alert", 16)}<span>${esc(state.applyWarnings.join("\n"))}</span></div>`
       : "";
-    const applyErr = state.applyError
-      ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>${esc(`Não foi possível ativar a integração.\n${state.applyError}`)}</span></div>`
-      : "";
+    const applyErr = state.applyError ? errorView({ title: "Não foi possível ativar a integração", error: state.applyError, compact: true }) : "";
     const gitMissing = !st.git_found
       ? `<div class="callout error" role="alert">${icon("alert", 16)}<span>O Git não foi encontrado neste Mac. Instale o Git (pelas ferramentas de desenvolvimento da Apple ou em git-scm.com) e verifique de novo.</span></div>`
       : "";
@@ -566,7 +560,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
       ? `<button type="button" class="btn primary lg welcome-cta" data-action="finish">Ir para o Painel</button>`
       : `
         <button type="button" class="btn primary lg welcome-cta" data-action="apply"${st.git_found ? "" : " disabled"}>${icon("check", 18)}<span>Ativar</span></button>
-        ${hasConflict ? `<button type="button" class="btn lg" data-action="settings">Ver em Configurações</button>` : ""}
+        ${hasConflict ? `<button type="button" class="btn lg" data-action="settings">Ver em Integração</button>` : ""}
         <button type="button" class="btn ghost lg" data-action="finish">Ir para o Painel</button>`;
 
     return `
@@ -680,7 +674,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
         void applyIntegration(el);
         break;
       case "settings":
-        ctx.navigate("settings");
+        ctx.navigate("integration");
         break;
       case "finish":
         exit("done");

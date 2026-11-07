@@ -19,3 +19,7 @@ clap.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt"] }
 uuid.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+toml.workspace = true

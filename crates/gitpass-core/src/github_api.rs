@@ -1,5 +1,7 @@
 //! Minimal GitHub REST API (disambiguation in daemon).
 
+use std::time::Duration;
+
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use thiserror::Error;
@@ -78,6 +80,8 @@ pub fn fetch_repo_permissions(
     let url = format!("https://api.github.com/repos/{owner}/{repo}");
     let client = Client::builder()
         .user_agent("gitpassd-validation")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
         .build()?;
 
     let resp = client

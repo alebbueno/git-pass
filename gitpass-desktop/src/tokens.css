@@ -1,0 +1,199 @@
+/*
+ * GitPass · tokens do design system (base: docs/GitPass_Preview.html).
+ * Todas as cores do app vivem aqui; componentes só usam var(--…).
+ * O tema é resolvido em `lib/theme.ts`: `data-theme="light" | "dark"` sempre presente no <html>.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Texto e superfícies */
+  --ink: #18192e;
+  --muted: #565c74;
+  --dim: #646b84;
+  --canvas: #f4f5fb;
+  --surface: #fcfcff;
+  --inset: #eff0f8;
+  --line: #dce0ed;
+  --soft-line: #e7e9f3;
+  --strong-line: #c5cadc;
+  --accent: #5138c9;
+  --accent-on: #fff;
+  --accent-soft: #eeeafd;
+  --accent-line: #d9cffb;
+  --sidebar: #eef0f9e8;
+  --bar: #f9faffdb;
+  --highlight: #fffdfd;
+  --primary-fill: linear-gradient(122deg, #6649dc, #4a34bd 72%, #4b49be);
+  --surface-sheen: linear-gradient(145deg, #fff, #fafaff 62%);
+  --scrim: #1d1b3a3d;
+
+  /* Estados */
+  --good: #146347;
+  --good-bg: #e2f6ec;
+  --warn: #865415;
+  --warn-bg: #fff0d7;
+  --bad: #a3312c;
+  --bad-bg: #fce7e4;
+
+  /* Perfis (cor fixa por conta) */
+  --iris: #5535b3;
+  --iris-bg: #eee9fd;
+  --iris-signal: #bbabff;
+  --aqua: #126477;
+  --aqua-bg: #e1f4f8;
+  --aqua-signal: #8fe9e1;
+  --blue: #1f4f9a;
+  --blue-bg: #e3edfc;
+  --blue-signal: #9cc2ff;
+  --rose: #9b3b64;
+  --rose-bg: #f9e6ee;
+  --rose-signal: #ffadd3;
+
+  /* Sombras */
+  --shadow: 0 1px 3px #2721490a, 0 22px 64px #2d265424, 0 4px 14px #30275014;
+  --float-shadow: 0 24px 85px #18122a50, 0 5px 18px #19132926;
+  --list-shadow: 0 6px 23px #171a360d;
+  --surface-shadow: 0 4px 15px #10152910;
+  --nav-shadow: 0 2px 7px #15162d14;
+  --tab-shadow: 0 2px 7px #0b0d221a;
+  --drawer-shadow: -24px 0 60px #0608194d;
+  --primary-bevel: inset 0 1px 0 #ffffff50, inset 0 -1px 0 #20164d3b;
+  --primary-bevel-hover: inset 0 1px 0 #ffffff6b;
+
+  /* Marca (mesma nos dois temas) */
+  --brand-ink: #fff;
+  --brand-line: #b0a1fb83;
+  --brand-fill: radial-gradient(ellipse at 0% 0%, #d8bbff, transparent 57%),
+    radial-gradient(ellipse at 100% 100%, #3f92bd, transparent 56%), linear-gradient(140deg, #6d51df, #29225e);
+  --brand-shadow: inset 0 1px 1px #f1eaff8f, inset 0 -1px 3px #22204e95, 0 5px 17px #6654b45e;
+
+  /* Herói do repositório e arte da rota (sempre escuros) */
+  --hero-ink: #f7f6ff;
+  --hero-line: #b7b1ff4d;
+  --hero-deep: #14223e;
+  --hero-fill: linear-gradient(110deg, #201b41 2%, #191a36 45%, #121b32);
+  --hero-shadow: inset 0 1px #f4edff23, 0 12px 34px #09092023;
+  --hero-dots: #d6ddff34;
+  --hero-label: #dfdcf7;
+  --hero-origin: #c1c3e0;
+  --hero-tag-ink: #e7e6fb;
+  --hero-tag-bg: #dfdaff12;
+  --hero-tag-line: #d1d2ff33;
+  --art-label: #d6d8ef;
+  --art-initials: #f2fffe;
+  --art-ink-start: #b69dff;
+  --art-ink-end: #a2baff;
+  --art-glass-1: #33395f;
+  --art-glass-2: #252a49;
+  --art-glass-3: #151c32;
+  --art-facet-1: #e4eaff;
+  --art-facet-3: #1b2545;
+  --art-orbit: #dce2ff;
+  --art-stars: #ced7ff;
+  --art-streak: #ecfcff;
+  --art-dot: #cbb4ff;
+  --art-node-shadow: #11162f;
+  --art-node-line: #a992fd;
+  --art-node-edge: #c2a9ff;
+  --art-node-shine: #eee0ff;
+  --art-node-icon: #d7c7ff;
+  --art-hub-shadow: #0c172e;
+  --art-hub-shine: #e7fffa;
+  --art-branch-shadow: #10152c;
+  --art-branch-line: #96b6ff;
+  --art-branch-edge: #a6c0ff;
+  --art-branch-shine: #d7e8ff;
+  --art-branch-icon: #bed4ff;
+  --glint-1: #a2eaf0;
+  --glint-2: #c1acff;
+  --glint-glow: #b7a7ff;
+  --mask-fade: #0009;
+  --mask-full: #000;
+
+  /* Tipografia */
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: "SFMono-Regular", ui-monospace, Consolas, "Liberation Mono", monospace;
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-body: 13px;
+  --fs-md: 14px;
+  --fs-title: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 26px;
+
+  /* Espaço, raios e medidas */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+  --r-xs: 5px;
+  --r-sm: 7px;
+  --r-md: 9px;
+  --r-lg: 11px;
+  --r-xl: 16px;
+  --r-2xl: 20px;
+  --control-h: 35px;
+  --topbar-h: 51px;
+
+  /* Movimento */
+  --ease: cubic-bezier(0.2, 0.78, 0.2, 1);
+  --sheet-ease: cubic-bezier(0.22, 0.79, 0.23, 1);
+  --sheet-time: 0.46s;
+  --dur-fast: 0.12s;
+  --dur: 0.18s;
+
+  /* Camadas */
+  --z-drawer: 20;
+  --z-popover: 60;
+  --z-modal: 80;
+  --z-toast: 90;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #f1f2ff;
+  --muted: #b7bdd6;
+  --dim: #9ca5c5;
+  --canvas: #0e1120;
+  --surface: #161a2d;
+  --inset: #111526;
+  --line: #2d3550;
+  --soft-line: #242b43;
+  --strong-line: #3d4766;
+  --accent: #beb0ff;
+  --accent-on: #17142b;
+  --accent-soft: #252342;
+  --accent-line: #554979;
+  --sidebar: #141729f4;
+  --bar: #101426e4;
+  --highlight: #b2bdff18;
+  --primary-fill: linear-gradient(120deg, #ab96ff, #c6b7ff 56%, #a4dbf5);
+  --surface-sheen: linear-gradient(145deg, #1a1d32, #15192c 62%);
+  --scrim: #04050c99;
+
+  --good: #9be7c7;
+  --good-bg: #193a36;
+  --warn: #ffcf8e;
+  --warn-bg: #3e2d27;
+  --bad: #ffb3a9;
+  --bad-bg: #44262c;
+
+  --iris: #d4c3ff;
+  --iris-bg: #392d56;
+  --aqua: #a0e4eb;
+  --aqua-bg: #1e3a47;
+  --blue: #b4d0ff;
+  --blue-bg: #1f3356;
+  --rose: #fac0d9;
+  --rose-bg: #492c41;
+
+  --shadow: 0 1px 2px #0707104d, 0 24px 68px #06060d80;
+  --float-shadow: 0 26px 90px #06060dbd, 0 5px 24px #08080d70;
+}

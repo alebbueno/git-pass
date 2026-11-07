@@ -1,18 +1,33 @@
 //! Shared types and paths for GitPass (daemon, CLI, Tauri).
 
+pub mod audit;
 pub mod bindings;
+pub mod branches;
 pub mod clone;
+pub mod current_repo;
+pub mod diagnostics;
+pub mod emergency;
 pub mod github_user;
 pub mod integration;
+pub mod logs_export;
+pub mod recent;
+pub mod redact;
 mod config;
 pub mod github_api;
 pub mod github_repos;
 mod hooks;
 pub mod git;
+pub mod git_auth;
+pub mod ipc_client;
 pub mod oauth_github;
+pub mod outgoing;
 pub mod remote;
+pub mod repo_map;
 mod secrets;
 mod validate;
+
+#[cfg(test)]
+mod test_fixtures;
 
 pub use git::{git_log_lines, git_remote_url, git_work_tree_root};
 
@@ -24,13 +39,16 @@ pub use hooks::{
     hook_script, hooks_dir, hooks_installed_ok, write_hook_scripts, HookPhase, HOOKS_DIR_NAME,
 };
 pub use validate::{
-    ci_bypass_from_env, is_validated_phase, policy_when_daemon_unreachable,
-    validate_repo_for_hook, validate_repo_for_hook_daemon, validate_repo_for_hook_with_options,
+    binding_health, ci_bypass_from_env, is_validated_phase, offline_policy, policy_when_daemon_unreachable,
+    policy_when_daemon_unreachable_because, OfflineAllowance,
+    validate_repo_for_hook, validate_repo_for_hook_daemon, validate_repo_for_hook_daemon_within,
+    validate_repo_for_hook_with_options,
     HookContext, ValidateFail, ValidateOptions,
 };
+pub use ipc_client::{DaemonUnreachable, IpcTimeouts};
 pub use remote::{normalize_owner, parse_github_remote};
 pub use secrets::{
-    github_token_delete, github_token_load, github_token_save, GithubTokenBundle, SecretError,
+    github_token_delete, github_token_exists, github_token_load, github_token_save, GithubTokenBundle, SecretError,
     KEYCHAIN_SERVICE,
 };
 pub use oauth_github::{

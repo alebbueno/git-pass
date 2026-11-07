@@ -3,10 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
+use crate::ipc_client::DaemonUnreachable;
 use crate::github_api::{token_can_push, token_can_push_for_account};
 use crate::secrets::github_token_load;
 use crate::git::{git_remote_url, git_work_tree_root};
@@ -77,15 +77,21 @@ pub fn is_validated_phase(phase: &str) -> bool {
 }
 
 fn emergency_allows_local_commit(cfg: &AppConfig) -> bool {
-    let raw = match &cfg.ui.emergency.allow_local_commit_until {
-        Some(s) if !s.is_empty() => s,
-        _ => return false,
-    };
-    if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-        let now = Utc::now();
-        return now < dt.with_timezone(&Utc);
-    }
-    false
+    crate::emergency::is_active(cfg)
+}
+
+/// Why a validated hook may go on although `gitpassd` did not answer (then `gitpass hook` still
+/// runs the local checks itself).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfflineAllowance {
+    /// Phase GitPass does not enforce (e.g. `post-commit`).
+    NotValidated,
+    /// Emergency mode toggled in the app, menu bar or CLI (`ui.emergency`).
+    Emergency,
+    /// `GITPASS_ALLOW_LOCAL_COMMIT=1` for this command.
+    EmergencyEnv,
+    /// `GITPASS_ALLOW_PUSH_WITHOUT_DAEMON=1` (development only).
+    PushOverride,
 }
 
 /// What the user was doing, for messages ("o push", "o commit", ...).
@@ -103,35 +109,64 @@ const REPAIR_HINT: &str = "Abra o app GitPass e escolha «Reparar» em Configura
 /// Enforces **daemon must validate** policy when IPC is unavailable or the socket is missing.
 /// Development escape hatches (`GITPASS_ALLOW_*`) are deliberately not mentioned to users.
 pub fn policy_when_daemon_unreachable(phase: &str, cfg: &AppConfig) -> ValidateFail {
+    policy_when_daemon_unreachable_because(phase, cfg, DaemonUnreachable::NotRunning)
+}
+
+/// [`policy_when_daemon_unreachable`], with a message that matches why the daemon did not answer.
+pub fn policy_when_daemon_unreachable_because(
+    phase: &str,
+    cfg: &AppConfig,
+    reason: DaemonUnreachable,
+) -> ValidateFail {
+    match offline_policy(phase, cfg, reason) {
+        Ok(_) => ValidateFail::Ok,
+        Err(e) => e,
+    }
+}
+
+/// [`policy_when_daemon_unreachable_because`], saying why the operation may go on. Pushes are
+/// always blocked (DL-015); commits only pass in emergency mode.
+pub fn offline_policy(phase: &str, cfg: &AppConfig, reason: DaemonUnreachable) -> Result<OfflineAllowance, ValidateFail> {
     if !is_validated_phase(phase) {
-        return ValidateFail::Ok;
+        return Ok(OfflineAllowance::NotValidated);
     }
 
-    let blocked = || ValidateFail::Err {
-        code: "GP-DAEMON-OFF",
-        message: format!(
-            "O serviço do GitPass não está respondendo, então {} foi bloqueado. {REPAIR_HINT}",
-            operation_label(phase)
-        ),
+    let op = operation_label(phase);
+    let blocked = || match reason {
+        DaemonUnreachable::NotRunning => ValidateFail::Err {
+            code: "GP-DAEMON-OFF",
+            message: format!("O serviço do GitPass não está respondendo, então {op} foi bloqueado. {REPAIR_HINT}"),
+        },
+        DaemonUnreachable::Slow => ValidateFail::Err {
+            code: "GP-DAEMON-SLOW",
+            message: format!(
+                "O serviço do GitPass está ligado, mas demorou demais para conferir a conta, então {op} foi bloqueado. \
+                 Tente de novo em instantes. Se continuar, abra o app GitPass e escolha «Reparar» em Configurações."
+            ),
+        },
+        DaemonUnreachable::BadReply => ValidateFail::Err {
+            code: "GP-IPC",
+            message: format!("O serviço do GitPass enviou uma resposta que não entendemos, então {op} foi bloqueado. {REPAIR_HINT}"),
+        },
     };
 
     if is_push_phase(phase) {
         let allow = std::env::var("GITPASS_ALLOW_PUSH_WITHOUT_DAEMON").unwrap_or_default();
         if allow == "1" || allow.eq_ignore_ascii_case("true") {
-            return ValidateFail::Ok;
+            return Ok(OfflineAllowance::PushOverride);
         }
-        return blocked();
+        return Err(blocked());
     }
 
     let dev = std::env::var("GITPASS_ALLOW_LOCAL_COMMIT").unwrap_or_default();
     if dev == "1" || dev.eq_ignore_ascii_case("true") {
-        return ValidateFail::Ok;
+        return Ok(OfflineAllowance::EmergencyEnv);
     }
     if emergency_allows_local_commit(cfg) {
-        return ValidateFail::Ok;
+        return Ok(OfflineAllowance::Emergency);
     }
 
-    blocked()
+    Err(blocked())
 }
 
 /// `origin` as shown to the user: credentials embedded in the URL (`https://user:token@…`) removed.
@@ -251,6 +286,42 @@ pub fn validate_repo_for_hook_daemon(
             allow_ambiguous_when_api_unreachable,
         },
     )
+}
+
+/// [`validate_repo_for_hook_daemon`] that always answers within `deadline`, so the hook gets a real
+/// verdict instead of timing out and reporting the daemon as off (GP-DAEMON-OFF) while GitHub or the
+/// Keychain is slow. A late commit is let through (the push is checked again); a late push is not.
+pub fn validate_repo_for_hook_daemon_within(
+    ctx: &HookContext,
+    cfg: &AppConfig,
+    allow_ambiguous_when_api_unreachable: bool,
+    deadline: std::time::Duration,
+) -> ValidateFail {
+    let (c, k) = (ctx.clone(), cfg.clone());
+    crate::ipc_client::with_deadline(
+        deadline,
+        move || validate_repo_for_hook_daemon(&c, &k, allow_ambiguous_when_api_unreachable),
+        || slow_validation(&ctx.phase, allow_ambiguous_when_api_unreachable),
+    )
+}
+
+fn slow_validation(phase: &str, allow_ambiguous: bool) -> ValidateFail {
+    let op = operation_label(phase);
+    if allow_ambiguous && !is_push_phase(phase) {
+        return ValidateFail::OkUnconfirmed {
+            warning: format!(
+                "GitPass: aviso: o GitHub demorou para responder e não deu para confirmar a conta agora. \
+                 {} foi permitido; a conta será conferida de novo no push.",
+                capitalize(op)
+            ),
+        };
+    }
+    ValidateFail::Err {
+        code: "GP-API-SLOW",
+        message: format!(
+            "O GitHub demorou demais para confirmar o acesso da conta, então {op} foi bloqueado. Tente de novo em instantes."
+        ),
+    }
 }
 
 pub fn validate_repo_for_hook_with_options(
@@ -407,6 +478,30 @@ fn owner_mismatch_message(owner: &str, login: &str) -> String {
     )
 }
 
+/// Problem with a binding that would block commits, for the diagnostics: `(code, short reason)`.
+/// Local checks only (no GitHub API); org/collaborator repos are confirmed when committing.
+pub fn binding_health(cfg: &AppConfig, binding: &RepoBinding) -> Option<(&'static str, String)> {
+    if !binding.root_path.is_dir() {
+        return Some(("GP-REPO", "a pasta não existe mais".into()));
+    }
+    let Some(account) = account_by_id(cfg, binding.account_id) else {
+        return Some(("GP-ACCOUNT", "a conta vinculada não existe mais".into()));
+    };
+    let Ok(url) = git_remote_url(&binding.root_path, "origin") else {
+        return Some(("GP-ORIGIN", "não tem o remoto «origin»".into()));
+    };
+    let Some(remote) = parse_github_remote(&url) else {
+        return Some(("GP-REMOTE", "o «origin» não é um repositório do GitHub".into()));
+    };
+    if binding_remote_consistency(binding, &remote).is_err() {
+        return Some(("GP-OWNER", format!("o «origin» agora aponta para {}/{}", remote.owner, remote.repo)));
+    }
+    if account.github_login.as_deref().is_none_or(|l| l.trim().is_empty()) {
+        return Some(("GP-ACCOUNT-LOGIN", "a conta não tem usuário do GitHub".into()));
+    }
+    None
+}
+
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
@@ -453,6 +548,35 @@ mod tests {
         assert!(msg.contains("o commit foi bloqueado") && msg.contains("«Reparar»"), "{msg}");
         assert_user_facing(&msg);
         assert!(matches!(policy_when_daemon_unreachable("post-commit", &cfg), ValidateFail::Ok));
+    }
+
+    #[test]
+    fn slow_daemon_is_not_reported_as_off() {
+        if dev_overrides_set() {
+            return;
+        }
+        let cfg = AppConfig::default();
+        let (code, msg) = err_of(policy_when_daemon_unreachable_because(
+            "pre-commit",
+            &cfg,
+            DaemonUnreachable::Slow,
+        ));
+        assert_eq!(code, "GP-DAEMON-SLOW");
+        assert!(msg.contains("está ligado") && msg.contains("Tente de novo"), "{msg}");
+        assert_user_facing(&msg);
+        assert!(matches!(
+            policy_when_daemon_unreachable_because("post-commit", &cfg, DaemonUnreachable::Slow),
+            ValidateFail::Ok
+        ));
+    }
+
+    #[test]
+    fn late_validation_allows_commits_but_not_pushes() {
+        assert!(matches!(slow_validation("pre-commit", true), ValidateFail::OkUnconfirmed { .. }));
+        let (code, msg) = err_of(slow_validation("pre-push", true));
+        assert_eq!(code, "GP-API-SLOW");
+        assert!(msg.contains("o push foi bloqueado"), "{msg}");
+        assert_eq!(err_of(slow_validation("pre-commit", false)).0, "GP-API-SLOW");
     }
 
     #[test]
@@ -570,5 +694,51 @@ mod tests {
         let (code, msg) = err_of(check(&repo, &cfg));
         assert_eq!(code, "GP-REMOTE");
         assert!(msg.contains("https://gitlab.com/me/app.git") && !msg.contains("secret"), "{msg}");
+    }
+
+    #[test]
+    fn emergency_allows_only_local_commits_when_the_daemon_is_off() {
+        if dev_overrides_set() {
+            return;
+        }
+        let mut cfg = AppConfig::default();
+        let off = DaemonUnreachable::NotRunning;
+        assert_eq!(err_of(offline_policy("pre-commit", &cfg, off).unwrap_err()).0, "GP-DAEMON-OFF");
+        assert_eq!(offline_policy("post-commit", &cfg, off).unwrap(), OfflineAllowance::NotValidated);
+
+        crate::emergency::start(&mut cfg, 15, "serviço caiu", "app", chrono::Utc::now()).unwrap();
+        for phase in ["pre-commit", "prepare-commit-msg", "commit-msg", "pre-merge-commit", "pre-rebase"] {
+            assert_eq!(offline_policy(phase, &cfg, off).unwrap(), OfflineAllowance::Emergency, "{phase}");
+        }
+        assert!(matches!(policy_when_daemon_unreachable("pre-commit", &cfg), ValidateFail::Ok));
+        for reason in [DaemonUnreachable::NotRunning, DaemonUnreachable::Slow, DaemonUnreachable::BadReply] {
+            let (code, msg) = err_of(offline_policy("pre-push", &cfg, reason).unwrap_err());
+            assert!(code.starts_with("GP-"), "{code}");
+            assert!(msg.contains("o push foi bloqueado"), "{msg}");
+        }
+
+        crate::emergency::stop(&mut cfg, chrono::Utc::now());
+        assert!(offline_policy("pre-commit", &cfg, off).is_err());
+    }
+
+    #[test]
+    fn binding_health_reports_folders_and_remotes() {
+        let repo = repo_with_origin("https://github.com/octo/app.git");
+        let cfg = cfg_for(&repo.0, "octo", Some("octo"), Some("app"));
+        assert_eq!(binding_health(&cfg, &cfg.repos[0]), None);
+
+        let moved = cfg_for(&repo.0, "octo", Some("octo"), Some("other"));
+        assert_eq!(binding_health(&moved, &moved.repos[0]).unwrap().0, "GP-OWNER");
+
+        let org = cfg_for(&repo.0, "someone", Some("octo"), Some("app"));
+        assert_eq!(binding_health(&org, &org.repos[0]), None, "org repos are confirmed on commit");
+
+        let mut gone = cfg.clone();
+        gone.repos[0].root_path = repo.0.join("missing");
+        assert_eq!(binding_health(&gone, &gone.repos[0]).unwrap(), ("GP-REPO", "a pasta não existe mais".into()));
+
+        let mut orphan = cfg.clone();
+        orphan.accounts.clear();
+        assert_eq!(binding_health(&orphan, &orphan.repos[0]).unwrap().0, "GP-ACCOUNT");
     }
 }
