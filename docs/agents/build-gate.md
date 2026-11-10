@@ -69,7 +69,17 @@ Escreva em `/tmp/gitpass-agents/build-gate-report.md`:
 - Duração aproximada
 - O que não foi possível verificar (ex.: teste manual da janela)
 
-## Lançar o agente (coordenador)
+## Disparo automático (local)
+
+O agente **não roda sozinho** até você instalar o hook ou chamar o script manualmente.
+
+```bash
+./scripts/install-build-gate-hook.sh
+```
+
+Depois disso, cada `git commit` que mexer em `gitpass-desktop/`, `crates/`, etc. dispara `run-build-gate-agent.sh` em segundo plano.
+
+## Lançar o agente (manual / coordenador)
 
 ```bash
 /Volumes/Dados/Server/git-pass/scripts/run-build-gate-agent.sh

@@ -312,6 +312,7 @@ pub(crate) fn bound(binding_id: &str) -> Result<Bound, String> {
     }
     let (remote, github) = match pick_remote(&read_remotes(&b.root_path)) {
         RemotePick::GitHub { name, id } => (Some(name), Some((id.owner, id.repo))),
+        RemotePick::Bitbucket { name, id } => (Some(name), Some((id.workspace, id.slug))),
         _ => (None, None),
     };
     Ok(Bound {
@@ -570,6 +571,7 @@ mod tests {
     fn account(email: Option<&str>) -> Account {
         Account {
             id: Uuid::new_v4(),
+            host: Default::default(),
             github_login: Some("ana".into()),
             label: None,
             auth: Default::default(),

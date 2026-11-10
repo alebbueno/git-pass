@@ -8,12 +8,14 @@ use gitpass_core::bindings::{
     change_binding_account, create_binding, decide_account, default_discover_roots, discover_unbound_repos,
     expected_identity, fix_binding_identity, github_https_url, identity_state, pick_remote, read_head,
     read_origin_url, read_remotes, read_repo_identity, remote_url_has_credentials, remove_binding,
-    suggest_account_offline, AccountDecision, IdentityState, RemotePick, SuggestionReason, DISCOVER_MAX_DEPTH,
+    AccountDecision, IdentityState, RemotePick, SuggestionReason, DISCOVER_MAX_DEPTH,
 };
 use gitpass_core::github_api::{token_can_push_for_account, GithubApiError};
+use gitpass_core::identity_diagnostic::{binding_identity_diagnostic, CommitDiagnostic, IdentityDiagnostic, PushDiagnostic};
 use gitpass_core::repo_map::{
     map_projects, resolve_map_root, scan_projects, MappedProject, MAP_BUDGET, MAP_MAX_DEPTH, MAP_MAX_PROJECTS,
 };
+use gitpass_core::config_history::{record_change_account, record_fix_identity, ConfigHistoryStatus};
 use gitpass_core::outgoing::{GitRepo, SyncSummary};
 use gitpass_core::{git_work_tree_root, parse_github_remote, AppConfig, GithubRepoSummary, RepoBinding};
 use serde::{Deserialize, Serialize};
@@ -110,6 +112,7 @@ pub struct DiscoveredRow {
     remote_url: String,
     suggested_account_id: Option<String>,
     suggestion_reason: Option<SuggestionReason>,
+    suggestion_label: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -152,7 +155,7 @@ pub(crate) struct MapResult {
     pub(crate) elapsed_ms: u64,
 }
 
-async fn blocking<T, F>(f: F) -> Result<T, String>
+pub(crate) async fn blocking<T, F>(f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
@@ -164,6 +167,30 @@ where
 
 pub(crate) fn load_config() -> Result<AppConfig, String> {
     AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass: {e}"))
+}
+
+/// Repos with local commits not yet on the remote (no network; scans each bound folder).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingPushSummary {
+    pub repos: usize,
+    pub commits: usize,
+}
+
+pub(crate) fn pending_push_summary(cfg: &AppConfig) -> PendingPushSummary {
+    let (repos, commits) = cfg.repos.iter().fold((0usize, 0usize), |(r, c), b| {
+        if !b.root_path.is_dir() {
+            return (r, c);
+        }
+        let Some(s) = GitRepo::new(&b.root_path).sync_summary() else {
+            return (r, c);
+        };
+        if s.ahead == 0 {
+            (r, c)
+        } else {
+            (r + 1, c + s.ahead)
+        }
+    });
+    PendingPushSummary { repos, commits }
 }
 
 fn parse_id(raw: &str, what: &str) -> Result<Uuid, String> {
@@ -251,11 +278,12 @@ fn inspect_folder(path: &Path) -> Result<RepoTarget, String> {
         "A pasta escolhida não é um repositório Git. Escolha a pasta de um clone (com .git) ou clone o repositório na aba Nuvem.".to_string()
     })?;
     let root = root.canonicalize().unwrap_or(root);
-    let gh = match pick_remote(&read_remotes(&root)) {
-        RemotePick::GitHub { id, .. } => id,
+    let (owner, repo) = match pick_remote(&read_remotes(&root)) {
+        RemotePick::GitHub { id, .. } => (id.owner, id.repo),
+        RemotePick::Bitbucket { id, .. } => (id.workspace, id.slug),
         RemotePick::Other { name, .. } => {
             return Err(format!(
-                "O remoto `{name}` deste repositório não aponta para github.com. O GitPass só cuida de repositórios do GitHub."
+                "O remoto `{name}` não aponta para github.com nem bitbucket.org. O GitPass suporta esses hosts."
             ));
         }
         RemotePick::None => {
@@ -267,8 +295,8 @@ fn inspect_folder(path: &Path) -> Result<RepoTarget, String> {
     };
     Ok(RepoTarget {
         root,
-        owner: gh.owner,
-        repo: gh.repo,
+        owner,
+        repo,
     })
 }
 
@@ -317,9 +345,17 @@ fn push_check(account_id: Uuid, owner: &str, repo: &str) -> Option<bool> {
 
 /// Offline suggestion first; only queries the API (in parallel) when the owner is not one of the logins.
 fn choose_account(cfg: &AppConfig, target: &RepoTarget) -> (AccountDecision, Vec<(Uuid, Option<bool>)>) {
-    let offline = suggest_account_offline(cfg, &target.owner);
-    if let Some(s) = offline.filter(|s| s.reason == SuggestionReason::OwnerLogin) {
-        return (AccountDecision::Bind(s), Vec::new());
+    let offline = gitpass_core::account_rules::suggest_account_for_repo(cfg, &target.root, &target.owner);
+    if let Some(s) = offline.as_ref().filter(|s| {
+        matches!(
+            s.reason,
+            SuggestionReason::OwnerLogin
+                | SuggestionReason::FolderRule
+                | SuggestionReason::OrgRule
+                | SuggestionReason::FolderOrgRule
+        )
+    }) {
+        return (AccountDecision::Bind(s.clone()), Vec::new());
     }
     let checks: Vec<(Uuid, Option<bool>)> = std::thread::scope(|scope| {
         let handles: Vec<_> = cfg
@@ -409,7 +445,7 @@ pub(crate) fn bound_repo_root(path: &str) -> Result<PathBuf, String> {
     }
 }
 
-fn open_with(args: &[&str], path: &Path) -> Result<(), String> {
+pub(crate) fn open_with(args: &[&str], path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let st = std::process::Command::new("open")
@@ -573,13 +609,31 @@ pub async fn repos_change_account(app: AppHandle, binding_id: String, account_id
         if !cfg.accounts.iter().any(|a| a.id == account) {
             return Err("Conta desconhecida. Atualize a lista e tente de novo.".to_string());
         }
-        if !cfg.repos.iter().any(|r| r.id == id) {
+        let Some(binding) = cfg.repos.iter().find(|r| r.id == id).cloned() else {
             return Err("Vínculo desconhecido. Atualize a lista e tente de novo.".to_string());
-        }
+        };
+        let before_account = binding.account_id;
+        let before_identity = read_repo_identity(&binding.root_path);
         let res = change_binding_account(&mut cfg, id, account);
-        // Past the checks above, the switch is saved even if the identity could not be written.
+        let after_identity = read_repo_identity(&binding.root_path);
+        let (status, message) = match &res {
+            Ok(_) => (ConfigHistoryStatus::Applied, None),
+            Err(e) => (
+                ConfigHistoryStatus::Partial,
+                Some(format!("A conta foi trocada, mas a identidade do Git não foi aplicada: {e}")),
+            ),
+        };
+        let _ = record_change_account(
+            id,
+            before_account,
+            account,
+            before_identity,
+            after_identity,
+            status,
+            message.clone(),
+        );
         notify(&app);
-        res.map_err(|e| format!("A conta foi trocada, mas a identidade do Git não foi aplicada: {e}"))?;
+        res.map_err(|e| message.unwrap_or_else(|| format!("A conta foi trocada, mas a identidade do Git não foi aplicada: {e}")))?;
         row_for(&cfg, id)
     })
     .await
@@ -590,10 +644,164 @@ pub async fn repos_fix_identity(binding_id: String) -> Result<RepoRow, String> {
     blocking(move || {
         let id = parse_id(&binding_id, "vínculo")?;
         let cfg = load_config()?;
-        fix_binding_identity(&cfg, id).map_err(|e| format!("Não foi possível corrigir a identidade: {e}"))?;
+        let root = cfg
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.root_path.clone())
+            .ok_or_else(|| "Vínculo desconhecido.".to_string())?;
+        let before = read_repo_identity(&root);
+        let res = fix_binding_identity(&cfg, id);
+        let (status, message) = match &res {
+            Ok(_) => (ConfigHistoryStatus::Applied, None),
+            Err(e) => (ConfigHistoryStatus::Failed, Some(e.clone())),
+        };
+        let _ = record_fix_identity(id, &root, before, status, message.clone());
+        res.map_err(|e| format!("Não foi possível corrigir a identidade: {e}"))?;
         row_for(&cfg, id)
     })
     .await
+}
+
+/// Read-only commit/push identity diagnostic for the repository drawer (Etapa 1).
+#[tauri::command]
+pub async fn repos_identity_diagnostic(
+    binding_id: String,
+    remote: Option<String>,
+    verify_token: Option<bool>,
+) -> Result<IdentityDiagnosticRow, String> {
+    blocking(move || {
+        let id = parse_id(&binding_id, "vínculo")?;
+        let cfg = load_config()?;
+        let d = binding_identity_diagnostic(&cfg, id, remote.as_deref(), verify_token.unwrap_or(false))?;
+        Ok(IdentityDiagnosticRow::from(d))
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct IdentityOriginRow {
+    key: String,
+    value: Option<String>,
+    scope: Option<String>,
+    origin: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct CommitDiagnosticRow {
+    state: String,
+    summary: String,
+    detail: Option<String>,
+    effective_name: Option<String>,
+    effective_email: Option<String>,
+    expected_name: Option<String>,
+    expected_email: Option<String>,
+    author_context_name: Option<String>,
+    author_context_email: Option<String>,
+    origins: Vec<IdentityOriginRow>,
+}
+
+#[derive(Serialize)]
+pub struct PushDestinationRow {
+    remote_name: String,
+    label: String,
+    host: Option<String>,
+    owner: Option<String>,
+    repo: Option<String>,
+    schemes: Vec<String>,
+    is_origin: bool,
+}
+
+#[derive(Serialize)]
+pub struct PushDiagnosticRow {
+    destination_state: String,
+    destination_summary: String,
+    selected_remote: Option<String>,
+    available_remotes: Vec<String>,
+    destinations: Vec<PushDestinationRow>,
+    auth_state: String,
+    auth_summary: String,
+    bound_account_login: Option<String>,
+    token_login: Option<String>,
+    token_push_permission: Option<bool>,
+    token_message: Option<String>,
+    evidence: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct IdentityDiagnosticRow {
+    binding_id: String,
+    exists: bool,
+    commit: CommitDiagnosticRow,
+    push: PushDiagnosticRow,
+}
+
+impl From<IdentityDiagnostic> for IdentityDiagnosticRow {
+    fn from(d: IdentityDiagnostic) -> Self {
+        Self {
+            binding_id: d.binding_id,
+            exists: d.exists,
+            commit: CommitDiagnosticRow::from(d.commit),
+            push: PushDiagnosticRow::from(d.push),
+        }
+    }
+}
+
+impl From<CommitDiagnostic> for CommitDiagnosticRow {
+    fn from(c: CommitDiagnostic) -> Self {
+        Self {
+            state: c.state,
+            summary: c.summary,
+            detail: c.detail,
+            effective_name: c.effective_name,
+            effective_email: c.effective_email,
+            expected_name: c.expected_name,
+            expected_email: c.expected_email,
+            author_context_name: c.author_context_name,
+            author_context_email: c.author_context_email,
+            origins: c
+                .origins
+                .into_iter()
+                .map(|o| IdentityOriginRow {
+                    key: o.key,
+                    value: o.value,
+                    scope: o.scope,
+                    origin: o.origin,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<PushDiagnostic> for PushDiagnosticRow {
+    fn from(p: PushDiagnostic) -> Self {
+        Self {
+            destination_state: p.destination_state,
+            destination_summary: p.destination_summary,
+            selected_remote: p.selected_remote,
+            available_remotes: p.available_remotes,
+            destinations: p
+                .destinations
+                .into_iter()
+                .map(|d| PushDestinationRow {
+                    remote_name: d.remote_name,
+                    label: d.label,
+                    host: d.host,
+                    owner: d.owner,
+                    repo: d.repo,
+                    schemes: d.schemes,
+                    is_origin: d.is_origin,
+                })
+                .collect(),
+            auth_state: p.auth_state,
+            auth_summary: p.auth_summary,
+            bound_account_login: p.bound_account_login,
+            token_login: p.token_login,
+            token_push_permission: p.token_push_permission,
+            token_message: p.token_message,
+            evidence: p.evidence,
+        }
+    }
 }
 
 /// Finds unbound GitHub clones in common folders (or `roots`), within a ~2.5 s budget.
@@ -617,13 +825,17 @@ pub async fn repos_discover(roots: Option<Vec<String>>) -> Result<DiscoverResult
             discover_unbound_repos(&cfg, &scanned, DISCOVER_MAX_DEPTH, Some(started + DISCOVER_BUDGET));
         let repos = found
             .into_iter()
-            .map(|d| DiscoveredRow {
-                remote_url: github_https_url(&d.github_owner, &d.github_repo),
-                root_path: d.root_path.display().to_string(),
-                github_owner: d.github_owner,
-                github_repo: d.github_repo,
-                suggested_account_id: d.suggestion.map(|s| s.account_id.to_string()),
-                suggestion_reason: d.suggestion.map(|s| s.reason),
+            .map(|d| {
+                let s = d.suggestion.as_ref();
+                DiscoveredRow {
+                    remote_url: github_https_url(&d.github_owner, &d.github_repo),
+                    root_path: d.root_path.display().to_string(),
+                    github_owner: d.github_owner,
+                    github_repo: d.github_repo,
+                    suggested_account_id: s.map(|s| s.account_id.to_string()),
+                    suggestion_reason: s.map(|s| s.reason),
+                    suggestion_label: s.and_then(|s| s.rule_label.clone()),
+                }
             })
             .collect();
         Ok(DiscoverResult {
@@ -785,7 +997,7 @@ mod tests {
         }
     }
 
-    /// api-repos.ts: RepoRow, RepoIdentityRow, BindOutcome, BindItemResult, DiscoveredRepo, DiscoverResult.
+    /// api-repos.ts: RepoRow, IdentityDiagnosticRow, BindOutcome, …
     #[test]
     fn response_keys_match_typescript() {
         let r = row();
@@ -819,6 +1031,69 @@ mod tests {
         assert_eq!(n["status"], "needs_account");
         assert_eq!(keys(&CandidateRow { account_id: String::new(), can_push: Some(true) }), expect(&["account_id", "can_push"]));
 
+        let diag = IdentityDiagnosticRow {
+            binding_id: String::new(),
+            exists: true,
+            commit: CommitDiagnosticRow {
+                state: "correct".into(),
+                summary: String::new(),
+                detail: None,
+                effective_name: None,
+                effective_email: None,
+                expected_name: None,
+                expected_email: None,
+                author_context_name: None,
+                author_context_email: None,
+                origins: vec![IdentityOriginRow {
+                    key: "user.name".into(),
+                    value: Some("Ana".into()),
+                    scope: Some("local".into()),
+                    origin: None,
+                }],
+            },
+            push: PushDiagnosticRow {
+                destination_state: "ok".into(),
+                destination_summary: String::new(),
+                selected_remote: Some("origin".into()),
+                available_remotes: vec!["origin".into()],
+                destinations: vec![PushDestinationRow {
+                    remote_name: "origin".into(),
+                    label: "github.com/o/r".into(),
+                    host: Some("github.com".into()),
+                    owner: Some("o".into()),
+                    repo: Some("r".into()),
+                    schemes: vec!["https".into()],
+                    is_origin: true,
+                }],
+                auth_state: "gitpass_routed".into(),
+                auth_summary: String::new(),
+                bound_account_login: None,
+                token_login: None,
+                token_push_permission: None,
+                token_message: None,
+                evidence: Vec::new(),
+            },
+        };
+        assert_eq!(
+            keys(&diag),
+            expect(&["binding_id", "commit", "exists", "push"])
+        );
+        assert_eq!(
+            keys(&diag.commit),
+            expect(&[
+                "author_context_email", "author_context_name", "detail", "effective_email", "effective_name", "expected_email",
+                "expected_name", "origins", "state", "summary"
+            ])
+        );
+        assert_eq!(
+            keys(&diag.push),
+            expect(&[
+                "auth_state", "auth_summary", "available_remotes", "bound_account_login", "destination_state",
+                "destination_summary", "destinations", "evidence", "selected_remote", "token_login", "token_message",
+                "token_push_permission"
+            ])
+        );
+
         assert_eq!(keys(&BindItemResult { path: String::new(), repo: None, error: None }), expect(&["path", "repo", "error"]));
         assert_eq!(
             keys(&DiscoveredRow {
@@ -828,8 +1103,12 @@ mod tests {
                 remote_url: String::new(),
                 suggested_account_id: None,
                 suggestion_reason: None,
+                suggestion_label: None,
             }),
-            expect(&["root_path", "github_owner", "github_repo", "remote_url", "suggested_account_id", "suggestion_reason"])
+            expect(&[
+                "root_path", "github_owner", "github_repo", "remote_url", "suggested_account_id", "suggestion_reason",
+                "suggestion_label"
+            ])
         );
         assert_eq!(
             keys(&DiscoverResult { repos: vec![], roots: vec![], truncated: false, elapsed_ms: 0 }),
@@ -849,11 +1128,25 @@ mod tests {
             SuggestionReason::SameOwnerBinding,
             SuggestionReason::OnlyAccount,
             SuggestionReason::PushAccess,
+            SuggestionReason::FolderRule,
+            SuggestionReason::OrgRule,
+            SuggestionReason::FolderOrgRule,
         ]
         .iter()
         .map(|s| serde_json::to_value(s).unwrap())
         .collect();
-        assert_eq!(reasons, ["owner_login", "same_owner_binding", "only_account", "push_access"]);
+        assert_eq!(
+            reasons,
+            [
+                "owner_login",
+                "same_owner_binding",
+                "only_account",
+                "push_access",
+                "folder_rule",
+                "org_rule",
+                "folder_org_rule"
+            ]
+        );
     }
 
     /// `repos_bind_many` receives `{ path, account_id }` exactly as api-repos.ts sends it.

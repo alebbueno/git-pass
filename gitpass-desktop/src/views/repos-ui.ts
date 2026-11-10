@@ -1,5 +1,5 @@
 import type { AccountRow } from "../lib/api";
-import type { RepoRow, SuggestionReason } from "../lib/api-repos";
+import type { RepoRow, SuggestionReason, WorkTreeStatusRow } from "../lib/api-repos";
 import type { CurrentRepoState } from "../lib/api-system";
 import { esc, shortenPath } from "../lib/dom";
 import { icon } from "../lib/icons";
@@ -31,6 +31,17 @@ export function aheadOf(b: RepoRow): number {
 }
 
 /** Nome curto do projeto (o repositório no GitHub ou a pasta). */
+function workHint(w: WorkTreeStatusRow): string {
+  const parts: string[] = [];
+  if (w.conflicted_files) parts.push(`${w.conflicted_files} conflito(s)`);
+  if (w.staged_files) parts.push(`${w.staged_files} preparado(s)`);
+  if (w.unstaged_files) parts.push(`${w.unstaged_files} alterado(s)`);
+  if (w.untracked_files) parts.push(`${w.untracked_files} novo(s)`);
+  if ((w.ahead ?? 0) > 0) parts.push(`${w.ahead} à frente`);
+  if ((w.behind ?? 0) > 0) parts.push(`${w.behind} atrás`);
+  return parts.join(" · ") || "Pendências";
+}
+
 export function projectName(b: Pick<RepoRow, "github_repo" | "root_path">): string {
   if (b.github_repo) return b.github_repo;
   const parts = b.root_path.split(/[\\/]/).filter(Boolean);
@@ -46,7 +57,7 @@ export function projectRowHtml(
   b: RepoRow,
   accounts: AccountRow[],
   st: CurrentRepoState | null,
-  opts: { expanded?: boolean; tabbable?: boolean } = {}
+  opts: { expanded?: boolean; tabbable?: boolean; highlightAhead?: boolean; work?: WorkTreeStatusRow | null } = {}
 ): string {
   const fam = b.account_missing ? "" : profileFamily(b.account_id);
   const reasons = reviewReasons(b, accounts, st);
@@ -57,6 +68,15 @@ export function projectRowHtml(
   if (ahead > 0) extra.push(plural(ahead, "commit para enviar", "commits para enviar"));
   if (b.exists && (b.sync?.behind ?? 0) > 0) extra.push(plural(b.sync!.behind, "commit novo no GitHub", "commits novos no GitHub"));
   if (b.exists && b.sync?.dirty) extra.push("alterações sem commit");
+  const w = opts.work;
+  if (w && !w.error) {
+    if (w.conflicted_files) extra.push(plural(w.conflicted_files, "conflito", "conflitos"));
+    if (w.staged_files) extra.push(plural(w.staged_files, "arquivo preparado", "arquivos preparados"));
+    if (w.unstaged_files) extra.push(plural(w.unstaged_files, "arquivo alterado", "arquivos alterados"));
+    if (w.untracked_files) extra.push(plural(w.untracked_files, "arquivo novo", "arquivos novos"));
+    if ((w.ahead ?? 0) > 0 && ahead === 0) extra.push(plural(w.ahead!, "commit para enviar", "commits para enviar"));
+    if ((w.behind ?? 0) > 0 && (b.sync?.behind ?? 0) === 0) extra.push(plural(w.behind!, "commit no remoto", "commits no remoto"));
+  }
   const status = reasons.length
     ? `<span class="state warning" title="${esc(reasons.join(" · "))}">${icon("alert")}Revisar</span>`
     : `<span class="state">${icon("check")}Correta</span>`;
@@ -66,7 +86,8 @@ export function projectRowHtml(
   const label = [projectName(b), b.account_missing ? "conta removida" : profileName(profileFor(accounts, b)), reasons.length ? `revisar: ${reasons.join(", ")}` : "identidade correta", ...extra]
     .filter(Boolean)
     .join(". ");
-  return `<li><button type="button" class="project-row ${fam}" data-repo-id="${esc(b.id)}" aria-controls="repo-drawer" aria-expanded="${!!opts.expanded}" aria-label="${esc(
+  const rowTone = opts.highlightAhead && ahead > 0 ? " has-pending-push" : "";
+  return `<li><button type="button" class="project-row ${fam}${rowTone}" data-repo-id="${esc(b.id)}" aria-controls="repo-drawer" aria-expanded="${!!opts.expanded}" aria-label="${esc(
     label
   )}" tabindex="${opts.tabbable === false ? -1 : 0}" title="${esc(b.root_path)}">
     <span class="project-name"><span class="repo-mark${fam ? "" : " neutral"}">${icon("repo")}</span><span class="truncate">
@@ -76,7 +97,11 @@ export function projectRowHtml(
     <span class="project-profile">${
       b.account_missing ? `<span class="state error">${icon("x")}Conta removida</span>` : profileChip(profileFor(accounts, b))
     }</span>
-    <span class="project-branch">${icon("branch")}<span class="truncate">${esc(branch)}</span></span>
+    <span class="project-branch">${icon("branch")}<span class="truncate">${esc(branch)}</span>${
+      w && w.has_pending && !w.error
+        ? `<span class="row-work hint" title="${esc(workHint(w))}">${icon("pullRequest", 12)}</span>`
+        : ""
+    }</span>
     <span class="project-status">${status}${curTag}</span>
     <span class="project-chevron" aria-hidden="true">${icon("chevronRight")}</span>
   </button></li>`;
@@ -87,7 +112,16 @@ export const REASON_TEXT: Record<SuggestionReason, string> = {
   same_owner_binding: "já usada em outros repositórios deste dono",
   only_account: "única conta conectada",
   push_access: "única conta com permissão de push",
+  folder_rule: "regra de pasta",
+  org_rule: "regra de organização",
+  folder_org_rule: "regra de pasta e organização",
 };
+
+export function suggestionMotivo(reason: SuggestionReason | null, label: string | null): string {
+  if (label) return `Regra «${label}»`;
+  if (reason) return REASON_TEXT[reason];
+  return "";
+}
 
 export function repoName(b: Pick<RepoRow, "github_owner" | "github_repo" | "root_path">): string {
   if (b.github_owner && b.github_repo) return `${b.github_owner}/${b.github_repo}`;

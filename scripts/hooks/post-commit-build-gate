@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Disparo local do build-gate após commit que mexe no app (hook post-commit).
+# Instale com: ./scripts/install-build-gate-hook.sh
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+while IFS= read -r path; do
+  case "$path" in
+    gitpass-desktop/* | crates/* | scripts/verify-app-build.sh | scripts/build-sidecars.mjs | Cargo.toml | Cargo.lock)
+      exec "$ROOT/scripts/run-build-gate-agent.sh"
+      ;;
+  esac
+done < <(git diff-tree --no-commit-id --name-only -r HEAD)

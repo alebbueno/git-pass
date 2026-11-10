@@ -1,10 +1,15 @@
 import "./settings.css";
-import { api, type OauthConfigStatus } from "../lib/api";
+import { api, type AccountRow, type OauthConfigStatus } from "../lib/api";
+import { rulesApi, type AccountRuleRow } from "../lib/api-rules";
+import { reposApi } from "../lib/api-repos";
 import { integrationApi, integrationHeadline, onIntegrationChanged, type IntegrationStatus } from "../lib/api-integration";
 import { errMessage, esc, showToast, withBusy } from "../lib/dom";
 import { errorView } from "../lib/errors";
 import { brandSymbol, icon } from "../lib/icons";
+import { profileName } from "../lib/profile";
 import { reducedTransparency, setReducedTransparency, setTheme, storedTheme, THEME_CHANGED_EVENT, type ThemeMode } from "../lib/theme";
+import { aiApi } from "../lib/api-ai";
+import { requestFeatureTour } from "../lib/feature-tour";
 import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: "monitor" | "sun" | "moon" }[] = [
@@ -63,6 +68,29 @@ export const mount: MountView = (root, ctx) => {
         </div>
       </section>
 
+      <section class="surface" aria-labelledby="settings-h-rules">
+        <h2 class="section-title" id="settings-h-rules">Regras de conta</h2>
+        <p class="caption muted settings-rules-lead">Escolha automaticamente um perfil ao mapear pastas ou ao encontrar repositórios de uma organização. Vínculos existentes não mudam sozinhos.</p>
+        <div id="settings-rules-list" class="settings-rules-list" aria-live="polite"></div>
+        <form class="settings-rules-form" id="settings-rules-form">
+          <h3 class="eyebrow">Nova regra</h3>
+          <div class="settings-rules-fields">
+            <label><span class="meta-label">Perfil</span>
+              <select id="settings-rule-account" required></select></label>
+            <label><span class="meta-label">Pasta (opcional)</span>
+              <span class="settings-rules-path">
+                <input type="text" id="settings-rule-path" placeholder="Ex.: ~/Projetos/Clientes" autocomplete="off" />
+                <button type="button" class="control" id="settings-rule-pick">${icon("folder")}<span>Escolher…</span></button>
+              </span></label>
+            <label><span class="meta-label">Organização no GitHub (opcional)</span>
+              <input type="text" id="settings-rule-org" placeholder="Ex.: minha-empresa" autocomplete="off" /></label>
+            <label><span class="meta-label">Nome curto (opcional)</span>
+              <input type="text" id="settings-rule-label" placeholder="Ex.: Clientes" autocomplete="off" /></label>
+          </div>
+          <button type="submit" class="control primary">${icon("plus")}<span>Adicionar regra</span></button>
+        </form>
+      </section>
+
       <section class="surface" aria-labelledby="settings-h-oauth">
         <h2 class="section-title" id="settings-h-oauth">GitHub</h2>
         <div class="settings-row">
@@ -87,11 +115,37 @@ export const mount: MountView = (root, ctx) => {
         </div>
       </section>
 
+      <section class="surface" aria-labelledby="settings-h-ai">
+        <h2 class="section-title" id="settings-h-ai">Inteligência artificial</h2>
+        <div class="settings-row">
+          <div>
+            <strong>IA com a sua chave</strong>
+            <p class="caption muted" id="settings-ai-summary">Verificando…</p>
+          </div>
+          <button type="button" class="control" data-go="settings/ai">${icon("activity")}<span>Configurar IA</span>${icon("chevronRight")}</button>
+        </div>
+      </section>
+
+      <section class="surface" aria-labelledby="settings-h-help">
+        <h2 class="section-title" id="settings-h-help">Ajuda</h2>
+        <div class="settings-row">
+          <div>
+            <strong>Tour pelos recursos</strong>
+            <p class="caption muted">Painel, repositórios, integração, regras, paleta ⌘K e pull requests.</p>
+          </div>
+          <button type="button" class="control" id="settings-feature-tour">${icon("help")}<span>Abrir tour guiado</span></button>
+        </div>
+      </section>
+
       <section class="surface" aria-labelledby="settings-h-about">
         <h2 class="section-title" id="settings-h-about">Sobre</h2>
         <div class="settings-row settings-about">
           ${brandSymbol()}
-          <div><strong>GitPass 0.1.0</strong><p class="caption muted">A conta certa em cada projeto.</p></div>
+          <div>
+            <strong>GitPass 0.1.0</strong>
+            <p class="caption muted">A conta certa em cada projeto.</p>
+          </div>
+          <button type="button" class="control" data-go="settings/credits">${icon("info")}<span>Créditos e suporte</span></button>
         </div>
       </section>
     </div>
@@ -115,7 +169,8 @@ export const mount: MountView = (root, ctx) => {
     const modeBtn = target.closest<HTMLButtonElement>("[data-theme-mode]");
     if (modeBtn) return setTheme(modeBtn.dataset.themeMode as ThemeMode);
     const go = target.closest<HTMLElement>("[data-go]");
-    if (go) ctx.navigate(go.dataset.go as "integration" | "diagnostics");
+    if (go) ctx.navigate(go.dataset.go as "integration" | "diagnostics" | "settings/credits" | "settings/ai");
+    if (target.closest("#settings-feature-tour")) requestFeatureTour();
   });
 
   // ----- Integração (resumo; a tela própria tem as ações) -----
@@ -161,8 +216,119 @@ export const mount: MountView = (root, ctx) => {
       .catch((e) => alive && ($("settings-acc-badge").innerHTML = `<span class="state error" title="${esc(errMessage(e))}">${icon("xCircle")}Erro</span>`));
   };
   loadAccounts();
-  const onData = (): void => loadAccounts();
+  const onData = (): void => {
+    loadAccounts();
+    void loadRules();
+  };
   document.addEventListener(DATA_CHANGED_EVENT, onData);
+
+  // ----- Regras de conta -----
+  let rules: AccountRuleRow[] = [];
+  let ruleAccounts: AccountRow[] = [];
+
+  const ruleAccountSelect = $<HTMLSelectElement>("settings-rule-account");
+  const rulePath = $<HTMLInputElement>("settings-rule-path");
+  const ruleOrg = $<HTMLInputElement>("settings-rule-org");
+  const ruleLabel = $<HTMLInputElement>("settings-rule-label");
+  const rulesList = $("settings-rules-list");
+
+  function renderRuleAccounts(accs: AccountRow[]): void {
+    ruleAccounts = accs;
+    ruleAccountSelect.innerHTML = accs.length
+      ? accs.map((a) => `<option value="${esc(a.id)}">${esc(a.login ? `${profileName(a)} (@${a.login})` : profileName(a))}</option>`).join("")
+      : `<option value="">Conecte uma conta primeiro</option>`;
+    ruleAccountSelect.disabled = accs.length === 0;
+  }
+
+  function ruleSummary(r: AccountRuleRow): string {
+    const parts: string[] = [];
+    if (r.path_prefix) parts.push(r.path_prefix);
+    if (r.github_owner) parts.push(`@${r.github_owner}`);
+    return parts.join(" · ") || "—";
+  }
+
+  function renderRulesList(): void {
+    if (!rules.length) {
+      rulesList.innerHTML = `<p class="caption muted">Nenhuma regra ainda.</p>`;
+      return;
+    }
+    rulesList.innerHTML = `<ul class="settings-rules-items">${rules
+      .map((r) => {
+        const acc = ruleAccounts.find((a) => a.id === r.account_id);
+        const who = acc ? (acc.login ? `${profileName(acc)} (@${acc.login})` : profileName(acc)) : "conta removida";
+        const title = r.label ? `${esc(r.label)} · ${esc(who)}` : esc(who);
+        return `<li class="settings-rules-item">
+          <div><strong>${title}</strong><p class="caption muted mono">${esc(ruleSummary(r))}</p></div>
+          <button type="button" class="control ghost danger" data-rule-remove="${esc(r.id)}" aria-label="Remover regra">${icon("x")}<span>Remover</span></button>
+        </li>`;
+      })
+      .join("")}</ul>`;
+  }
+
+  async function loadRules(): Promise<void> {
+    if (!alive) return;
+    try {
+      rules = await rulesApi.list();
+      renderRulesList();
+    } catch (e) {
+      rulesList.innerHTML = `<p class="caption err">${esc(errMessage(e))}</p>`;
+    }
+  }
+
+  api.accounts().then((list) => {
+    if (!alive) return;
+    renderRuleAccounts(list);
+    void loadRules();
+  });
+
+  $<HTMLButtonElement>("settings-rule-pick").addEventListener("click", () => {
+    void reposApi.pickFolder().then((p) => {
+      if (p) rulePath.value = p;
+    });
+  });
+
+  rulesList.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-rule-remove]");
+    if (!btn) return;
+    const id = btn.dataset.ruleRemove;
+    if (!id) return;
+    void withBusy(btn, "Removendo…", async () => {
+      rules = await rulesApi.remove(id);
+      renderRulesList();
+      showToast("Regra removida.", "ok");
+    });
+  });
+
+  $<HTMLFormElement>("settings-rules-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const accountId = ruleAccountSelect.value;
+    const path = rulePath.value.trim();
+    const org = ruleOrg.value.trim();
+    if (!accountId) return;
+    if (!path && !org) {
+      showToast("Informe uma pasta, uma organização ou os dois.", "err");
+      return;
+    }
+    const submit = e.target as HTMLFormElement;
+    const btn = submit.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    void withBusy(btn, "Salvando…", async () => {
+      try {
+        rules = await rulesApi.upsert({
+          account_id: accountId,
+          path_prefix: path || null,
+          github_owner: org || null,
+          label: ruleLabel.value.trim() || null,
+        });
+        rulePath.value = "";
+        ruleOrg.value = "";
+        ruleLabel.value = "";
+        renderRulesList();
+        showToast("Regra salva.", "ok");
+      } catch (err) {
+        showToast(errMessage(err), "err");
+      }
+    });
+  });
 
   // ----- GitHub -----
   const renderOauth = (st: OauthConfigStatus | null) => {
@@ -196,6 +362,19 @@ export const mount: MountView = (root, ctx) => {
     .keychainHint()
     .then((t) => alive && ($("settings-keychain-text").textContent = t))
     .catch((e) => alive && ($("settings-keychain-text").textContent = errMessage(e)));
+
+  // ----- IA (resumo compacto → página dedicada) -----
+  void aiApi
+    .status()
+    .then((st) => {
+      if (!alive) return;
+      const parts: string[] = [];
+      if (st.enabled) parts.push("Ligada");
+      else parts.push("Desligada");
+      if (st.openaiKeyConfigured) parts.push("OpenAI ✓");
+      $("settings-ai-summary").textContent = parts.join(" · ");
+    })
+    .catch((e) => alive && ($("settings-ai-summary").textContent = errMessage(e)));
 
   return () => {
     alive = false;

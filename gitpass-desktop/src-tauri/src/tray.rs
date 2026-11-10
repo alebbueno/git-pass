@@ -7,6 +7,9 @@ use chrono::{DateTime, Local};
 use gitpass_core::current_repo::{CurrentRepo, CurrentRepoSource, CurrentRepoState};
 use gitpass_core::emergency::EmergencyView;
 use gitpass_core::AppConfig;
+
+use crate::cmd_repos::PendingPushSummary;
+
 use tauri::image::Image;
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, Wry};
@@ -94,8 +97,24 @@ fn emergency_line(em: &EmergencyView) -> Option<String> {
     })
 }
 
-pub fn tooltip(cfg: &AppConfig, state: &CurrentRepoState, em: &EmergencyView) -> String {
+fn pending_line(pending: &PendingPushSummary) -> Option<String> {
+    if pending.repos == 0 {
+        return None;
+    }
+    let rp = if pending.repos == 1 { "repositório" } else { "repositórios" };
+    let cp = if pending.commits == 1 { "commit" } else { "commits" };
+    Some(format!(
+        "{} {rp} com {commits} {cp} para enviar",
+        pending.repos,
+        commits = pending.commits
+    ))
+}
+
+pub fn tooltip(cfg: &AppConfig, state: &CurrentRepoState, em: &EmergencyView, pending: &PendingPushSummary) -> String {
     let mut lines = Vec::new();
+    if let Some(p) = pending_line(pending) {
+        lines.push(p);
+    }
     match &state.current {
         Some(r) => {
             lines.push(format!("GitPass — {}", title_line(cfg, r)));
@@ -117,14 +136,25 @@ fn info(app: &AppHandle, n: usize, text: &str) -> tauri::Result<MenuItem<Wry>> {
     MenuItem::with_id(app, format!("info_{n}"), text, false, None::<&str>)
 }
 
-pub fn menu(app: &AppHandle, cfg: &AppConfig, state: &CurrentRepoState, em: &EmergencyView) -> tauri::Result<Menu<Wry>> {
+pub fn menu(
+    app: &AppHandle,
+    cfg: &AppConfig,
+    state: &CurrentRepoState,
+    em: &EmergencyView,
+    pending: &PendingPushSummary,
+) -> tauri::Result<Menu<Wry>> {
     let mut infos = Vec::new();
+    if let Some(p) = pending_line(pending) {
+        infos.push(info(app, 0, &p)?);
+    }
     match &state.current {
         Some(r) => {
-            infos.push(info(app, 0, &format!("{} ({})", title_line(cfg, r), source_label(r.source)))?);
-            infos.push(info(app, 1, &verdict_line(r))?);
+            let n = infos.len();
+            infos.push(info(app, n, &format!("{} ({})", title_line(cfg, r), source_label(r.source)))?);
+            infos.push(info(app, n + 1, &verdict_line(r))?);
         }
-        None => infos.push(info(app, 0, "Nenhum repositório usado recentemente")?),
+        None if pending.repos == 0 => infos.push(info(app, 0, "Nenhum repositório usado recentemente")?),
+        None => {}
     }
     let pinned = state.current.as_ref().is_some_and(|r| r.source == CurrentRepoSource::Pinned);
     let pin = if pinned {
@@ -134,11 +164,16 @@ pub fn menu(app: &AppHandle, cfg: &AppConfig, state: &CurrentRepoState, em: &Eme
         item(app, MENU_PIN, "Fixar este repositório", can_pin)?
     };
 
-    let em_status = info(app, 2, &emergency_line(em).unwrap_or_else(|| "Desligado: commits e push precisam do serviço do GitPass".into()))?;
+    let em_idx = infos.len();
+    let em_status = info(
+        app,
+        em_idx,
+        &emergency_line(em).unwrap_or_else(|| "Desligado: commits e push precisam do serviço do GitPass".into()),
+    )?;
     let em_15 = item(app, MENU_EMERGENCY_15, "Ativar por 15 min", true)?;
     let em_60 = item(app, MENU_EMERGENCY_60, "Ativar por 1 h", true)?;
     let em_off = item(app, MENU_EMERGENCY_OFF, "Desativar", em.active)?;
-    let em_hint = info(app, 3, "Libera só commits locais; o push continua bloqueado")?;
+    let em_hint = info(app, em_idx + 1, "Libera só commits locais; o push continua bloqueado")?;
     let em_sep = PredefinedMenuItem::separator(app)?;
     let emergency = Submenu::with_items(
         app,
@@ -161,11 +196,23 @@ pub fn menu(app: &AppHandle, cfg: &AppConfig, state: &CurrentRepoState, em: &Eme
     Menu::with_items(app, &items)
 }
 
-/// Replaces the tray tooltip and menu.
-pub fn update(app: &AppHandle, cfg: &AppConfig, state: &CurrentRepoState, em: &EmergencyView) {
+fn menubar_title(pending: &PendingPushSummary) -> Option<String> {
+    if pending.repos == 0 {
+        return None;
+    }
+    Some(pending.repos.min(99).to_string())
+}
+
+/// Replaces the tray tooltip, menu and menubar title badge.
+pub fn update(app: &AppHandle, cfg: &AppConfig, state: &CurrentRepoState, em: &EmergencyView, pending: &PendingPushSummary) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let _ = tray.set_tooltip(Some(tooltip(cfg, state, em)));
-    match menu(app, cfg, state, em) {
+    let _ = tray.set_tooltip(Some(tooltip(cfg, state, em, pending)));
+    #[cfg(target_os = "macos")]
+    {
+        let title = menubar_title(pending);
+        let _ = tray.set_title(title.as_deref());
+    }
+    match menu(app, cfg, state, em, pending) {
         Ok(m) => {
             let _ = tray.set_menu(Some(m));
         }
@@ -213,16 +260,28 @@ mod tests {
 
     const OFF: EmergencyView = EmergencyView { active: false, until: None, started_at: None, reason: None };
 
+    const CLEAR: PendingPushSummary = PendingPushSummary { repos: 0, commits: 0 };
+
     #[test]
     fn tooltip_shows_repo_account_and_verdict_in_words() {
-        let t = tooltip(&cfg(), &state(Some(repo(CurrentRepoSource::Pinned, Some(Verdict::Ok), None))), &OFF);
+        let t = tooltip(&cfg(), &state(Some(repo(CurrentRepoSource::Pinned, Some(Verdict::Ok), None))), &OFF, &CLEAR);
         assert!(t.starts_with("GitPass — octo/app — @octo\nSituação: OK · fixado\n"), "{t}");
-        let t = tooltip(&cfg(), &state(Some(repo(CurrentRepoSource::Recent, Some(Verdict::Blocked), Some("GP-OWNER")))), &OFF);
+        let t = tooltip(&cfg(), &state(Some(repo(CurrentRepoSource::Recent, Some(Verdict::Blocked), Some("GP-OWNER")))), &OFF, &CLEAR);
         assert!(t.contains("Situação: Bloqueado (GP-OWNER) · último usado"), "{t}");
-        let t = tooltip(&cfg(), &state(Some(repo(CurrentRepoSource::Focus, Some(Verdict::Unconfirmed), None))), &OFF);
+        let t = tooltip(&cfg(), &state(Some(repo(CurrentRepoSource::Focus, Some(Verdict::Unconfirmed), None))), &OFF, &CLEAR);
         assert!(t.contains("Situação: Não confirmado · app em foco"), "{t}");
         assert!(!t.contains("ghp_secret"));
-        assert_eq!(tooltip(&AppConfig::default(), &state(None), &OFF), "GitPass — conecte contas e vincule repositórios");
+        assert_eq!(
+            tooltip(&AppConfig::default(), &state(None), &OFF, &CLEAR),
+            "GitPass — conecte contas e vincule repositórios"
+        );
+    }
+
+    #[test]
+    fn pending_push_is_in_the_tooltip() {
+        let p = PendingPushSummary { repos: 2, commits: 5 };
+        let t = tooltip(&cfg(), &state(None), &OFF, &p);
+        assert!(t.starts_with("2 repositórios com 5 commits para enviar\n"), "{t}");
     }
 
     #[test]
@@ -233,7 +292,7 @@ mod tests {
             started_at: None,
             reason: Some("motivo".into()),
         };
-        let t = tooltip(&cfg(), &state(None), &em);
+        let t = tooltip(&cfg(), &state(None), &em, &CLEAR);
         assert!(t.contains("Modo emergência ativo até "), "{t}");
         assert!(!t.contains("motivo"));
     }

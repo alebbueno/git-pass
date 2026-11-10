@@ -13,6 +13,7 @@ import { DeviceFlowModal } from "../lib/device-flow";
 import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
 import { errorView } from "../lib/errors";
 import { brandSymbol, icon } from "../lib/icons";
+import { requestFeatureTour } from "../lib/feature-tour";
 import { getOnboarding, setOnboarding, WELCOME_REQUEST_EVENT } from "../lib/onboarding";
 import { profileChip, profileName } from "../lib/profile";
 import type { MountView, ViewContext } from "../lib/view";
@@ -62,6 +63,9 @@ const REASON_TEXT: Record<SuggestionReason, string> = {
   same_owner_binding: "já usada em outros repositórios deste dono",
   only_account: "única conta conectada",
   push_access: "única conta com permissão de envio (push)",
+  folder_rule: "regra de pasta",
+  org_rule: "regra de organização",
+  folder_org_rule: "regra de pasta e organização",
 };
 
 const COMPONENTS: { key: "binaries" | "credentials" | "hooks" | "daemon"; label: string }[] = [
@@ -312,8 +316,10 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
   function rowHtml(i: number, r: Row): string {
     const acc = state.accounts.find((a) => a.id === r.accountId);
     const reason =
-      acc && r.repo.suggested_account_id === r.accountId && r.repo.suggestion_reason
-        ? `<span class="muted small">Sugerida: ${esc(REASON_TEXT[r.repo.suggestion_reason])}</span>`
+      acc && r.repo.suggested_account_id === r.accountId && (r.repo.suggestion_reason || r.repo.suggestion_label)
+        ? `<span class="muted small">Sugerida: ${esc(
+            r.repo.suggestion_label ? `Regra «${r.repo.suggestion_label}»` : REASON_TEXT[r.repo.suggestion_reason!]
+          )}</span>`
         : "";
     const accountCell =
       state.accounts.length > 1
@@ -626,6 +632,7 @@ export function mountWelcome(root: HTMLElement, ctx: ViewContext, opts: WelcomeO
   function exit(kind: "done" | "skipped"): void {
     setOnboarding(kind);
     opts.onExit();
+    if (kind === "done") window.setTimeout(() => requestFeatureTour({ auto: true }), 400);
   }
 
   // ---------- Eventos ----------

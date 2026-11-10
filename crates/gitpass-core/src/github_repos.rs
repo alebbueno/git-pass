@@ -1,7 +1,7 @@
 //! List repositories visible to the authenticated user (GitHub REST).
 
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::GithubApiError;
 
@@ -193,6 +193,50 @@ pub fn list_user_repos(token: &str) -> Result<Vec<GithubRepoSummary>, GithubApiE
     }
 
     Ok(all)
+}
+
+#[derive(Debug, Serialize)]
+struct CreateUserRepoBody<'a> {
+    name: &'a str,
+    private: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    auto_init: bool,
+}
+
+/// Creates a repository owned by the authenticated user (`POST /user/repos`).
+pub fn create_user_repo(
+    token: &str,
+    name: &str,
+    private: bool,
+    description: Option<&str>,
+) -> Result<GithubRepoSummary, GithubApiError> {
+    let client = Client::builder().user_agent("gitpass-desktop").build()?;
+    let desc = description.map(str::trim).filter(|s| !s.is_empty());
+    let body = CreateUserRepoBody {
+        name,
+        private,
+        description: desc,
+        auto_init: false,
+    };
+    let resp = client
+        .post(format!("{API_HOST_PREFIX}user/repos"))
+        .header("Accept", "application/vnd.github+json")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .json(&body)
+        .send()?;
+
+    let status = resp.status().as_u16();
+    let raw = resp.text()?;
+    if !(200..300).contains(&status) {
+        return Err(GithubApiError::Http {
+            status,
+            body: crate::github_api::sanitize_error_body(&raw),
+        });
+    }
+    let row: RepoRow = serde_json::from_str(&raw)?;
+    Ok(GithubRepoSummary::from(row))
 }
 
 #[cfg(test)]

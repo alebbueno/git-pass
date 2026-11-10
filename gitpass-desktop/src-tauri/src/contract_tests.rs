@@ -289,12 +289,15 @@ fn map_folder_json_matches_typescript() {
         binding_id: None,
         bound_account_id: None,
         bound_matches_suggestion: None,
+        suggestion_reason: None,
+        suggestion_label: None,
     };
     assert_eq!(
         keys(&item),
         expect(&[
             "root_path", "status", "remote_name", "remote_url", "github_owner", "github_repo", "candidates",
-            "suggested_account_id", "binding_id", "bound_account_id", "bound_matches_suggestion"
+            "suggested_account_id", "binding_id", "bound_account_id", "bound_matches_suggestion", "suggestion_reason",
+            "suggestion_label"
         ])
     );
     let v = serde_json::to_value(&item).unwrap();

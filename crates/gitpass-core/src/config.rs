@@ -26,8 +26,27 @@ pub struct AppConfig {
     pub accounts: Vec<Account>,
     #[serde(default)]
     pub repos: Vec<RepoBinding>,
+    /// Automatic account picks from folder prefix and/or GitHub owner (no secrets).
+    #[serde(default)]
+    pub account_rules: Vec<AccountRule>,
     #[serde(default)]
     pub ui: UiState,
+}
+
+/// Maps a folder and/or GitHub organization (owner) to an account for new bindings and suggestions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccountRule {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    /// Absolute path prefix; repos under this path match (not sibling names like `ClientesAntigos`).
+    #[serde(default)]
+    pub path_prefix: Option<PathBuf>,
+    /// GitHub `owner` from `origin` (organization or user login), compared case-insensitively.
+    #[serde(default)]
+    pub github_owner: Option<String>,
+    /// Short label for the UI, e.g. «Clientes».
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 fn default_schema_version() -> u32 {
@@ -40,16 +59,38 @@ impl Default for AppConfig {
             schema_version: 1,
             accounts: Vec::new(),
             repos: Vec::new(),
+            account_rules: Vec::new(),
             ui: UiState::default(),
         }
     }
 }
 
-/// A GitHub identity managed by the user (OAuth tokens live in Keychain, not here).
+/// Hosting provider for this account.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountHost {
+    #[default]
+    Github,
+    Bitbucket,
+}
+
+impl AccountHost {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Bitbucket => "bitbucket",
+        }
+    }
+}
+
+/// A Git hosting identity managed by the user (tokens live in Keychain, not here).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Account {
     pub id: Uuid,
-    /// GitHub login, e.g. `octocat` (filled after OAuth or manual entry).
+    /// `github` (default) or `bitbucket`.
+    #[serde(default)]
+    pub host: AccountHost,
+    /// GitHub login or Bitbucket username (filled after OAuth / app password connect).
     #[serde(default)]
     pub github_login: Option<String>,
     /// Display label in the UI (defaults to login in the app if empty).

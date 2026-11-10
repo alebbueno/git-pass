@@ -1,9 +1,19 @@
-//! Parse GitHub `origin` URLs into owner/repo.
+//! Parse GitHub / Bitbucket `origin` URLs into owner/repo (workspace/slug).
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubRepoId {
     pub owner: String,
     pub repo: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitbucketRepoId {
+    pub workspace: String,
+    pub slug: String,
+}
+
+pub fn bitbucket_https_url(workspace: &str, slug: &str) -> String {
+    format!("https://bitbucket.org/{workspace}/{slug}")
 }
 
 /// Normalize owner segment (GitHub usernames are case-insensitive; treat lower).
@@ -69,6 +79,55 @@ pub fn parse_github_remote(url: &str) -> Option<GitHubRepoId> {
     None
 }
 
+/// Parse SSH and HTTPS Bitbucket Cloud remotes.
+pub fn parse_bitbucket_remote(url: &str) -> Option<BitbucketRepoId> {
+    let u = url.trim();
+
+    if let Some(rest) = u.strip_prefix("git@bitbucket.org:") {
+        let mut parts = rest.splitn(2, '/');
+        let workspace = parts.next()?.trim();
+        let slug = parts.next()?.trim();
+        if workspace.is_empty() || slug.is_empty() {
+            return None;
+        }
+        return Some(BitbucketRepoId {
+            workspace: normalize_owner(workspace),
+            slug: strip_git_suffix(slug),
+        });
+    }
+
+    if u.starts_with("ssh://git@bitbucket.org/") {
+        let path = u.trim_start_matches("ssh://git@bitbucket.org/");
+        let mut parts = path.splitn(2, '/');
+        let workspace = parts.next()?.trim();
+        let slug = parts.next()?.trim();
+        if workspace.is_empty() || slug.is_empty() {
+            return None;
+        }
+        return Some(BitbucketRepoId {
+            workspace: normalize_owner(workspace),
+            slug: strip_git_suffix(slug),
+        });
+    }
+
+    if let Some(idx) = u.find("bitbucket.org/") {
+        let tail = &u[idx + "bitbucket.org/".len()..];
+        let mut parts = tail.splitn(2, '/');
+        let workspace = parts.next()?.trim();
+        let slug = parts.next()?.trim();
+        let slug = slug.split(['?', '#']).next().unwrap_or(slug);
+        if workspace.is_empty() || slug.is_empty() {
+            return None;
+        }
+        return Some(BitbucketRepoId {
+            workspace: normalize_owner(workspace),
+            slug: strip_git_suffix(slug),
+        });
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +144,12 @@ mod tests {
         let id = parse_github_remote("https://github.com/OctoCat/Hello-World").unwrap();
         assert_eq!(id.owner, "octocat");
         assert_eq!(id.repo, "Hello-World");
+    }
+
+    #[test]
+    fn parses_bitbucket_https() {
+        let id = parse_bitbucket_remote("https://bitbucket.org/Acme/widget.git").unwrap();
+        assert_eq!(id.workspace, "acme");
+        assert_eq!(id.slug, "widget");
     }
 }

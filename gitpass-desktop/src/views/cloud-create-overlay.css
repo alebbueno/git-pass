@@ -1,0 +1,256 @@
+/* Overlay: criar repositório (fluxo com feedback). */
+
+.cloud-create-flow-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--sp-6);
+  background: color-mix(in srgb, var(--scrim) 92%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+}
+
+.cloud-create-flow {
+  position: relative;
+  width: min(440px, 100%);
+  padding: var(--sp-6) var(--sp-6) var(--sp-5);
+  overflow: hidden;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2xl);
+  background:
+    radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%),
+    var(--surface-sheen, var(--surface));
+  box-shadow: var(--float-shadow), inset 0 1px var(--highlight);
+  opacity: 0;
+  transform: translateY(18px) scale(0.97);
+  will-change: transform, opacity;
+}
+
+.cloud-create-flow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    -12deg,
+    transparent,
+    transparent 28px,
+    color-mix(in srgb, var(--accent) 3%, transparent) 28px,
+    color-mix(in srgb, var(--accent) 3%, transparent) 29px
+  );
+  opacity: 0.35;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at 50% 30%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 30%, #000 20%, transparent 75%);
+}
+
+.cloud-create-flow-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.cloud-create-flow-head {
+  display: grid;
+  gap: var(--sp-2);
+  text-align: center;
+}
+
+.cloud-create-flow-orb {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto;
+  border-radius: 18px;
+  background: var(--primary-fill);
+  box-shadow: var(--primary-bevel), 0 10px 28px color-mix(in srgb, var(--accent) 28%, transparent);
+  color: #fff;
+  will-change: transform;
+}
+
+.cloud-create-flow-orb .icon {
+  color: #fff;
+}
+
+.cloud-create-flow-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 750;
+  letter-spacing: -0.03em;
+}
+
+.cloud-create-flow-sub {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.cloud-create-flow-sub code {
+  font-size: var(--fs-xs);
+  color: var(--ink);
+}
+
+.cloud-create-flow-steps {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cloud-create-flow-step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-lg);
+  border: 1px solid transparent;
+  font-size: var(--fs-sm);
+  color: var(--dim);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.cloud-create-flow-step .step-dot {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--inset);
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.cloud-create-flow-step[data-state="active"] {
+  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
+  color: var(--ink);
+}
+
+.cloud-create-flow-step[data-state="active"] .step-dot {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-on);
+}
+
+.cloud-create-flow-step[data-state="done"] {
+  color: var(--muted);
+}
+
+.cloud-create-flow-step[data-state="done"] .step-dot {
+  border-color: transparent;
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.cloud-create-flow-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.cloud-create-flow-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--inset);
+  border: 1px solid var(--soft-line);
+}
+
+.cloud-create-flow-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--aqua)));
+  transition: width 0.28s var(--ease);
+  will-change: width;
+}
+
+.cloud-create-flow-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cloud-create-flow[data-mode="success"] .cloud-create-flow-working,
+.cloud-create-flow[data-mode="error"] .cloud-create-flow-working {
+  display: none;
+}
+
+.cloud-create-flow-success,
+.cloud-create-flow-error {
+  display: none;
+  gap: var(--sp-3);
+  text-align: center;
+}
+
+.cloud-create-flow[data-mode="success"] .cloud-create-flow-success,
+.cloud-create-flow[data-mode="error"] .cloud-create-flow-error {
+  display: grid;
+}
+
+.cloud-create-flow-check {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: var(--good-bg);
+  color: var(--good);
+  box-shadow: 0 0 0 10px color-mix(in srgb, var(--good-bg) 55%, transparent);
+}
+
+.cloud-create-flow-check .icon {
+  width: 32px;
+  height: 32px;
+}
+
+.cloud-create-flow-path {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--inset);
+  border: 1px solid var(--soft-line);
+  font-size: var(--fs-xs);
+}
+
+.cloud-create-flow-path code {
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.cloud-create-flow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+
+.cloud-create-flow-error .state.error {
+  justify-content: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-create-flow,
+  .cloud-create-flow-backdrop,
+  .cloud-create-flow-progress-fill {
+    transition: none;
+  }
+}

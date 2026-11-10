@@ -7,10 +7,10 @@ use std::time::Instant;
 
 use uuid::Uuid;
 
-use crate::remote::GitHubRepoId;
-use crate::{git_remote_url, normalize_owner, parse_github_remote, Account, AppConfig, RepoBinding};
+use crate::remote::{BitbucketRepoId, GitHubRepoId};
+use crate::{git_remote_url, normalize_owner, parse_bitbucket_remote, parse_github_remote, Account, AppConfig, RepoBinding};
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RepoIdentity {
     pub name: Option<String>,
     pub email: Option<String>,
@@ -53,6 +53,21 @@ pub fn read_repo_identity(root: &Path) -> RepoIdentity {
 }
 
 /// Writes the account's name/email into the repo's local Git config. Fields the account lacks are left untouched.
+/// Writes explicit local identity values (used by undo).
+pub fn set_repo_identity(root: &Path, id: &RepoIdentity) -> Result<RepoIdentity, String> {
+    match &id.name {
+        Some(n) => git_config_set(root, "user.name", n)?,
+        None => {
+            git_config_unset(root, "user.name")?;
+        }
+    }
+    match &id.email {
+        Some(e) => git_config_set(root, "user.email", e)?,
+        None => git_config_unset(root, "user.email")?,
+    }
+    Ok(read_repo_identity(root))
+}
+
 pub fn apply_repo_identity(root: &Path, account: &Account) -> Result<RepoIdentity, String> {
     let name = account.name.clone().or_else(|| account.github_login.clone());
     if let Some(n) = &name {
@@ -75,15 +90,36 @@ pub fn create_binding(cfg: &mut AppConfig, account_id: Uuid, root: &Path) -> Res
 
     let canon: PathBuf = root.canonicalize().map_err(|e| format!("Caminho inválido: {e}"))?;
 
-    let gh = match pick_remote(&read_remotes(&canon)) {
-        RemotePick::GitHub { id, .. } => id,
+    let remotes = read_remotes(&canon);
+    let picked = pick_remote(&remotes);
+    let (owner, repo) = match &picked {
+        RemotePick::GitHub { id, .. } => (id.owner.clone(), id.repo.clone()),
+        RemotePick::Bitbucket { id, .. } => (id.workspace.clone(), id.slug.clone()),
         RemotePick::Other { name, url } => {
-            return Err(format!("O remoto `{name}` não aponta para github.com (`{url}`)."));
+            return Err(format!(
+                "O remoto `{name}` não aponta para github.com nem bitbucket.org (`{url}`)."
+            ));
         }
         RemotePick::None => {
             return Err("O repositório não tem remoto. Adicione o remoto `origin` ou escolha outro clone.".to_string());
         }
     };
+
+    if let Some(acc) = cfg.accounts.iter().find(|a| a.id == account_id) {
+        use crate::config::AccountHost;
+        let remote_host = match &picked {
+            RemotePick::GitHub { .. } => AccountHost::Github,
+            RemotePick::Bitbucket { .. } => AccountHost::Bitbucket,
+            _ => AccountHost::Github,
+        };
+        if acc.host != remote_host {
+            return Err(format!(
+                "Este repositório é do {}, mas a conta escolhida é do {}.",
+                remote_host.as_str(),
+                acc.host.as_str()
+            ));
+        }
+    }
 
     if cfg.repos.iter().any(|r| r.root_path == canon) {
         return Err("Esta pasta já está vinculada.".to_string());
@@ -93,8 +129,8 @@ pub fn create_binding(cfg: &mut AppConfig, account_id: Uuid, root: &Path) -> Res
         id: Uuid::new_v4(),
         account_id,
         root_path: canon.clone(),
-        github_owner: Some(gh.owner),
-        github_repo: Some(gh.repo),
+        github_owner: Some(owner),
+        github_repo: Some(repo),
     };
     cfg.repos.push(binding.clone());
     cfg.save().map_err(|e| e.to_string())?;
@@ -278,12 +314,21 @@ pub enum SuggestionReason {
     OnlyAccount,
     /// The GitHub API confirmed push access for this account only.
     PushAccess,
+    /// User rule: folder prefix (and optional owner).
+    FolderRule,
+    /// User rule: GitHub organization / owner.
+    OrgRule,
+    /// User rule: folder prefix and owner together.
+    FolderOrgRule,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AccountSuggestion {
     pub account_id: Uuid,
     pub reason: SuggestionReason,
+    /// When the pick comes from [`crate::account_rules`], a short UI label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_label: Option<String>,
 }
 
 /// Suggestion without network: login match, then the account most used for that owner, then the only account.
@@ -297,6 +342,7 @@ pub fn suggest_account_offline(cfg: &AppConfig, owner: &str) -> Option<AccountSu
         return Some(AccountSuggestion {
             account_id: a.id,
             reason: SuggestionReason::OwnerLogin,
+            rule_label: None,
         });
     }
 
@@ -323,6 +369,7 @@ pub fn suggest_account_offline(cfg: &AppConfig, owner: &str) -> Option<AccountSu
         return Some(AccountSuggestion {
             account_id,
             reason: SuggestionReason::SameOwnerBinding,
+            rule_label: None,
         });
     }
 
@@ -330,6 +377,7 @@ pub fn suggest_account_offline(cfg: &AppConfig, owner: &str) -> Option<AccountSu
         return Some(AccountSuggestion {
             account_id: cfg.accounts[0].id,
             reason: SuggestionReason::OnlyAccount,
+            rule_label: None,
         });
     }
     None
@@ -345,8 +393,16 @@ pub enum AccountDecision {
 
 /// Combines the offline suggestion with per-account push checks (`None` = could not verify).
 pub fn decide_account(offline: Option<AccountSuggestion>, push: &[(Uuid, Option<bool>)]) -> AccountDecision {
-    if let Some(s) = offline.filter(|s| s.reason == SuggestionReason::OwnerLogin) {
-        return AccountDecision::Bind(s);
+    if let Some(s) = offline.as_ref().filter(|s| {
+        matches!(
+            s.reason,
+            SuggestionReason::OwnerLogin
+                | SuggestionReason::FolderRule
+                | SuggestionReason::OrgRule
+                | SuggestionReason::FolderOrgRule
+        )
+    }) {
+        return AccountDecision::Bind(s.clone());
     }
     let pushers: Vec<Uuid> = push
         .iter()
@@ -357,14 +413,16 @@ pub fn decide_account(offline: Option<AccountSuggestion>, push: &[(Uuid, Option<
         return AccountDecision::Bind(AccountSuggestion {
             account_id: pushers[0],
             reason: SuggestionReason::PushAccess,
+            rule_label: None,
         });
     }
-    if let Some(s) = offline {
+    if let Some(s) = offline.as_ref() {
         if pushers.contains(&s.account_id) {
-            return AccountDecision::Bind(s);
+            return AccountDecision::Bind(s.clone());
         }
     }
     let suggested = offline
+        .as_ref()
         .map(|s| s.account_id)
         .filter(|id| push.iter().all(|(a, p)| a != id || *p != Some(false)))
         .or_else(|| pushers.first().copied());
@@ -462,28 +520,42 @@ pub fn read_remotes(root: &Path) -> Vec<(String, String)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemotePick {
     GitHub { name: String, id: GitHubRepoId },
-    /// Not on GitHub; `url` has any embedded credentials removed.
+    Bitbucket { name: String, id: BitbucketRepoId },
+    /// Unsupported host; `url` has any embedded credentials removed.
     Other { name: String, url: String },
     None,
 }
 
-/// `origin` when it exists (GitHub or not), else the first GitHub remote, else the first remote.
+fn pick_known_remote(name: &str, url: &str) -> Option<RemotePick> {
+    if let Some(id) = parse_github_remote(url) {
+        return Some(RemotePick::GitHub {
+            name: name.to_string(),
+            id,
+        });
+    }
+    if let Some(id) = parse_bitbucket_remote(url) {
+        return Some(RemotePick::Bitbucket {
+            name: name.to_string(),
+            id,
+        });
+    }
+    None
+}
+
+/// `origin` when it exists (GitHub/Bitbucket or not), else the first known host, else the first remote.
 pub fn pick_remote(remotes: &[(String, String)]) -> RemotePick {
     let other = |(name, url): &(String, String)| RemotePick::Other {
         name: name.clone(),
         url: redact_remote_url(url),
     };
     if let Some(origin) = remotes.iter().find(|(n, _)| n == "origin") {
-        return match parse_github_remote(&origin.1) {
-            Some(id) => RemotePick::GitHub { name: origin.0.clone(), id },
-            None => other(origin),
-        };
+        return pick_known_remote(&origin.0, &origin.1).unwrap_or_else(|| other(origin));
     }
-    if let Some((name, id)) = remotes
+    if let Some((name, url)) = remotes
         .iter()
-        .find_map(|(n, u)| parse_github_remote(u).map(|id| (n.clone(), id)))
+        .find(|(n, u)| pick_known_remote(n, u).is_some())
     {
-        return RemotePick::GitHub { name, id };
+        return pick_known_remote(name, url).unwrap();
     }
     remotes.first().map(other).unwrap_or(RemotePick::None)
 }
@@ -724,14 +796,16 @@ pub fn discover_unbound_repos(
         .into_iter()
         .filter(|p| !bound.contains(p))
         .filter_map(|p| {
-            let RemotePick::GitHub { id: gh, .. } = pick_remote(&read_remotes(&p)) else {
-                return None;
+            let (owner, repo) = match pick_remote(&read_remotes(&p)) {
+                RemotePick::GitHub { id, .. } => (id.owner, id.repo),
+                RemotePick::Bitbucket { id, .. } => (id.workspace, id.slug),
+                _ => return None,
             };
             Some(DiscoveredRepo {
-                suggestion: suggest_account_offline(cfg, &gh.owner),
+                suggestion: crate::account_rules::suggest_account_for_repo(cfg, &p, &owner),
                 root_path: p,
-                github_owner: gh.owner,
-                github_repo: gh.repo,
+                github_owner: owner,
+                github_repo: repo,
             })
         })
         .collect();
@@ -841,19 +915,34 @@ mod tests {
     fn decide_account_cases() {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
-        let owner = Some(AccountSuggestion { account_id: a, reason: SuggestionReason::OwnerLogin });
+        let owner = Some(AccountSuggestion {
+            account_id: a,
+            reason: SuggestionReason::OwnerLogin,
+            rule_label: None,
+        });
         assert!(matches!(decide_account(owner, &[(a, Some(false))]), AccountDecision::Bind(s) if s.account_id == a));
 
         let d = decide_account(None, &[(a, Some(false)), (b, Some(true))]);
         assert!(matches!(d, AccountDecision::Bind(s) if s.account_id == b && s.reason == SuggestionReason::PushAccess));
 
-        let same = Some(AccountSuggestion { account_id: b, reason: SuggestionReason::SameOwnerBinding });
+        let same = Some(AccountSuggestion {
+            account_id: b,
+            reason: SuggestionReason::SameOwnerBinding,
+            rule_label: None,
+        });
         assert!(matches!(decide_account(same, &[(a, Some(true)), (b, Some(true))]), AccountDecision::Bind(s) if s.account_id == b));
 
         assert_eq!(decide_account(None, &[(a, Some(true)), (b, Some(true))]), AccountDecision::Ask { suggested: Some(a) });
         assert_eq!(decide_account(None, &[(a, None), (b, None)]), AccountDecision::Ask { suggested: None });
-        let only = Some(AccountSuggestion { account_id: a, reason: SuggestionReason::OnlyAccount });
-        assert_eq!(decide_account(only, &[(a, Some(false))]), AccountDecision::Ask { suggested: None });
+        let only = Some(AccountSuggestion {
+            account_id: a,
+            reason: SuggestionReason::OnlyAccount,
+            rule_label: None,
+        });
+        assert_eq!(
+            decide_account(only.clone(), &[(a, Some(false))]),
+            AccountDecision::Ask { suggested: None }
+        );
         assert_eq!(decide_account(only, &[(a, None)]), AccountDecision::Ask { suggested: Some(a) });
     }
 
@@ -1026,7 +1115,7 @@ mod tests {
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].root_path, t.0.join("mine"));
         assert_eq!((repos[0].github_owner.as_str(), repos[0].github_repo.as_str()), ("ana", "mine"));
-        assert_eq!(repos[0].suggestion.map(|s| s.account_id), Some(ana.id));
+        assert_eq!(repos[0].suggestion.as_ref().map(|s| s.account_id), Some(ana.id));
     }
 
     #[test]

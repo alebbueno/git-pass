@@ -6,7 +6,6 @@
     <meta name="color-scheme" content="light dark" />
     <title>GitPass</title>
     <script>
-      // Aplica o tema antes do primeiro desenho (sem piscar escuro → claro).
       try {
         var t = localStorage.getItem("gitpass-theme");
         if (t !== "light" && t !== "dark") t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -14,7 +13,6 @@
       } catch (e) {}
     </script>
     <style>
-      /* Estado antes do bundle: canvas e texto do design system (os tokens ainda não carregaram). */
       html,
       body {
         margin: 0;
@@ -29,55 +27,162 @@
         background: #0e1120;
         color: #f1f2ff;
       }
+
       .shell-loading {
         min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: grid;
+        place-items: center;
         padding: 2rem;
+        box-sizing: border-box;
         color: #565c74;
         font-size: 13px;
       }
-      html[data-theme="dark"] .shell-loading {
-        color: #b7bdd6;
+      html[data-theme="dark"] .shell-loading { color: #b7bdd6; }
+      .gp-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        display: grid;
+        grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+        place-items: center;
+        overflow: hidden;
+        background: #0d1123;
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 240ms cubic-bezier(.26,.64,.25,1), visibility 0s linear 240ms;
+        animation: gp-splash-lifetime 1ms linear 2800ms forwards;
       }
-      .shell-loading-inner {
-        display: flex;
-        align-items: center;
-        gap: 10px;
+      .gp-splash[data-exit] {
+        animation: none;
+        pointer-events: none;
+        opacity: 0;
+        visibility: hidden;
       }
-      .shell-loading-spinner {
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        border: 2px solid #dce0ed;
-        border-top-color: #5138c9;
-        animation: boot-spin 0.85s linear infinite;
+      .gp-splash-art { display: block; width: 100%; height: 100%; }
+      .gp-splash-sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
-      html[data-theme="dark"] .shell-loading-spinner {
-        border-color: #2d3550;
-        border-top-color: #beb0ff;
+      .gp-splash-art .gp-fx { animation: gp-boot-fx 650ms cubic-bezier(.2,.72,.2,1) both; }
+      .gp-splash-art .gp-plate {
+        transform-origin: 590px 304px;
+        animation: gp-boot-plate 580ms cubic-bezier(.2,.72,.2,1) both;
       }
-      @keyframes boot-spin {
-        to {
-          transform: rotate(360deg);
-        }
+      .gp-splash-art .gp-line { stroke-dasharray: 19 19; animation: gp-boot-line 490ms cubic-bezier(.28,.5,.24,1) 160ms both; }
+      .gp-splash-art .gp-fork { stroke-dasharray: 12 12; animation: gp-boot-fork 380ms cubic-bezier(.28,.5,.24,1) 435ms both; }
+      .gp-splash-art .gp-origin { animation: gp-boot-node 250ms ease-out 110ms both; }
+      .gp-splash-art .gp-peer { animation: gp-boot-node 240ms ease-out 700ms both; }
+      .gp-splash-art .gp-end { animation: gp-boot-node 260ms ease-out 560ms both; }
+      .gp-splash-art .gp-wave { transform-origin: 590px 304px; animation: gp-boot-wave 710ms ease-out 565ms both; }
+      .gp-splash-art .gp-copy { animation: gp-boot-rise 500ms cubic-bezier(.2,.72,.2,1) 570ms both; }
+      .gp-splash-art .gp-state { animation: gp-boot-rise 380ms cubic-bezier(.2,.72,.2,1) 830ms both; }
+      @keyframes gp-boot-fx { from { opacity: .25; } to { opacity: 1; } }
+      @keyframes gp-boot-plate { from { opacity: .35; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
+      @keyframes gp-boot-line { from { stroke-dashoffset: 19; } to { stroke-dashoffset: 0; } }
+      @keyframes gp-boot-fork { from { stroke-dashoffset: 12; } to { stroke-dashoffset: 0; } }
+      @keyframes gp-boot-node { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes gp-boot-wave {
+        0% { opacity: 0; transform: scale(.76); }
+        24% { opacity: .44; }
+        100% { opacity: 0; transform: scale(1.6); }
       }
+      @keyframes gp-boot-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes gp-splash-lifetime { to { visibility: hidden; } }
       @media (prefers-reduced-motion: reduce) {
-        .shell-loading-spinner {
-          animation: none;
-        }
+        .gp-splash { transition: none; }
+        .gp-splash-art * { animation: none !important; stroke-dasharray: none; }
+        .gp-splash-art .gp-wave { opacity: 0; }
       }
+
     </style>
   </head>
   <body>
+    <section id="gitpass-splash" class="gp-splash" role="status">
+      <svg class="gp-splash-art" xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+        <defs>
+          <radialGradient id="gp-boot-bg" cx=".43" cy=".36" r=".72">
+            <stop stop-color="#1b1a38"/><stop offset=".55" stop-color="#11162b"/><stop offset="1" stop-color="#090e1e"/>
+          </radialGradient>
+          <radialGradient id="gp-boot-violet">
+            <stop stop-color="#7954d3" stop-opacity=".38"/><stop offset="1" stop-color="#7954d3" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="gp-boot-mint">
+            <stop stop-color="#39b9c3" stop-opacity=".27"/><stop offset="1" stop-color="#39b9c3" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="gp-boot-grid-fade">
+            <stop stop-color="white"/><stop offset=".69" stop-color="white" stop-opacity=".52"/><stop offset="1" stop-color="white" stop-opacity="0"/>
+          </radialGradient>
+          <pattern id="gp-boot-dots" width="19" height="19" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r=".85" fill="#b9c9f4" opacity=".28"/>
+          </pattern>
+          <mask id="gp-boot-grid">
+            <ellipse cx="590" cy="319" rx="518" ry="307" fill="url(#gp-boot-grid-fade)"/>
+          </mask>
+          <linearGradient id="gp-boot-plate" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#3d3567"/><stop offset=".48" stop-color="#201e3c"/><stop offset="1" stop-color="#1b3e4d"/>
+          </linearGradient>
+          <linearGradient id="gp-boot-edge" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#ded0ff" stop-opacity=".94"/><stop offset=".56" stop-color="#8a89b8" stop-opacity=".44"/><stop offset="1" stop-color="#8ad7d4" stop-opacity=".87"/>
+          </linearGradient>
+          <linearGradient id="gp-boot-wire">
+            <stop stop-color="#b1a2f2" stop-opacity=".08"/><stop offset=".52" stop-color="#b1a2f2" stop-opacity=".64"/><stop offset="1" stop-color="#8ae2da" stop-opacity=".13"/>
+          </linearGradient>
+          <linearGradient id="gp-boot-route">
+            <stop stop-color="#c8b5ff"/><stop offset=".63" stop-color="#f6ecff"/><stop offset="1" stop-color="#b2f6ec"/>
+          </linearGradient>
+          <filter id="gp-boot-halo" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="9"/>
+          </filter>
+        </defs>
+        <rect width="1180" height="760" fill="url(#gp-boot-bg)"/>
+        <g id="gp-fx" class="gp-fx">
+          <ellipse cx="422" cy="270" rx="398" ry="272" fill="url(#gp-boot-violet)"/>
+          <ellipse cx="775" cy="329" rx="323" ry="250" fill="url(#gp-boot-mint)"/>
+          <rect width="1180" height="660" fill="url(#gp-boot-dots)" mask="url(#gp-boot-grid)" opacity=".72"/>
+          <g transform="rotate(-13 590 304)" fill="none">
+            <ellipse cx="590" cy="304" rx="330" ry="91" stroke="url(#gp-boot-wire)" opacity=".7"/>
+            <ellipse cx="590" cy="304" rx="352" ry="111" stroke="url(#gp-boot-wire)" stroke-dasharray="2 10" opacity=".51"/>
+            <path d="M197 306h786" stroke="url(#gp-boot-wire)" opacity=".32"/>
+            <circle cx="316" cy="252" r="3.5" fill="#bba8fe" fill-opacity=".8" stroke="none"/>
+            <circle cx="876" cy="349" r="3.5" fill="#8ee8dc" fill-opacity=".88" stroke="none"/>
+            <circle cx="876" cy="349" r="7.5" stroke="#8ee8dc" stroke-opacity=".32"/>
+          </g>
+          <circle id="gp-wave" class="gp-wave" cx="590" cy="304" r="118" fill="none" stroke="#b7acf1" stroke-width="1"/>
+        </g>
+        <g id="gp-plate" class="gp-plate">
+          <rect x="514" y="228" width="152" height="152" rx="41" fill="#9172f1" opacity=".25" filter="url(#gp-boot-halo)"/>
+          <rect x="521" y="237" width="144" height="144" rx="37" fill="#080d22" stroke="#464566"/>
+          <rect x="518" y="232" width="144" height="144" rx="37" fill="url(#gp-boot-plate)" stroke="url(#gp-boot-edge)" stroke-width="1.35"/>
+          <path d="M536 254c5-8 13-13 23-13h58c14 0 25 6 30 18" fill="none" stroke="#e1d1ff" stroke-opacity=".36" stroke-linecap="round"/>
+          <path d="M541 364h77" stroke="#8be8db" stroke-opacity=".20" stroke-linecap="round"/>
+          <g transform="translate(546 260) scale(3.666667)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path id="gp-line" class="gp-line" d="M5.7 17.5h3.7a3 3 0 0 0 2.2-1l4.8-5.4a2.9 2.9 0 0 1 2.2-1h.4" stroke="url(#gp-boot-route)" stroke-width="1.8"/>
+            <path id="gp-fork" class="gp-fork" d="M11.5 16.4v-5.1a3.5 3.5 0 0 0-3.5-3.5H7.2" stroke="#e2d5ff" stroke-width="1.8"/>
+            <circle id="gp-origin" class="gp-origin" cx="4.2" cy="17.5" r="1.8" fill="#b6a4ff"/>
+            <circle id="gp-peer" class="gp-peer" cx="5.8" cy="7.8" r="1.6" stroke="#e6d7ff" stroke-width="1.8"/>
+            <circle id="gp-end" class="gp-end" cx="20" cy="10.1" r="1.85" fill="#a7f2e6"/>
+          </g>
+        </g>
+        <g id="gp-copy" class="gp-copy" text-anchor="middle" font-family="system-ui, -apple-system, DejaVu Sans, sans-serif">
+          <text x="590" y="456" font-size="61" font-weight="720" letter-spacing="-3.7" fill="#f6f1ff">GitPass</text>
+          <text x="590" y="490" font-size="17" letter-spacing=".2" fill="#bcc5e3">A conta certa em cada projeto.</text>
+        </g>
+        <g id="gp-state" class="gp-state" text-anchor="middle">
+          <path d="M567 548h46" stroke="#596383" stroke-opacity=".65"/>
+          <circle cx="567" cy="548" r="2.4" fill="#bda9fc"/>
+          <circle cx="590" cy="548" r="2.4" fill="#d0bfff"/>
+          <circle cx="613" cy="548" r="2.4" fill="#9de7dd"/>
+          <text x="590" y="575" font-family="ui-monospace, SFMono-Regular, DejaVu Sans Mono, monospace" font-size="10" font-weight="600" letter-spacing="2.4" fill="#a5b1d1">ABRINDO GITPASS</text>
+        </g>
+      </svg>
+      <span class="gp-splash-sr">Abrindo GitPass.</span>
+    </section>
     <div id="app">
-      <div class="shell-loading" role="status" aria-live="polite">
-        <div class="shell-loading-inner">
-          <span class="shell-loading-spinner" aria-hidden="true"></span>
-          <p style="margin: 0">Carregando o GitPass…</p>
-        </div>
-      </div>
+      <div class="shell-loading" role="status" aria-live="polite"><p style="margin:0">Preparando o GitPass…</p></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -17,7 +17,8 @@ use gitpass_core::{logs_export, recent, AppConfig};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use crate::{focus, tray};
+use crate::cmd_repos::{self, PendingPushSummary};
+use crate::{dock, focus, pending_alert, tray};
 
 pub const CURRENT_REPO_CHANGED_EVENT: &str = "gitpass-current-repo-changed";
 pub const EMERGENCY_CHANGED_EVENT: &str = "gitpass-emergency-changed";
@@ -33,9 +34,15 @@ struct Watch {
     focus: Option<FocusedRepo>,
     repo: Option<CurrentRepoState>,
     emergency: Option<EmergencyView>,
+    pending: Option<PendingPushSummary>,
 }
 
-static WATCH: Mutex<Watch> = Mutex::new(Watch { focus: None, repo: None, emergency: None });
+static WATCH: Mutex<Watch> = Mutex::new(Watch {
+    focus: None,
+    repo: None,
+    emergency: None,
+    pending: None,
+});
 /// One refresh at a time (watcher, tray events and commands).
 static REFRESH: Mutex<()> = Mutex::new(());
 
@@ -104,13 +111,17 @@ pub fn refresh(app: &AppHandle, force: bool) {
     let Ok(em) = emergency_checked() else { return };
     let Ok(cfg) = load_config() else { return };
     let state = current_state_with(&cfg);
-    let (repo_changed, em_changed) = {
+    let pending = cmd_repos::pending_push_summary(&cfg);
+    let prev_pending = watch().pending.clone();
+    let (repo_changed, em_changed, pending_changed) = {
         let mut g = watch();
         let r = g.repo.as_ref() != Some(&state);
         let e = g.emergency.as_ref() != Some(&em);
+        let p = g.pending.as_ref() != Some(&pending);
         g.repo = Some(state.clone());
         g.emergency = Some(em.clone());
-        (r, e)
+        g.pending = Some(pending.clone());
+        (r, e, p)
     };
     if repo_changed {
         let _ = app.emit(CURRENT_REPO_CHANGED_EVENT, &state);
@@ -118,8 +129,12 @@ pub fn refresh(app: &AppHandle, force: bool) {
     if em_changed {
         let _ = app.emit(EMERGENCY_CHANGED_EVENT, &em);
     }
-    if force || repo_changed || em_changed {
-        tray::update(app, &cfg, &state, &em);
+    if force || repo_changed || em_changed || pending_changed {
+        tray::update(app, &cfg, &state, &em, &pending);
+        dock::update(app, &pending);
+        if pending_changed && pending_alert::should_notify(prev_pending.as_ref(), &pending) {
+            pending_alert::notify(&pending);
+        }
     }
 }
 

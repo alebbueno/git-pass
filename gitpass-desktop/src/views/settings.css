@@ -34,6 +34,59 @@
 .settings-row-icon {
   color: var(--muted);
 }
+.settings-rules-lead {
+  margin: -4px 0 12px;
+}
+.settings-ai-lead {
+  margin: -4px 0 12px;
+}
+.settings-ai-key-form {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+.settings-ai-key-form input[type="password"] {
+  width: 100%;
+  max-width: 420px;
+}
+.settings-rules-list {
+  margin-bottom: 14px;
+}
+.settings-rules-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.settings-rules-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--soft-line);
+  border-radius: 11px;
+  background: var(--inset);
+}
+.settings-rules-fields {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.settings-rules-fields label {
+  display: grid;
+  gap: 4px;
+}
+.settings-rules-path {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-rules-path input {
+  flex: 1;
+  min-width: 0;
+}
 .settings-row #settings-acc-badge,
 .settings-row #settings-int-badge,
 .settings-row #settings-oauth-badge {
@@ -43,6 +96,10 @@
 }
 .settings-about {
   justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.settings-about > .control {
+  margin-left: auto;
 }
 .settings-about .brand-icon {
   flex: none;

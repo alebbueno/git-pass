@@ -1,0 +1,191 @@
+/* Créditos e suporte */
+
+.credits {
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+}
+
+.credits-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2xl);
+  background: var(--surface-sheen, var(--surface));
+  box-shadow: inset 0 1px var(--highlight), var(--surface-shadow);
+}
+
+.credits .surface > .caption.muted {
+  margin-top: -2px;
+  margin-bottom: var(--sp-4);
+  line-height: 1.5;
+}
+
+.credits-hero-mark {
+  flex-shrink: 0;
+}
+
+.credits-hero-copy {
+  flex: 1;
+  min-width: 200px;
+}
+
+.credits-hero-copy h2 {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-xl);
+  letter-spacing: -0.03em;
+}
+
+.credits-meta {
+  display: grid;
+  gap: 0;
+  margin-top: var(--sp-1);
+}
+
+.credits-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--soft-line, var(--line));
+}
+
+.credits-meta-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.credits-meta-row:first-child {
+  padding-top: 0;
+}
+
+.credits-meta-row dt {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.credits-meta-row dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.credits-steps {
+  margin: 0;
+  padding: 0 0 0 1.25em;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.credits-steps li + li {
+  margin-top: var(--sp-2);
+}
+
+.credits .row-actions {
+  margin-top: var(--sp-4);
+}
+
+.credits-links {
+  display: grid;
+  gap: 10px;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.credits-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--soft-line, var(--line));
+  border-radius: var(--r-lg);
+  background: var(--inset);
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.credits-link:hover {
+  border-color: var(--line-strong, var(--line));
+  background: var(--surface);
+}
+
+.credits-link strong {
+  display: block;
+  font-size: var(--fs-body);
+}
+
+.credits-link span.caption {
+  display: block;
+  margin-top: 2px;
+}
+
+.credits-oss {
+  display: grid;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.credits-oss li {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--soft-line, var(--line));
+}
+
+.credits-oss li:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.credits-oss strong {
+  color: var(--text);
+  font-weight: 600;
+  min-width: 5.5rem;
+}
+
+.credits-oss + .caption.muted {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--soft-line, var(--line));
+}
+
+.credits-report {
+  margin-top: var(--sp-5);
+  padding: var(--sp-4);
+  border-radius: var(--r-lg);
+  border: 1px dashed var(--line);
+  background: var(--inset);
+}
+
+.credits-report pre {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-3);
+  max-height: 160px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  border-radius: var(--r-md);
+  background: var(--surface);
+}

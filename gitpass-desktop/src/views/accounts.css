@@ -5,30 +5,247 @@
   gap: 14px;
 }
 
+/* Âncora do menu «Conectar» — não aplicar repos-menu-host no page-head inteiro */
+.accounts-connect-actions.repos-menu-host {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.accounts-connect-btn .icon:last-child {
+  opacity: 0.85;
+  margin-left: -2px;
+}
+
+.accounts-connect-actions > .repos-menu {
+  min-width: 280px;
+  padding: 6px;
+}
+
+.accounts-host-logo {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: #fff;
+}
+
+.accounts-host-logo[data-host="github"] {
+  background: linear-gradient(145deg, #2b3137, #0d1117);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+
+.accounts-host-logo[data-host="bitbucket"] {
+  background: linear-gradient(145deg, #2684ff, #0052cc);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18);
+}
+
+.accounts-host-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.accounts-host-copy strong {
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.accounts-host-detail {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.repos-menu-item:has(.accounts-host-logo) {
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 8px;
+  border-radius: 10px;
+}
+
+.repos-menu-item:has(.accounts-host-logo) .icon {
+  color: inherit;
+}
+
+/* Cartão de conta — faixa do provedor + chip discreto (sem duplicar marca no título). */
+.account-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  gap: 12px;
+}
+
+.account-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 16px 16px 0 0;
+  pointer-events: none;
+}
+
+.account-card[data-host="github"] {
+  border-color: color-mix(in srgb, #24292f 12%, var(--line));
+}
+
+.account-card[data-host="github"]::before {
+  background: linear-gradient(90deg, #24292f 0%, #6e7681 100%);
+}
+
+.account-card[data-host="bitbucket"] {
+  border-color: color-mix(in srgb, #0052cc 18%, var(--line));
+}
+
+.account-card[data-host="bitbucket"]::before {
+  background: linear-gradient(90deg, #0052cc 0%, #4c9aff 100%);
+}
+
+.account-top-end {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-left: auto;
+}
+
+.account-top .account-more {
+  margin: 0;
+  flex: none;
+}
+
+.account-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--soft-line);
+  background: var(--surface);
+  line-height: 1;
+}
+
+.account-provider-label {
+  font-size: 10px;
+}
+
+.account-provider[data-host="github"] {
+  color: var(--ink);
+  border-color: color-mix(in srgb, #24292f 20%, var(--line));
+  background: color-mix(in srgb, #24292f 5%, var(--surface));
+}
+
+.account-provider[data-host="github"] .icon {
+  color: #24292f;
+}
+
+.account-provider[data-host="bitbucket"] {
+  color: #0747a6;
+  border-color: color-mix(in srgb, #0052cc 25%, var(--line));
+  background: color-mix(in srgb, #2684ff 11%, var(--surface));
+}
+
+.account-provider[data-host="bitbucket"] .icon {
+  color: #0052cc;
+}
+
+.account-name {
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+}
+
+.account-handle {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.account-card[data-host="github"] .account-email {
+  border-color: color-mix(in srgb, #24292f 10%, var(--soft-line));
+  background: color-mix(in srgb, #24292f 4%, var(--inset));
+}
+
+.account-card[data-host="bitbucket"] .account-email {
+  border-color: color-mix(in srgb, #0052cc 14%, var(--soft-line));
+  background: color-mix(in srgb, #2684ff 6%, var(--inset));
+}
+
+.accounts-avatar[data-host="github"] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #24292f 22%, var(--surface));
+}
+
+.accounts-avatar[data-host="bitbucket"] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #0052cc 35%, var(--surface));
+}
+
+.accounts-bb-lead {
+  margin: 0 0 var(--sp-3);
+}
+
+.accounts-bb-field {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--sp-3);
+}
+
 .account-id {
   flex: 1;
   min-width: 0;
 }
+.account-top {
+  align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+  margin-bottom: 2px;
+}
+
 .account-top .account-more {
-  margin-left: auto;
-  align-self: flex-start;
-  margin-top: -4px;
   margin-right: -6px;
 }
+
+/* Foto circular; iniciais só quando não há imagem (evita “letra por baixo”). */
 .accounts-avatar {
   position: relative;
   flex: none;
-  display: inline-grid;
-}
-.accounts-avatar > * {
-  grid-area: 1 / 1;
-}
-.accounts-avatar-img {
-  width: 42px;
-  height: 42px;
+  display: block;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
+  overflow: hidden;
+}
+
+.accounts-avatar > .accounts-avatar-fallback,
+.accounts-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  border-radius: 999px;
+}
+
+.accounts-avatar > .accounts-avatar-fallback {
+  font-size: 13px;
+}
+
+.accounts-avatar:has(.accounts-avatar-img) > .accounts-avatar-fallback {
+  visibility: hidden;
+}
+
+.accounts-avatar-img {
+  z-index: 1;
+  display: block;
   object-fit: cover;
-  box-shadow: 0 0 0 1px var(--soft-line);
+  background: var(--surface);
 }
 .accounts-label-input {
   width: 100%;
@@ -38,17 +255,43 @@
   margin: 4px 0 0;
 }
 
+.account-card .account-email {
+  min-height: 0;
+  padding: 11px 12px;
+  position: relative;
+}
+
+.account-card .account-email > .caption.muted {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .account-email-value {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  margin-top: 5px;
-  padding-right: 26px;
+  margin-top: 6px;
+  padding-right: 28px;
 }
-.account-email .account-email-value code {
+
+.account-card .account-email .account-email-value code {
+  display: inline-block;
   margin: 0;
   min-width: 0;
+  flex: 1 1 120px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+.account-email-value .account-tag {
+  flex: 0 1 auto;
 }
 .account-tag {
   flex: none;
@@ -63,8 +306,14 @@
   font-size: 10px;
   font-weight: 650;
 }
-.account-email {
-  position: relative;
+.account-foot {
+  align-items: center;
+  min-height: 34px;
+  padding-top: 2px;
+}
+
+.account-foot .caption.muted {
+  line-height: 1.35;
 }
 .account-email-btn {
   position: absolute;

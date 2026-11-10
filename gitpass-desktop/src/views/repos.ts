@@ -1,6 +1,6 @@
 import "./repos.css";
 import { api, type AccountRow } from "../lib/api";
-import { reposApi, type BindOutcome, type RepoRow, type SuggestionReason } from "../lib/api-repos";
+import { reposApi, type BindOutcome, type RepoRow, type SuggestionReason, type WorkTreeStatusRow } from "../lib/api-repos";
 import type { CurrentRepoState } from "../lib/api-system";
 import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
 import { errorView } from "../lib/errors";
@@ -26,14 +26,14 @@ import {
   whoText,
 } from "./repos-ui";
 
-type Filters = { profile: string; review: boolean; ahead: boolean; query: string };
+type Filters = { profile: string; review: boolean; ahead: boolean; pending: boolean; query: string };
 
 const FILTERS_KEY = "gitpass:repos-filters";
 const ALL_PROFILES = "";
 const MISSING_PROFILE = "missing";
 
 function loadFilters(): Filters {
-  const base: Filters = { profile: ALL_PROFILES, review: false, ahead: false, query: "" };
+  const base: Filters = { profile: ALL_PROFILES, review: false, ahead: false, pending: false, query: "" };
   try {
     const raw = JSON.parse(sessionStorage.getItem(FILTERS_KEY) ?? "null") as Partial<Filters> | null;
     if (!raw || typeof raw !== "object") return base;
@@ -41,6 +41,7 @@ function loadFilters(): Filters {
       profile: typeof raw.profile === "string" ? raw.profile : base.profile,
       review: raw.review === true,
       ahead: raw.ahead === true,
+      pending: raw.pending === true,
       query: typeof raw.query === "string" ? raw.query : "",
     };
   } catch {
@@ -59,9 +60,10 @@ function saveFilters(f: Filters): void {
 /** `repos?profile=<id>` e `repos?review=1` (links do Painel, de Contas e da barra lateral) trocam os filtros. */
 function applyQuery(f: Filters, query: URLSearchParams | undefined): Filters {
   if (!query) return f;
-  if (query.has("profile")) return { profile: query.get("profile") ?? "", review: false, ahead: false, query: "" };
-  if (query.get("review") === "1") return { profile: ALL_PROFILES, review: true, ahead: false, query: "" };
-  if (query.get("ahead") === "1") return { profile: ALL_PROFILES, review: false, ahead: true, query: "" };
+  if (query.has("profile")) return { profile: query.get("profile") ?? "", review: false, ahead: false, pending: false, query: "" };
+  if (query.get("review") === "1") return { profile: ALL_PROFILES, review: true, ahead: false, pending: false, query: "" };
+  if (query.get("ahead") === "1") return { profile: ALL_PROFILES, review: false, ahead: true, pending: false, query: "" };
+  if (query.get("pending") === "1") return { profile: ALL_PROFILES, review: false, ahead: false, pending: true, query: "" };
   return f;
 }
 
@@ -80,6 +82,8 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   let expanded: string | null = null;
   let reloadTimer: number | undefined;
   let system: CurrentRepoState | null = null;
+  const workById = new Map<string, WorkTreeStatusRow>();
+  let workLoadSeq = 0;
   saveFilters(filters);
 
   root.classList.add("repos-view");
@@ -121,6 +125,27 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     });
   }
 
+  function hasWorkPending(b: RepoRow): boolean {
+    const w = workById.get(b.id);
+    if (w) return w.has_pending;
+    return aheadOf(b) > 0 || !!b.sync?.dirty || (b.sync?.behind ?? 0) > 0;
+  }
+
+  async function refreshWork(ids?: string[]): Promise<void> {
+    const seq = ++workLoadSeq;
+    const bindingIds = ids ?? repos.filter((r) => r.exists).map((r) => r.id);
+    if (!bindingIds.length) return;
+    try {
+      const rows = await reposApi.workStatus(bindingIds);
+      if (seq !== workLoadSeq || disposed) return;
+      workById.clear();
+      for (const r of rows) workById.set(r.binding_id, r);
+      renderList();
+    } catch {
+      /* radar opcional: a lista segue com sync básico */
+    }
+  }
+
   const visible = (): RepoRow[] =>
     sorted(
       repos.filter(
@@ -128,6 +153,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
           matchesProfile(b, filters.profile) &&
           (!filters.review || needsReview(b)) &&
           (!filters.ahead || aheadOf(b) > 0) &&
+          (!filters.pending || hasWorkPending(b)) &&
           matchesQuery(b, filters.query)
       )
     );
@@ -244,6 +270,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
         <label class="select-wrap">${icon("user")}<span class="sr-only">Filtrar por perfil</span><select id="repo-profile"></select></label>
         <button type="button" class="control filter-review" data-filter="review" aria-pressed="false">${icon("alert")}<span>Para revisar</span></button>
         <button type="button" class="control filter-toggle" data-filter="ahead" aria-pressed="false">${icon("arrowUp")}<span>Para enviar</span></button>
+        <button type="button" class="control filter-toggle" data-filter="pending" aria-pressed="false">${icon("pullRequest")}<span>Com pendências</span></button>
         <span class="filter-count" role="status" aria-live="polite" data-ref="count"></span>
       </div>
       <div data-ref="list"></div>
@@ -290,6 +317,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     select.value = filters.profile;
     body().querySelector('[data-filter="review"]')?.setAttribute("aria-pressed", String(filters.review));
     body().querySelector('[data-filter="ahead"]')?.setAttribute("aria-pressed", String(filters.ahead));
+    body().querySelector('[data-filter="pending"]')?.setAttribute("aria-pressed", String(filters.pending));
     const input = body().querySelector<HTMLInputElement>("#repo-search");
     if (input && document.activeElement !== input && input.value !== filters.query) input.value = filters.query;
   }
@@ -308,7 +336,13 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     }
     const anchor = items.find((b) => b.id === (focusedId ?? expanded))?.id ?? items[0].id;
     list.innerHTML = `<div class="list-frame">${columnsHtml()}<ul class="projects" aria-label="Repositórios locais">${items
-      .map((b) => projectRowHtml(b, accounts, system, { expanded: b.id === expanded, tabbable: b.id === anchor }))
+      .map((b) =>
+        projectRowHtml(b, accounts, system, {
+          expanded: b.id === expanded,
+          tabbable: b.id === anchor,
+          work: workById.get(b.id) ?? null,
+        })
+      )
       .join("")}</ul></div>`;
     if (focusedId) list.querySelector<HTMLElement>(`.project-row[data-repo-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
   }
@@ -460,6 +494,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     if (filterBtn) {
       if (filterBtn.dataset.filter === "review") setFilters({ review: !filters.review });
       else if (filterBtn.dataset.filter === "ahead") setFilters({ ahead: !filters.ahead });
+      else if (filterBtn.dataset.filter === "pending") setFilters({ pending: !filters.pending });
       return;
     }
     const btn = target.closest<HTMLButtonElement>("button[data-action]");
@@ -480,6 +515,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
       case "refresh":
         void withBusy(btn, "", async () => {
           await load();
+          await refreshWork();
           if (expanded && !isPushing(expanded)) await refreshOutgoing(expanded, false);
         });
         break;
@@ -487,7 +523,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
         void load();
         break;
       case "clear-filters":
-        setFilters({ profile: ALL_PROFILES, review: false, ahead: false, query: "" });
+        setFilters({ profile: ALL_PROFILES, review: false, ahead: false, pending: false, query: "" });
         body().querySelector<HTMLInputElement>("#repo-search")?.focus();
         break;
     }
@@ -506,6 +542,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
       validateFilters();
       render();
       discovery.autoRun();
+      void refreshWork();
       if (first && screen && memory.scroll) screen.scrollTop = memory.scroll;
     } catch (e) {
       if (disposed || token !== loadToken) return;

@@ -1,5 +1,15 @@
 /** `repos/map` («Mapear pasta») não aparece no menu: fica dentro de Repositórios. */
-export type ViewId = "overview" | "repos" | "repos/map" | "accounts" | "cloud" | "integration" | "diagnostics" | "settings";
+export type ViewId =
+  | "overview"
+  | "repos"
+  | "repos/map"
+  | "accounts"
+  | "cloud"
+  | "integration"
+  | "diagnostics"
+  | "settings"
+  | "settings/credits"
+  | "settings/ai";
 
 /**
  * Rota do hash: uma tela ou `repos/<binding_id>` (gaveta de detalhes de um repositório, id com `encodeURIComponent`).

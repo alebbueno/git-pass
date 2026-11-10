@@ -1,8 +1,8 @@
 import "./repo-detail.css";
 import { api, type AccountRow } from "../lib/api";
-import { reposApi, type RepoRow } from "../lib/api-repos";
+import { reposApi, type IdentityDiagnosticRow, type RepoRow } from "../lib/api-repos";
 import type { CurrentRepoState } from "../lib/api-system";
-import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
+import { errMessage, esc, relativeTime, shortenPath, showToast, withBusy } from "../lib/dom";
 import { codeChip, errorView } from "../lib/errors";
 import { icon, iconPaths, type IconName } from "../lib/icons";
 import { profileAvatar, profileFamily, profileInitials, profileName } from "../lib/profile";
@@ -73,7 +73,14 @@ export function drawerRoute(id: string, tab: Tab = "overview", branch: string | 
   return `repos/${encodeURIComponent(id)}${search ? `?${search}` : ""}`;
 }
 
-type HistoryEntry = { hash: string; subject: string; author: string; date: string };
+type HistoryEntry = {
+  hash: string;
+  subject: string;
+  author: string;
+  date: string;
+  identity_mismatch?: boolean;
+  beyond_upstream?: boolean;
+};
 
 /** `git log` devolve `%h — %s — %an — %ad`; o assunto pode conter « — ». */
 function parseLogLine(line: string): HistoryEntry {
@@ -203,6 +210,16 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
   let editing = false;
   let tabHandle: { refresh: () => void; dispose: () => void } | null = null;
   let history: { id: string; status: "loading" | "ok" | "error"; entries: HistoryEntry[]; error: string } | null = null;
+  let identityDiag: {
+    id: string;
+    status: "loading" | "ok" | "error";
+    value?: IdentityDiagnosticRow;
+    error?: string;
+    showOrigins?: boolean;
+    remote?: string | null;
+    seq: number;
+  } | null = null;
+  let identityDiagSeq = 0;
   let system: CurrentRepoState | null = null;
   let restoreFocus: HTMLElement | null = null;
 
@@ -210,6 +227,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
   const current = (): RepoRow => repo!;
   const who = (id: string): string => whoText(accounts, id);
   const accountOf = (b: RepoRow): AccountRow | undefined => accounts.find((a) => a.id === b.account_id);
+  const showsIdentityDiagnostic = (): boolean => tab === "overview" || tab === "config";
 
   function teardownTab(): void {
     tabHandle?.dispose();
@@ -234,6 +252,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       tab = loc.tab ?? "overview";
       editing = false;
       history = null;
+      identityDiag = null;
       if (tab === "push" && loc.branch !== undefined && repo) setPushBranch(id, normalizeBranch(repo, loc.branch));
       openPushSession(id);
       heroEl.style.removeProperty("--glint-x");
@@ -614,6 +633,69 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
     </div>`;
   }
 
+  function identityDiagBlock(b: RepoRow): string {
+    const d = identityDiag?.id === b.id ? identityDiag : null;
+    if (!d || d.status === "loading") {
+      return `<div class="identity-diag identity-diag--busy" aria-busy="true"><span class="skeleton" style="height:52px;border-radius:10px"></span></div>`;
+    }
+    if (d.status === "error") {
+      return `<div class="identity-diag identity-diag--error" role="alert">${icon("alert")}<span>${esc(d.error ?? "Não foi possível carregar o diagnóstico.")}</span>
+        <button type="button" class="control sm" data-action="diag-retry">${icon("refresh")}<span>Tentar novamente</span></button></div>`;
+    }
+    const v = d.value!;
+    const originsOpen = d.showOrigins ?? false;
+    const remoteOpts =
+      v.push.available_remotes.length > 1
+        ? `<label class="identity-diag-remote"><span class="sr-only">Remoto para analisar o push</span>
+            <select data-action="diag-remote">${v.push.available_remotes
+              .map(
+                (r) =>
+                  `<option value="${esc(r)}"${r === v.push.selected_remote ? " selected" : ""}>${esc(r)}</option>`
+              )
+              .join("")}</select></label>`
+        : "";
+    const tokenLine =
+      v.push.token_login || v.push.token_message
+        ? `<p class="identity-diag-token${v.push.token_push_permission === false ? " is-warn" : ""}">${icon("user")}<span>${
+            v.push.token_login ? `@${esc(v.push.token_login)}` : ""
+          }${v.push.token_message ? ` · ${esc(v.push.token_message)}` : ""}</span></p>`
+        : `<button type="button" class="control ghost sm" data-action="diag-verify-token">${icon("cloud")}<span>Verificar token no GitHub</span></button>`;
+    const origins =
+      v.commit.origins.length && originsOpen
+        ? `<dl class="identity-origins">${v.commit.origins
+            .map(
+              (o) =>
+                `<div><dt class="mono">${esc(o.key)}</dt><dd>${o.value ? esc(o.value) : "<span class='muted'>—</span>"}${
+                  o.scope || o.origin
+                    ? `<span class="caption muted">${[o.scope, o.origin].filter((x): x is string => Boolean(x)).map(esc).join(" · ")}</span>`
+                    : ""
+                }</dd></div>`
+            )
+            .join("")}${v.push.evidence.map((e) => `<div class="identity-evidence"><dt>Push</dt><dd>${esc(e)}</dd></div>`).join("")}</dl>`
+        : "";
+    const commitTone =
+      v.commit.state === "correct" ? "" : v.commit.state === "unavailable" ? " neutral" : " warning";
+    const pushTone = v.push.auth_state === "gitpass_routed" ? "" : " neutral";
+    return `<div class="identity-diag">
+      <div class="identity-diag-row${commitTone}">
+        <p class="eyebrow">Commit</p>
+        <p class="identity-diag-summary">${esc(v.commit.summary)}</p>
+        ${v.commit.detail ? `<p class="caption muted">${esc(v.commit.detail)}</p>` : ""}
+      </div>
+      <div class="identity-diag-row${pushTone}">
+        <p class="eyebrow">Push</p>
+        <p class="identity-diag-summary">${esc(v.push.destination_summary)}</p>
+        <p class="identity-diag-sub">${esc(v.push.auth_summary)}</p>
+        ${remoteOpts}
+        ${tokenLine}
+      </div>
+      <div class="identity-diag-tools">
+        <button type="button" class="control ghost sm" data-action="diag-origins" aria-expanded="${originsOpen}">${icon("info")}<span>${originsOpen ? "Ocultar origem" : "Ver origem"}</span></button>
+        <button type="button" class="control ghost sm" data-action="diag-retry">${icon("refresh")}<span>Atualizar diagnóstico</span></button>
+      </div>
+      ${origins}`;
+  }
+
   function identityHtml(b: RepoRow): string {
     const acc = accountOf(b);
     const id = b.identity;
@@ -670,8 +752,13 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
           <button type="button" class="control ghost" data-action="cancel-account">${icon("x")}<span>Cancelar</span></button>
         </form>`
       : "";
+    const fixBtn =
+      b.exists && !b.account_missing && b.identity.state !== "correct"
+        ? `<button type="button" class="control primary sm" data-action="fix-identity">${icon("check")}<span>Corrigir identidade</span></button>`
+        : "";
     return `<section class="identity" aria-labelledby="drawer-identity-title">
       <div class="identity-head"><h3 id="drawer-identity-title">${icon("shield")}Identidade do Git</h3>${badge}</div>
+      ${identityDiagBlock(b)}
       <div class="identity-route">
         ${linked}
         <span class="identity-join ${joinKind}" aria-hidden="true">${icon(ok ? "check" : !b.exists ? "info" : "alert")}</span>
@@ -679,6 +766,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       </div>
       <div class="identity-actions">
         ${warning}
+        ${fixBtn}
         <button type="button" class="control" data-action="edit-account" aria-expanded="${editing}"${accounts.length ? "" : " disabled"}>${icon(
           "user"
         )}<span>Trocar conta</span></button>
@@ -765,6 +853,48 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
     </section>`;
   }
 
+  async function loadIdentityDiagnostic(
+    bindingId: string,
+    opts: { verifyToken?: boolean; remote?: string | null; showOrigins?: boolean } = {}
+  ): Promise<void> {
+    const seq = ++identityDiagSeq;
+    identityDiag = {
+      id: bindingId,
+      status: "loading",
+      showOrigins: opts.showOrigins ?? identityDiag?.showOrigins,
+      remote: opts.remote !== undefined ? opts.remote : identityDiag?.remote,
+      seq,
+    };
+    if (showsIdentityDiagnostic() && repo?.id === bindingId && isOpen()) tabHandle?.refresh();
+    try {
+      const row = await reposApi.identityDiagnostic(
+        bindingId,
+        identityDiag.remote ?? null,
+        opts.verifyToken ?? false
+      );
+      if (seq !== identityDiagSeq || openId !== bindingId) return;
+      identityDiag = {
+        id: bindingId,
+        status: "ok",
+        value: row,
+        showOrigins: opts.showOrigins ?? identityDiag?.showOrigins,
+        remote: row.push.selected_remote,
+        seq,
+      };
+    } catch (e) {
+      if (seq !== identityDiagSeq || openId !== bindingId) return;
+      identityDiag = {
+        id: bindingId,
+        status: "error",
+        error: errMessage(e),
+        showOrigins: identityDiag?.showOrigins,
+        remote: identityDiag?.remote,
+        seq,
+      };
+    }
+    if (showsIdentityDiagnostic() && repo?.id === bindingId && isOpen()) tabHandle?.refresh();
+  }
+
   function mountOverview(): { refresh: () => void; dispose: () => void } {
     const render = (): void => {
       const b = current();
@@ -777,7 +907,14 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       </div>`;
       if (focusKey) (panel.querySelector<HTMLElement>(`[data-action="${focusKey}"]`) ?? panel.querySelector<HTMLElement>(`#${CSS.escape(focusKey)}`))?.focus();
     };
-    render();
+    const b = current();
+    if (b.exists && (!identityDiag || identityDiag.id !== b.id || identityDiag.status === "error")) {
+      void loadIdentityDiagnostic(b.id);
+    } else if (identityDiag?.id === b.id && identityDiag.status !== "loading") {
+      render();
+    } else {
+      render();
+    }
     return { refresh: render, dispose: () => {} };
   }
 
@@ -838,7 +975,9 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
             return `<li class="${p ? "pending" : ""}" style="--entry:${Math.min(i, 8) * 45}ms">${icon(p ? "arrowUp" : "commit")}
               <div class="commit-text"><strong>${esc(e.subject)}</strong><span class="commit-meta">${esc(
                 [e.author, commitDay(e.date)].filter(Boolean).join(" · ")
-              )}${p ? ` · <span class="warn">não enviado</span>` : ""}</span></div>
+              )}${p ? ` · <span class="warn">não enviado</span>` : ""}${
+                e.identity_mismatch ? ` · <span class="warn">identidade diferente do perfil</span>` : ""
+              }${e.beyond_upstream ? ` · <span class="hint">fora do upstream local</span>` : ""}</span></div>
               ${e.hash ? `<code title="${esc(e.hash)}">${esc(short)}</code>` : ""}
               ${
                 e.hash
@@ -861,9 +1000,21 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       history = { id, status: "loading", entries: [], error: "" };
       render();
       try {
-        const lines = await api.commitLog(b.root_path, 40);
+        const rows = await reposApi.commitReview(id, 40);
         if (history?.id !== id) return;
-        history = { id, status: "ok", entries: lines.map(parseLogLine), error: "" };
+        history = {
+          id,
+          status: "ok",
+          entries: rows.map((r) => ({
+            hash: r.short_sha,
+            subject: r.subject,
+            author: `${r.author_name} <${r.author_email}>`,
+            date: r.authored_at.slice(0, 10),
+            identity_mismatch: r.identity_mismatch,
+            beyond_upstream: r.reach === "beyond_upstream",
+          })),
+          error: "",
+        };
       } catch (e) {
         if (history?.id !== id) return;
         const msg = errMessage(e);
@@ -962,10 +1113,16 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
         <section class="drawer-section" aria-labelledby="cfg-identity">
           <h3 id="cfg-identity">${icon("shield")}Identidade do Git</h3>
           ${identityCallout(b)}
+          ${identityDiagBlock(b)}
           <dl class="drawer-config-grid">
             <div><dt class="meta-label">user.name</dt><dd class="mono">${b.identity.local_name ? esc(b.identity.local_name) : `<span class="muted">não definido</span>`}</dd></div>
             <div><dt class="meta-label">user.email</dt><dd class="mono">${b.identity.local_email ? esc(b.identity.local_email) : `<span class="muted">não definido</span>`}</dd></div>
           </dl>
+        </section>
+
+        <section class="drawer-section" aria-labelledby="cfg-history">
+          <h3 id="cfg-history">${icon("history")}Alterações do GitPass</h3>
+          <div data-ref="cfg-history-list"><p class="caption muted">Carregando…</p></div>
         </section>
 
         <section class="drawer-section" aria-labelledby="cfg-folder">
@@ -1014,8 +1171,40 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       </div>`;
       if (focusKey) panel.querySelector<HTMLElement>(`[data-action="${focusKey}"]`)?.focus();
     };
+    const loadConfigHistory = async (bindingId: string): Promise<void> => {
+      const el = panel.querySelector<HTMLElement>('[data-ref="cfg-history-list"]');
+      if (!el) return;
+      try {
+        const rows = (await reposApi.configHistory()).filter((r) => r.binding_id === bindingId).slice(0, 6);
+        if (!rows.length) {
+          el.innerHTML = `<p class="caption muted">Nenhuma troca de conta ou correção de identidade registrada ainda.</p>`;
+          return;
+        }
+        el.innerHTML = `<ul class="config-history-list">${rows
+          .map((r) => {
+            const op = r.op === "change_account" ? "Trocar conta" : "Corrigir identidade";
+            return `<li><div><strong>${esc(op)}</strong><span class="caption muted">${esc(relativeTime(r.at))} · ${esc(r.status)}</span></div>${
+              r.undoable
+                ? `<button type="button" class="control sm" data-action="undo-history" data-record="${esc(r.id)}">${icon("refresh")}<span>Desfazer</span></button>`
+                : ""
+            }</li>`;
+          })
+          .join("")}</ul>`;
+      } catch (e) {
+        el.innerHTML = `<p class="caption err">${esc(errMessage(e))}</p>`;
+      }
+    };
+
+    const b = current();
+    if (b.exists && (!identityDiag || identityDiag.id !== b.id || identityDiag.status === "error")) {
+      void loadIdentityDiagnostic(b.id);
+    }
     render();
-    return { refresh: render, dispose: () => {} };
+    void loadConfigHistory(b.id);
+    return { refresh: () => {
+      render();
+      void loadConfigHistory(current().id);
+    }, dispose: () => {} };
   }
 
   // ---------- Ações ----------
@@ -1032,6 +1221,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       showToast(`${repoName(row)} agora usa ${who(accountId)}. Identidade do Git atualizada.`, "ok");
       onRepoUpdated(row);
       void refreshOutgoing(row.id, true);
+      if (showsIdentityDiagnostic()) void loadIdentityDiagnostic(row.id, { remote: identityDiag?.remote ?? null });
       return true;
     } catch (e) {
       showToast(errMessage(e), "err");
@@ -1056,6 +1246,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       );
       onRepoUpdated(row);
       markIdentityUpdated();
+      void loadIdentityDiagnostic(row.id, { remote: identityDiag?.remote ?? null });
     } catch (e) {
       showToast(errMessage(e), "err");
     }
@@ -1179,6 +1370,33 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
       case "fix-identity":
         void fixIdentity(btn);
         break;
+      case "undo-history": {
+        const recordId = btn.dataset.record;
+        if (!recordId) return;
+        void withBusy(btn, "Desfazendo…", async () => {
+          await reposApi.undoConfigHistory(recordId);
+          showToast("Alteração desfeita.", "ok");
+          ctx.notifyDataChanged();
+          tabHandle?.refresh();
+        }).catch((err) => showToast(errMessage(err), "err"));
+        break;
+      }
+      case "diag-retry":
+        void loadIdentityDiagnostic(b.id, { showOrigins: identityDiag?.showOrigins, remote: identityDiag?.remote ?? null });
+        break;
+      case "diag-origins":
+        if (identityDiag?.id === b.id) {
+          identityDiag = { ...identityDiag, showOrigins: !identityDiag.showOrigins };
+          tabHandle?.refresh();
+        }
+        break;
+      case "diag-verify-token":
+        void loadIdentityDiagnostic(b.id, {
+          verifyToken: true,
+          showOrigins: identityDiag?.showOrigins,
+          remote: identityDiag?.remote ?? null,
+        });
+        break;
       case "copy-path":
         void copyText(btn, b.root_path, "Pasta local copiada.");
         break;
@@ -1192,6 +1410,12 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
         if (btn.dataset.hash) openCommitMenu(btn, btn.dataset.hash);
         break;
     }
+  });
+
+  el.addEventListener("change", (e) => {
+    const sel = (e.target as HTMLElement).closest<HTMLSelectElement>("select[data-action='diag-remote']");
+    if (!sel || !repo) return;
+    void loadIdentityDiagnostic(repo.id, { remote: sel.value, showOrigins: identityDiag?.showOrigins });
   });
 
   el.addEventListener("submit", (e) => {

@@ -1,7 +1,9 @@
 //! `gitpass` CLI — hooks, doctor, IPC to `gitpassd`.
 
 mod doctor;
+mod recover;
 
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -110,6 +112,18 @@ enum AccountCmd {
         #[arg(long)]
         id: Uuid,
     },
+    /// Rebuild accounts in config.toml from Keychain OAuth tokens (`tokens/*.present`).
+    Recover(RecoverArgs),
+}
+
+#[derive(Args)]
+struct RecoverArgs {
+    /// Only print what would change.
+    #[arg(long)]
+    dry_run: bool,
+    /// Scan this folder for Git repos whose local `user.email` matches a recovered account (repeatable).
+    #[arg(long, value_name = "PATH")]
+    scan: Vec<PathBuf>,
 }
 
 #[derive(Args)]
@@ -408,6 +422,25 @@ fn account_cmd(cmd: AccountCmd) -> Result<i32, Box<dyn std::error::Error + Send 
             cfg.save()?;
             println!("ok: removed account {id}");
             Ok(0)
+        }
+        AccountCmd::Recover(args) => {
+            let mut scan = args.scan;
+            if scan.is_empty() {
+                scan.push(PathBuf::from("/Volumes/Dados/Server"));
+            }
+            match recover::run_recover(&scan, args.dry_run) {
+                Ok(r) => {
+                    println!(
+                        "contas: {}, repos (recent/scan): {}/{}, tokens ignorados: {}",
+                        r.accounts, r.repos_from_recent, r.repos_from_scan, r.skipped_tokens
+                    );
+                    Ok(0)
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    Ok(1)
+                }
+            }
         }
     }
 }

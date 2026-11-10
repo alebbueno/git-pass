@@ -1,6 +1,6 @@
 //! Tauri commands for this area. Registered in main.rs `generate_handler!`.
 //!
-//! Commands: `cloud_repos`, `cloud_clone`, `cloud_choose_folder`.
+//! Commands: `cloud_repos`, `cloud_clone`, `cloud_create_and_clone`, `cloud_choose_folder`.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -9,9 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gitpass_core::clone::{clone_repo, default_clone_dir, split_full_name, validate_clone_parent};
 use gitpass_core::{
-    embedded_oauth_client_id, github_oauth_env_credentials, github_oauth_refresh, github_token_load,
-    github_token_save, list_user_repos, resolve_oauth_client_id, AppConfig, GithubApiError,
-    GithubRepoSummary, GithubTokenBundle,
+    create_user_repo, embedded_oauth_client_id, github_oauth_env_credentials, github_oauth_refresh,
+    github_token_load, github_token_save, list_user_repos, resolve_oauth_client_id, validate_repo_name, AppConfig,
+    GithubApiError, GithubRepoSummary, GithubTokenBundle,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -85,6 +85,52 @@ pub(crate) fn current_token(id: Uuid) -> Result<String, String> {
         }
     }
     Ok(bundle.access_token)
+}
+
+pub(crate) fn create_repo_error_message(e: GithubApiError) -> String {
+    match &e {
+        GithubApiError::Http { status: 422, body } => {
+            let lower = body.to_lowercase();
+            if lower.contains("already exists") {
+                return format!("Já existe um repositório com esse nome nesta conta ({body}).");
+            }
+            return format!("O GitHub recusou os dados do repositório ({body}).");
+        }
+        _ => {}
+    }
+    api_error_message(e)
+}
+
+pub(crate) fn github_login_for_account(cfg: &AppConfig, id: Uuid) -> Result<String, String> {
+    let acc = cfg
+        .accounts
+        .iter()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "Conta desconhecida.".to_string())?;
+    acc.github_login
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Esta conta não tem login do GitHub salvo. Reconecte em «Contas».".to_string())
+}
+
+pub(crate) fn create_account_repo(
+    id: Uuid,
+    name: &str,
+    private: bool,
+    description: Option<&str>,
+) -> Result<GithubRepoSummary, String> {
+    let bundle = load_bundle(id)?;
+    let token = current_token(id)?;
+    match create_user_repo(&token, name, private, description) {
+        Ok(v) => Ok(v),
+        Err(GithubApiError::Http { status: 401, .. }) => {
+            let nb = refresh_bundle(id, &bundle)?;
+            create_user_repo(&nb.access_token, name, private, description).map_err(create_repo_error_message)
+        }
+        Err(e) => Err(create_repo_error_message(e)),
+    }
 }
 
 pub(crate) fn api_error_message(e: GithubApiError) -> String {
@@ -256,6 +302,122 @@ pub async fn cloud_clone(
     result
 }
 
+/// Creates an empty repository on GitHub for the account, clones it, and binds the folder.
+///
+/// `repo_name` is only the repository segment (not `owner/repo`). The owner is the account's GitHub login.
+/// `dest_parent` follows the same rules as [`cloud_clone`].
+#[tauri::command]
+pub async fn cloud_create_and_clone(
+    app: AppHandle,
+    account_id: String,
+    repo_name: String,
+    private: bool,
+    description: Option<String>,
+    dest_parent: Option<String>,
+) -> Result<String, String> {
+    let id = parse_account(&account_id)?;
+    let repo_name = repo_name.trim().to_string();
+    validate_repo_name(&repo_name)?;
+
+    let desc = description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass ({e})."))?;
+    if !cfg.accounts.iter().any(|a| a.id == id) {
+        return Err("Conta desconhecida.".to_string());
+    }
+    let login = github_login_for_account(&cfg, id)?;
+    let full_name = format!("{login}/{repo_name}");
+    let (owner, repo) = split_full_name(&full_name)?;
+
+    let dest: PathBuf = match dest_parent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(parent) => validate_clone_parent(&expand_tilde(parent), dirs_home().as_deref())?.join(&repo),
+        None => default_clone_dir(&owner, &repo)?,
+    };
+
+    if std::fs::symlink_metadata(&dest).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!(
+            "`{}` é um atalho (symlink). Escolha outro destino.",
+            dest.display()
+        ));
+    }
+    if dest.exists() {
+        let empty_dir = dest.is_dir()
+            && std::fs::read_dir(&dest)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false);
+        if !empty_dir {
+            return Err(format!(
+                "A pasta `{}` já existe. Escolha outro destino ou remova a pasta primeiro.",
+                dest.display()
+            ));
+        }
+    }
+    if cfg.repos.iter().any(|b| {
+        b.account_id == id
+            && b.github_owner.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&owner))
+            && b.github_repo.as_deref().is_some_and(|r| r.eq_ignore_ascii_case(&repo))
+    }) {
+        return Err(format!("`{full_name}` já tem um clone local vinculado a esta conta."));
+    }
+
+    {
+        let mut set = in_flight().lock().map_err(|_| "Algo deu errado no app. Tente de novo.".to_string())?;
+        if !set.insert(full_name.to_lowercase()) {
+            return Err(format!("`{full_name}` já está sendo clonado."));
+        }
+    }
+    let guard = InFlightGuard(full_name.to_lowercase());
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        use std::cell::RefCell;
+        let progress_name = RefCell::new(full_name);
+        let emit = |phase: &str, percent: u8| {
+            let _ = app.emit(
+                PROGRESS_EVENT,
+                CloneProgressPayload {
+                    full_name: progress_name.borrow().clone(),
+                    phase: phase.to_string(),
+                    percent,
+                },
+            );
+        };
+
+        emit("starting", 0);
+        emit("creating", 0);
+        let created = create_account_repo(id, &repo_name, private, desc.as_deref())?;
+        *progress_name.borrow_mut() = created.full_name.clone();
+        let clone_url = if created.clone_url.is_empty() {
+            format!("https://github.com/{}.git", created.full_name)
+        } else {
+            created.clone_url
+        };
+
+        let token = current_token(id)?;
+        clone_repo(&token, &clone_url, &dest, |p| emit(p.phase, p.percent))?;
+
+        emit("binding", 100);
+        let bound_name = progress_name.borrow().clone();
+        let mut cfg = AppConfig::load_or_default().map_err(|e| format!("Não foi possível ler as configurações do GitPass ({e})."))?;
+        gitpass_core::bindings::create_binding(&mut cfg, id, &dest).map_err(|e| {
+            format!(
+                "Clonado em `{}`, mas não foi possível vincular à conta: {e}. O repositório `{bound_name}` já existe no GitHub — você pode vincular em «Repositórios».",
+                dest.display()
+            )
+        })?;
+        let _ = app.emit(CONFIG_EVENT, ());
+        Ok(dest.display().to_string())
+    })
+    .await
+    .map_err(|e| format!("A tarefa foi interrompida: {e}"))?;
+
+    result
+}
+
 /// Native folder picker (macOS). `Ok(None)` when the user cancels.
 #[tauri::command]
 pub async fn cloud_choose_folder() -> Result<Option<String>, String> {
@@ -267,7 +429,7 @@ pub async fn cloud_choose_folder() -> Result<Option<String>, String> {
                 .arg(
                     r#"tell application "System Events"
   activate
-  set f to choose folder with prompt "Escolha a pasta onde clonar o repositório"
+  set f to choose folder with prompt "Escolha a pasta do projeto"
   POSIX path of f
 end tell"#,
                 )

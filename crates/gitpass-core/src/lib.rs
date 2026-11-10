@@ -8,23 +8,35 @@ pub mod current_repo;
 pub mod diagnostics;
 pub mod emergency;
 pub mod github_user;
+pub mod account_rules;
+pub mod commit_review;
+pub mod config_history;
+pub mod identity_diagnostic;
+pub mod pr_inbox;
+pub mod work_radar;
 pub mod integration;
 pub mod logs_export;
 pub mod recent;
 pub mod redact;
 mod config;
 pub mod github_api;
+pub mod bitbucket_api;
+pub mod bitbucket_repos;
 pub mod github_repos;
 mod hooks;
 pub mod git;
 pub mod git_auth;
 pub mod ipc_client;
 pub mod oauth_github;
+pub mod oauth_bitbucket;
 pub mod outgoing;
 pub mod remote;
 pub mod repo_map;
 mod secrets;
 mod validate;
+
+#[cfg(feature = "ai")]
+pub mod ai;
 
 #[cfg(test)]
 mod test_fixtures;
@@ -32,9 +44,10 @@ mod test_fixtures;
 pub use git::{git_log_lines, git_remote_url, git_work_tree_root};
 
 pub use config::{
-    config_file_path, Account, AppConfig, AuthMode, ConfigError, EmergencyState, RepoBinding,
+    config_file_path, Account, AccountHost, AccountRule, AppConfig, AuthMode, ConfigError, EmergencyState, RepoBinding,
     UiState, CONFIG_FILE_NAME,
 };
+pub use account_rules::{remove_rule, suggest_account_for_repo, upsert_rule, AccountRuleInput};
 pub use hooks::{
     hook_script, hooks_dir, hooks_installed_ok, write_hook_scripts, HookPhase, HOOKS_DIR_NAME,
 };
@@ -46,9 +59,10 @@ pub use validate::{
     HookContext, ValidateFail, ValidateOptions,
 };
 pub use ipc_client::{DaemonUnreachable, IpcTimeouts};
-pub use remote::{normalize_owner, parse_github_remote};
+pub use remote::{bitbucket_https_url, normalize_owner, parse_bitbucket_remote, parse_github_remote, BitbucketRepoId};
 pub use secrets::{
-    github_token_delete, github_token_exists, github_token_load, github_token_save, GithubTokenBundle, SecretError,
+    bitbucket_token_delete, bitbucket_token_exists, bitbucket_token_load, bitbucket_token_save, github_token_delete,
+    github_token_exists, github_token_load, github_token_save, BitbucketTokenBundle, GithubTokenBundle, SecretError,
     KEYCHAIN_SERVICE,
 };
 pub use oauth_github::{
@@ -58,7 +72,21 @@ pub use oauth_github::{
     DeviceCodeStart, DevicePollOutcome, DEFAULT_GITHUB_SCOPES, DEFAULT_OAUTH_CALLBACK_PORT, OauthError,
 };
 pub use github_api::{token_can_push, token_can_push_for_account, GithubApiError};
-pub use github_repos::{list_user_repos, GithubRepoSummary};
+pub use clone::{clone_bitbucket_repo, validate_clone_parent, validate_repo_name};
+pub use bitbucket_repos::{list_bitbucket_repos, BitbucketRepoSummary};
+pub use oauth_bitbucket::{
+    bitbucket_oauth_login, resolve_bitbucket_oauth_client, DEFAULT_BITBUCKET_OAUTH_CALLBACK_PORT,
+    DEFAULT_BITBUCKET_OAUTH_SCOPES,
+};
+pub use github_repos::{create_user_repo, list_user_repos, GithubRepoSummary};
+
+#[cfg(feature = "ai")]
+pub use ai::{
+    ai_config_path, ai_key_delete, ai_key_exists, ai_key_load, ai_key_save, openai_recommended_model,
+    openai_validate_key,
+    AiConfig, AiConfigError, AiError, AiErrorCode, AiProviderSetting, ApiKey, ProviderId, OPENAI_CURATED_MODELS,
+    AI_CONFIG_FILE_NAME,
+};
 
 use std::path::PathBuf;
 

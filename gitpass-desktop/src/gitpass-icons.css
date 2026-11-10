@@ -1,0 +1,4 @@
+/* Destaque de nó (família Rota): defina --gitpass-icon-accent no contexto. */
+.icon[data-gitpass-icon] [data-node] {
+  fill: var(--gitpass-icon-accent, currentColor);
+}

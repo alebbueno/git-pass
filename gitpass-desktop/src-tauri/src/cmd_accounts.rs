@@ -5,12 +5,13 @@ use gitpass_core::github_user::{
     check_token, fetch_profile, is_noreply_email, missing_required_scopes, parse_scopes,
     selectable_emails, GithubProfile, TokenCheck,
 };
+use gitpass_core::bitbucket_api::{validate_api_token, validate_oauth_token};
 use gitpass_core::{
-    github_oauth_device_poll_once, github_oauth_device_request_code, github_oauth_refresh,
-    github_token_delete, github_token_load, github_token_save, normalize_owner,
-    resolve_oauth_client_id, Account, AppConfig, AuthMode, ConfigError, DeviceCodeStart,
-    DevicePollOutcome, GithubApiError, GithubTokenBundle, OauthError, SecretError,
-    DEFAULT_GITHUB_SCOPES,
+    bitbucket_token_delete, bitbucket_token_exists, bitbucket_token_load, github_oauth_device_poll_once,
+    github_oauth_device_request_code, github_oauth_refresh, github_token_delete, github_token_exists,
+    github_token_load, github_token_save, normalize_owner, resolve_oauth_client_id, Account, AccountHost, AppConfig,
+    AuthMode, ConfigError, DeviceCodeStart, DevicePollOutcome, GithubApiError, GithubTokenBundle, OauthError,
+    SecretError, DEFAULT_GITHUB_SCOPES,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -28,6 +29,7 @@ const DEVICE_CODE_MAX_LEN: usize = 128;
 #[derive(Debug, Serialize)]
 pub struct AccountInfo {
     id: String,
+    host: String,
     login: Option<String>,
     label: Option<String>,
     name: Option<String>,
@@ -207,11 +209,11 @@ fn parse_id(account_id: &str) -> Result<Uuid, String> {
     Uuid::parse_str(account_id).map_err(|_| "Identificador de conta inválido.".to_string())
 }
 
-fn load_cfg() -> Result<AppConfig, String> {
+pub(crate) fn load_cfg() -> Result<AppConfig, String> {
     AppConfig::load_or_default().map_err(config_err)
 }
 
-fn account_index(cfg: &AppConfig, id: Uuid) -> Result<usize, String> {
+pub(crate) fn account_index(cfg: &AppConfig, id: Uuid) -> Result<usize, String> {
     cfg.accounts
         .iter()
         .position(|a| a.id == id)
@@ -232,28 +234,34 @@ fn stored_scopes(bundle: Option<&GithubTokenBundle>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn account_row(
+pub(crate) fn account_row(
     cfg: &AppConfig,
     a: &Account,
     bundle: Option<&GithubTokenBundle>,
+    has_token: bool,
     token_ok: Option<bool>,
     live_scopes: Option<Vec<String>>,
 ) -> AccountInfo {
-    let scopes = live_scopes.unwrap_or_else(|| stored_scopes(bundle));
-    let missing_scopes = if bundle.is_some() && !scopes.is_empty() {
+    let scopes = if a.host == AccountHost::Bitbucket {
+        Vec::new()
+    } else {
+        live_scopes.unwrap_or_else(|| stored_scopes(bundle))
+    };
+    let missing_scopes = if a.host == AccountHost::Github && bundle.is_some() && !scopes.is_empty() {
         missing_required_scopes(&scopes)
     } else {
         Vec::new()
     };
     AccountInfo {
         id: a.id.to_string(),
+        host: a.host.as_str().to_string(),
         login: a.github_login.clone(),
         label: a.label.clone(),
         name: a.name.clone(),
         email: a.email.clone(),
         avatar_url: a.avatar_url.clone(),
         auth: format!("{:?}", a.auth).to_lowercase(),
-        has_token: bundle.is_some(),
+        has_token,
         token_ok,
         scopes,
         missing_scopes,
@@ -378,8 +386,25 @@ pub async fn accounts_list() -> Result<Vec<AccountInfo>, String> {
             .accounts
             .iter()
             .map(|a| {
-                let bundle = github_token_load(a.id).ok().flatten();
-                account_row(&cfg, a, bundle.as_ref(), None, None)
+                let (has_token, bundle) = if a.host == AccountHost::Bitbucket {
+                    let has = bitbucket_token_exists(a.id);
+                    let b = bitbucket_token_load(a.id).ok().flatten();
+                    let has = has || b.is_some();
+                    (has, None)
+                } else {
+                    let mut has_token = github_token_exists(a.id);
+                    let bundle = if has_token {
+                        None
+                    } else if a.github_login.is_some() {
+                        let b = github_token_load(a.id).ok().flatten();
+                        has_token = b.is_some();
+                        b
+                    } else {
+                        None
+                    };
+                    (has_token, bundle)
+                };
+                account_row(&cfg, a, bundle.as_ref(), has_token, None, None)
             })
             .collect())
     })
@@ -498,7 +523,7 @@ pub async fn accounts_refresh_profile(app: AppHandle, account_id: String) -> Res
         }
         sync_bundle_scopes(id, bundle.clone(), &profile.scopes);
         let scopes = (!profile.scopes.is_empty()).then(|| profile.scopes.clone());
-        Ok(account_row(&cfg, &cfg.accounts[idx], Some(&bundle), Some(true), scopes))
+        Ok(account_row(&cfg, &cfg.accounts[idx], Some(&bundle), true, Some(true), scopes))
     })
     .await?;
     notify(&app);
@@ -522,7 +547,8 @@ pub async fn accounts_set_label(
         cfg.accounts[idx].label = (!label.is_empty()).then_some(label);
         cfg.save().map_err(config_err)?;
         let bundle = github_token_load(id).ok().flatten();
-        Ok(account_row(&cfg, &cfg.accounts[idx], bundle.as_ref(), None, None))
+        let has_token = bundle.is_some() || github_token_exists(id);
+        Ok(account_row(&cfg, &cfg.accounts[idx], bundle.as_ref(), has_token, None, None))
     })
     .await?;
     notify(&app);
@@ -580,7 +606,7 @@ pub async fn accounts_set_email(
         cfg.save().map_err(config_err)?;
         let (repos_updated, repos_failed) = reapply_identity(&cfg, id);
         Ok(IdentityUpdate {
-            account: account_row(&cfg, &cfg.accounts[idx], Some(&bundle), Some(true), None),
+            account: account_row(&cfg, &cfg.accounts[idx], Some(&bundle), true, Some(true), None),
             repos_updated,
             repos_failed,
         })
@@ -596,7 +622,8 @@ pub async fn accounts_remove(app: AppHandle, account_id: String) -> Result<Remov
         let id = parse_id(&account_id)?;
         let mut cfg = load_cfg()?;
         account_index(&cfg, id)?;
-        github_token_delete(id).map_err(keychain_err)?;
+        let _ = github_token_delete(id);
+        let _ = bitbucket_token_delete(id);
         if let Ok(dir) = gitpass_core::app_support_dir() {
             gitpass_core::integration::clear_token_rejected(&dir, id);
         }
@@ -631,7 +658,64 @@ pub async fn accounts_check(account_id: String) -> Result<AccountCheck, String> 
     blocking(move || {
         let id = parse_id(&account_id)?;
         let cfg = load_cfg()?;
-        account_index(&cfg, id)?;
+        let idx = account_index(&cfg, id)?;
+        let acc = &cfg.accounts[idx];
+        if acc.host == AccountHost::Bitbucket {
+            let _login = acc.github_login.clone().ok_or_else(|| "Conta sem usuário.".to_string())?;
+            let Some(bundle) = bitbucket_token_load(id).map_err(keychain_err)? else {
+                return Ok(AccountCheck {
+                    account_id: id.to_string(),
+                    state: TokenState::Missing,
+                    scopes: Vec::new(),
+                    missing_scopes: Vec::new(),
+                    needs_reconnect: true,
+                    message: "Nenhum token salvo. Reconecte a conta Bitbucket.".into(),
+                });
+            };
+            let check = if bundle.via_oauth {
+                validate_oauth_token(&bundle.app_password)
+            } else {
+                validate_api_token(&bundle.app_password)
+            };
+            match check {
+                Ok(_) => Ok(AccountCheck {
+                    account_id: id.to_string(),
+                    state: TokenState::Ok,
+                    scopes: Vec::new(),
+                    missing_scopes: Vec::new(),
+                    needs_reconnect: false,
+                    message: if bundle.via_oauth {
+                        "OAuth Bitbucket ativo.".into()
+                    } else {
+                        "API token reconhecido pelo Bitbucket.".into()
+                    },
+                }),
+                Err(e) => {
+                    use gitpass_core::bitbucket_api::BitbucketApiError;
+                    let (state, msg, reconnect) = match &e {
+                        BitbucketApiError::Http { status: 401 | 403, .. } => (
+                            TokenState::Revoked,
+                            "O token expirou ou perdeu os escopos. Crie outro API token na Atlassian e reconecte.",
+                            true,
+                        ),
+                        BitbucketApiError::Reqwest(_) => (
+                            TokenState::Offline,
+                            "Sem conexão com o Bitbucket.",
+                            false,
+                        ),
+                        _ => (TokenState::Error, "Não foi possível verificar a conta Bitbucket.", false),
+                    };
+                    Ok(AccountCheck {
+                        account_id: id.to_string(),
+                        state,
+                        scopes: Vec::new(),
+                        missing_scopes: Vec::new(),
+                        needs_reconnect: reconnect,
+                        message: msg.to_string(),
+                    })
+                }
+            }
+        } else {
         let done = |state, scopes: Vec<String>, needs_reconnect, message: &str| AccountCheck {
             account_id: id.to_string(),
             state,
@@ -688,6 +772,7 @@ pub async fn accounts_check(account_id: String) -> Result<AccountCheck, String> 
             )),
             Err(e) => Ok(done(TokenState::Error, stored_scopes(Some(&bundle)), false, &api_err(e))),
         }
+        }
     })
     .await
 }
@@ -700,6 +785,7 @@ mod tests {
     fn info() -> AccountInfo {
         AccountInfo {
             id: String::new(),
+            host: "github".into(),
             login: None,
             label: None,
             name: None,
@@ -720,7 +806,7 @@ mod tests {
         assert_eq!(
             keys(&info()),
             expect(&[
-                "id", "login", "label", "name", "email", "avatar_url", "auth", "has_token", "token_ok", "scopes",
+                "id", "host", "login", "label", "name", "email", "avatar_url", "auth", "has_token", "token_ok", "scopes",
                 "missing_scopes", "repos_count"
             ])
         );

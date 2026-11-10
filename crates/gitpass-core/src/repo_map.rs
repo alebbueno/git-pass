@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
+use crate::account_rules::suggest_account_for_repo;
 use crate::bindings::{
-    github_https_url, is_ignored_dir_name, pick_remote, suggest_account_offline, walk_git_work_trees, RemotePick,
+    github_https_url, is_ignored_dir_name, pick_remote, walk_git_work_trees, RemotePick, SuggestionReason,
 };
 use crate::github_repos::GithubRepoPermissions;
 use crate::{git_work_tree_root, normalize_owner, AppConfig, GithubRepoSummary};
@@ -255,7 +256,7 @@ pub fn choose_map_account(cfg: &AppConfig, owner: &str, candidates: &[MapCandida
         .map(|c| c.account_id)
         .collect();
     if tied.len() > 1 {
-        if let Some(s) = suggest_account_offline(cfg, owner).filter(|s| tied.contains(&s.account_id)) {
+        if let Some(s) = crate::bindings::suggest_account_offline(cfg, owner).filter(|s| tied.contains(&s.account_id)) {
             return Some(s.account_id);
         }
     }
@@ -298,6 +299,9 @@ pub struct MappedProject {
     /// Bound projects: whether the bound account has the best permission available
     /// (`None` when no account lists the repo, so it cannot be told).
     pub bound_matches_suggestion: Option<bool>,
+    pub suggestion_reason: Option<SuggestionReason>,
+    /// e.g. «Clientes» when a folder rule matched.
+    pub suggestion_label: Option<String>,
 }
 
 /// Classifies local projects against the config and the accounts' repo lists.
@@ -339,6 +343,8 @@ impl<'a> MapContext<'a> {
             binding_id: None,
             bound_account_id: None,
             bound_matches_suggestion: None,
+            suggestion_reason: None,
+            suggestion_label: None,
         };
         match pick_remote(remotes) {
             RemotePick::None => {}
@@ -346,6 +352,20 @@ impl<'a> MapContext<'a> {
                 p.status = MapStatus::OtherRemote;
                 p.remote_name = Some(name);
                 p.remote_url = Some(url);
+            }
+            RemotePick::Bitbucket { name, id } => {
+                let owner = id.workspace.clone();
+                let repo = id.slug.clone();
+                p.remote_name = Some(name);
+                p.remote_url = Some(crate::remote::bitbucket_https_url(&owner, &repo));
+                p.github_owner = Some(owner.clone());
+                p.github_repo = Some(repo);
+                p.status = MapStatus::NotFound;
+                if let Some(s) = suggest_account_for_repo(self.cfg, root, &owner) {
+                    p.suggestion_reason = Some(s.reason);
+                    p.suggestion_label = s.rule_label.clone();
+                    p.suggested_account_id = Some(s.account_id);
+                }
             }
             RemotePick::GitHub { name, id } => {
                 let known = self.index.get(&id.owner, &id.repo);
@@ -357,7 +377,16 @@ impl<'a> MapContext<'a> {
                         (id.owner.clone(), r.to_string())
                     });
                 p.candidates = known.map(|k| k.candidates.clone()).unwrap_or_default();
-                p.suggested_account_id = choose_map_account(self.cfg, &id.owner, &p.candidates);
+                if let Some(s) = suggest_account_for_repo(self.cfg, root, &id.owner) {
+                    p.suggestion_reason = Some(s.reason);
+                    p.suggestion_label = s.rule_label.clone();
+                    if p.candidates.is_empty() || p.candidates.iter().any(|c| c.account_id == s.account_id) {
+                        p.suggested_account_id = Some(s.account_id);
+                    }
+                }
+                if p.suggested_account_id.is_none() {
+                    p.suggested_account_id = choose_map_account(self.cfg, &id.owner, &p.candidates);
+                }
                 p.status = if p.candidates.is_empty() {
                     MapStatus::NotFound
                 } else if p.candidates.iter().any(|c| c.permission.can_push()) {

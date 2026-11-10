@@ -22,7 +22,40 @@ pub fn auth_header_value(token: &str) -> String {
     format!("AUTHORIZATION: basic {}", B64.encode(format!("x-access-token:{token}")))
 }
 
-/// Config entries injected through `GIT_CONFIG_*` for a token-authenticated command.
+/// Git HTTPS for Atlassian API tokens (`x-bitbucket-api-token-auth`).
+pub fn bitbucket_api_token_header(token: &str) -> String {
+    format!(
+        "AUTHORIZATION: x-bitbucket-api-token-auth {}",
+        token.trim()
+    )
+}
+
+/// Git HTTPS for OAuth access tokens (`x-token-auth` + token as Basic password).
+pub fn bitbucket_oauth_git_header(token: &str) -> String {
+    format!(
+        "AUTHORIZATION: basic {}",
+        B64.encode(format!("x-token-auth:{}", token.trim()))
+    )
+}
+
+pub fn bitbucket_token_config(username: &str, token: &str, via_oauth: bool) -> Vec<(&'static str, String)> {
+    let header = if via_oauth {
+        bitbucket_oauth_git_header(token)
+    } else {
+        let _ = username;
+        bitbucket_api_token_header(token)
+    };
+    vec![
+        (
+            "http.https://bitbucket.org/.extraheader",
+            header,
+        ),
+        ("credential.helper", String::new()),
+        ("url.https://bitbucket.org/.insteadOf", "git@bitbucket.org:".to_string()),
+        ("url.https://bitbucket.org/.insteadOf", "ssh://git@bitbucket.org/".to_string()),
+    ]
+}
+
 pub fn token_config(token: &str) -> Vec<(&'static str, String)> {
     vec![
         ("http.https://github.com/.extraheader", auth_header_value(token)),
@@ -36,6 +69,25 @@ pub fn token_config(token: &str) -> Vec<(&'static str, String)> {
 
 /// Environment shared by every `git` the app runs: English output (parsed), no prompts, no inherited
 /// repository overrides. With `token`, also the [`token_config`] entries.
+pub fn apply_git_env_bitbucket(cmd: &mut Command, username: &str, token: &str, via_oauth: bool) {
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "60")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_CONFIG_PARAMETERS");
+    let entries = bitbucket_token_config(username, token, via_oauth);
+    cmd.env("GIT_CONFIG_COUNT", entries.len().to_string());
+    for (i, (key, value)) in entries.into_iter().enumerate() {
+        cmd.env(format!("GIT_CONFIG_KEY_{i}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{i}"), value);
+    }
+}
+
 pub fn apply_git_env(cmd: &mut Command, token: Option<&str>) {
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")

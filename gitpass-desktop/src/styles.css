@@ -1,4 +1,5 @@
 @import "./tokens.css";
+@import "./gitpass-icons.css";
 
 /* ==========================================================================
    Base
@@ -160,9 +161,9 @@ a {
 .brand-icon {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
   color: var(--brand-ink);
   border-radius: 13px;
   border: 1px solid var(--brand-line);
@@ -170,8 +171,11 @@ a {
   box-shadow: var(--brand-shadow);
 }
 .brand-icon .icon {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
+}
+.brand-icon [data-node] {
+  fill: var(--accent);
 }
 .brand-name {
   font-size: 21px;
@@ -207,8 +211,8 @@ a {
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .nav-item .icon {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   color: var(--muted);
 }
 .nav-item:hover,
@@ -224,6 +228,7 @@ a {
 }
 .nav-item[aria-current="page"] .icon {
   color: var(--accent);
+  --gitpass-icon-accent: var(--accent);
 }
 .nav-count {
   margin-left: auto;
@@ -237,6 +242,12 @@ a {
 }
 .nav-count:empty {
   display: none;
+}
+.nav-count[data-tone="accent"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+  font-weight: 700;
 }
 .nav-count[data-tone="warning"] {
   color: var(--warn);
@@ -3238,4 +3249,79 @@ select:focus-visible,
 :root[data-transparency="reduced"] .modal-backdrop {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+}
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: start center;
+  padding: 12vh 16px 16px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.command-palette {
+  width: min(560px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+}
+.command-palette-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.command-palette-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.command-palette-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+.command-palette-list button {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.command-palette-list button.active,
+.command-palette-list button:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.command-palette-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.command-palette-sub {
+  font-size: 12px;
+}
+.command-palette-hint {
+  margin: 8px 4px 0;
+}
+.projects .row-work {
+  margin-left: 6px;
+  opacity: 0.85;
 }

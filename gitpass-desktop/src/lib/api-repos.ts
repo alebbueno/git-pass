@@ -3,7 +3,14 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type IdentityState = "correct" | "different" | "not_set";
 
-export type SuggestionReason = "owner_login" | "same_owner_binding" | "only_account" | "push_access";
+export type SuggestionReason =
+  | "owner_login"
+  | "same_owner_binding"
+  | "only_account"
+  | "push_access"
+  | "folder_rule"
+  | "org_rule"
+  | "folder_org_rule";
 
 export type RepoIdentityRow = {
   /** `null` quando a pasta já não existe. */
@@ -34,6 +41,58 @@ export type RepoRow = {
   sync: RepoSyncSummary | null;
 };
 
+export type IdentityOriginRow = {
+  key: string;
+  value: string | null;
+  scope: string | null;
+  origin: string | null;
+};
+
+export type CommitDiagnosticRow = {
+  state: string;
+  summary: string;
+  detail: string | null;
+  effective_name: string | null;
+  effective_email: string | null;
+  expected_name: string | null;
+  expected_email: string | null;
+  author_context_name: string | null;
+  author_context_email: string | null;
+  origins: IdentityOriginRow[];
+};
+
+export type PushDestinationRow = {
+  remote_name: string;
+  label: string;
+  host: string | null;
+  owner: string | null;
+  repo: string | null;
+  schemes: string[];
+  is_origin: boolean;
+};
+
+export type PushDiagnosticRow = {
+  destination_state: string;
+  destination_summary: string;
+  selected_remote: string | null;
+  available_remotes: string[];
+  destinations: PushDestinationRow[];
+  auth_state: string;
+  auth_summary: string;
+  bound_account_login: string | null;
+  token_login: string | null;
+  token_push_permission: boolean | null;
+  token_message: string | null;
+  evidence: string[];
+};
+
+export type IdentityDiagnosticRow = {
+  binding_id: string;
+  exists: boolean;
+  commit: CommitDiagnosticRow;
+  push: PushDiagnosticRow;
+};
+
 export type RepoSyncSummary = {
   /** Commits locais que ainda não estão no GitHub. */
   ahead: number;
@@ -42,6 +101,51 @@ export type RepoSyncSummary = {
   has_upstream: boolean;
   /** Há alterações não commitadas (staged, unstaged ou untracked). */
   dirty: boolean;
+};
+
+export type WorkTreeStatusRow = {
+  binding_id: string;
+  head_state: "branch" | "detached" | "empty" | "unreadable";
+  branch: string | null;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  has_upstream: boolean;
+  staged_files: number;
+  unstaged_files: number;
+  untracked_files: number;
+  conflicted_files: number;
+  has_pending: boolean;
+  inspected_at: string;
+  error: string | null;
+};
+
+export type CommitReviewRow = {
+  sha: string;
+  short_sha: string;
+  subject: string;
+  author_name: string;
+  author_email: string;
+  authored_at: string;
+  ownership: "self_authored" | "other";
+  identity_mismatch: boolean;
+  reach: "on_upstream" | "beyond_upstream" | "unknown";
+};
+
+export type ConfigHistoryRow = {
+  id: string;
+  at: string;
+  binding_id: string;
+  op: string;
+  status: string;
+  undoable: boolean;
+  message: string | null;
+  before_account_id: string | null;
+  after_account_id: string | null;
+  before_name: string | null;
+  before_email: string | null;
+  after_name: string | null;
+  after_email: string | null;
 };
 
 // ---------- Enviar commits (push validado) ----------
@@ -251,6 +355,7 @@ export type DiscoveredRepo = {
   remote_url: string;
   suggested_account_id: string | null;
   suggestion_reason: SuggestionReason | null;
+  suggestion_label: string | null;
 };
 
 export type DiscoverResult = {
@@ -283,6 +388,8 @@ export type MappedProject = {
   bound_account_id: string | null;
   /** Só em `bound`: `false` quando outra conta tem permissão maior; `null` quando não deu para saber. */
   bound_matches_suggestion: boolean | null;
+  suggestion_reason: SuggestionReason | null;
+  suggestion_label: string | null;
 };
 
 export type MapAccountStatus = { account_id: string; ok: boolean; error: string | null; repo_count: number };
@@ -313,6 +420,8 @@ export const reposApi = {
   changeAccount: (bindingId: string, accountId: string) =>
     invoke<RepoRow>("repos_change_account", { bindingId, accountId }),
   fixIdentity: (bindingId: string) => invoke<RepoRow>("repos_fix_identity", { bindingId }),
+  identityDiagnostic: (bindingId: string, remote: string | null = null, verifyToken = false) =>
+    invoke<IdentityDiagnosticRow>("repos_identity_diagnostic", { bindingId, remote, verifyToken }),
   discover: (roots: string[] | null = null) => invoke<DiscoverResult>("repos_discover", { roots }),
   /** `null` quando o usuário cancela. */
   pickFolder: () => invoke<string | null>("repos_pick_folder"),
@@ -361,4 +470,11 @@ export const reposApi = {
     listen<string>(OUTGOING_CHANGED_EVENT, (e) => cb(e.payload)),
   openInFinder: (path: string) => invoke<void>("repos_open_in_finder", { path }),
   openInTerminal: (path: string) => invoke<void>("repos_open_in_terminal", { path }),
+  openInEditor: (path: string, editorApp?: string | null) =>
+    invoke<void>("repos_open_in_editor", { path, editorApp: editorApp ?? null }),
+  workStatus: (bindingIds: string[]) => invoke<WorkTreeStatusRow[]>("repos_work_status", { bindingIds }),
+  commitReview: (bindingId: string, limit?: number) =>
+    invoke<CommitReviewRow[]>("repos_commit_review", { bindingId, limit }),
+  configHistory: () => invoke<ConfigHistoryRow[]>("repos_config_history_list"),
+  undoConfigHistory: (recordId: string) => invoke<void>("repos_config_history_undo", { recordId }),
 };

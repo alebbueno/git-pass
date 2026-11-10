@@ -3,7 +3,7 @@ import { reposApi, type DiscoveredRepo, type RepoRow } from "../lib/api-repos";
 import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
 import { icon } from "../lib/icons";
 import { profileName } from "../lib/profile";
-import { REASON_TEXT, repoName, whoText } from "./repos-ui";
+import { REASON_TEXT, suggestionMotivo, repoName, whoText } from "./repos-ui";
 
 type DiscoveryStatus = "idle" | "scanning" | "done" | "error";
 
@@ -94,8 +94,8 @@ export function createDiscovery(deps: DiscoveryDeps): DiscoveryHandle {
           const chosen = choiceFor(d);
           const name = `${d.github_owner}/${d.github_repo}`;
           const reason =
-            chosen && chosen === d.suggested_account_id && d.suggestion_reason
-              ? `<span class="muted small">Sugerida: ${esc(REASON_TEXT[d.suggestion_reason])}</span>`
+            chosen && chosen === d.suggested_account_id && (d.suggestion_reason || d.suggestion_label)
+              ? `<span class="muted small">Sugerida: ${esc(suggestionMotivo(d.suggestion_reason, d.suggestion_label))}</span>`
               : !chosen
                 ? `<span class="warn small">${icon("alert", 12)}Escolha a conta</span>`
                 : "";

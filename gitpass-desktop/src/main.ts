@@ -22,6 +22,10 @@ import { mount as mountCloud } from "./views/cloud";
 import { mount as mountIntegration } from "./views/integration";
 import { mount as mountDiagnostics } from "./views/diagnostics";
 import { mount as mountSettings } from "./views/settings";
+import { mount as mountCredits } from "./views/credits";
+import { mount as mountAiSettings } from "./views/ai-settings";
+import { installCommandPalette } from "./command-palette";
+import { installFeatureTour } from "./views/feature-tour";
 
 initTheme();
 
@@ -42,12 +46,14 @@ const VIEWS: ViewDef[] = [
   { id: "integration", label: "Integração", icon: "plug", mount: mountIntegration },
   { id: "diagnostics", label: "Diagnóstico", icon: "stethoscope", mount: mountDiagnostics },
   { id: "settings", label: "Configurações", icon: "settings", mount: mountSettings },
+  { id: "settings/ai", label: "Inteligência artificial", icon: "activity", mount: mountAiSettings, parent: "settings" },
+  { id: "settings/credits", label: "Créditos e suporte", icon: "info", mount: mountCredits, parent: "settings" },
 ];
 const NAV_VIEWS = VIEWS.filter((v) => !v.parent);
 const viewDef = (id: ViewId): ViewDef => VIEWS.find((v) => v.id === id)!;
 
 const navItem = (v: ViewDef): string =>
-  `<button type="button" class="nav-item" data-view="${v.id}" title="${esc(v.label)}" aria-label="${esc(v.label)}">${icon(v.icon)}<span>${esc(
+  `<button type="button" class="nav-item" data-view="${v.id}" title="${esc(v.label)}" aria-label="${esc(v.label)}">${icon(v.icon, 18)}<span>${esc(
     v.label
   )}</span><span class="nav-count" data-count="${v.id}" aria-hidden="true"></span></button>`;
 
@@ -226,23 +232,12 @@ document.addEventListener("click", (ev) => {
 
 installCopyButtons(icon("check", 12));
 
-/* ⌘K (Ctrl K) leva à busca de Repositórios. */
-document.addEventListener("keydown", (e) => {
-  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k" || e.altKey || e.shiftKey) return;
-  if (document.querySelector(".modal-backdrop")) return;
-  e.preventDefault();
-  closePopover();
-  if (current !== "repos" || drawer.isOpen()) navigate("repos");
-  let tries = 0;
-  const focusSearch = (): void => {
-    const input = document.getElementById("repo-search") as HTMLInputElement | null;
-    if (input) {
-      input.focus();
-      input.select();
-    } else if (++tries < 40) window.setTimeout(focusSearch, 50);
-  };
-  focusSearch();
+installCommandPalette({
+  navigate: (route) => navigate(route as Route),
+  viewRoot,
+  getView: () => current ?? "overview",
 });
+installFeatureTour(ctx);
 
 // ---------- Tema ----------
 
@@ -259,7 +254,7 @@ renderThemeToggle();
 
 // ---------- Barra lateral: perfis, contadores e integração ----------
 
-function setCount(view: ViewId, n: number, tone: "muted" | "warning" | "error", srText: string): void {
+function setCount(view: ViewId, n: number, tone: "muted" | "warning" | "error" | "accent", srText: string): void {
   const el = document.querySelector<HTMLElement>(`[data-count="${view}"]`);
   if (!el) return;
   el.dataset.tone = tone;
@@ -278,12 +273,11 @@ async function refreshSidebar(): Promise<void> {
     accounts = await api.accounts();
     if (seq !== sidebarSeq) return;
     const disconnected = accounts.filter((a) => !a.has_token).length;
-    const n = accounts.length;
     setCount(
       "accounts",
-      n,
+      disconnected,
       disconnected ? "warning" : "muted",
-      `${n} ${n === 1 ? "conta" : "contas"}${disconnected ? `, ${disconnected} ${disconnected === 1 ? "desconectada" : "desconectadas"}` : ""}`
+      disconnected ? `${disconnected} ${disconnected === 1 ? "conta desconectada" : "contas desconectadas"}` : ""
     );
     railProfiles.innerHTML = accounts.length
       ? accounts
@@ -305,7 +299,15 @@ async function refreshSidebar(): Promise<void> {
   try {
     const rows = await reposApi.list();
     if (seq !== sidebarSeq) return;
-    setCount("repos", rows.length, "muted", `${rows.length} ${rows.length === 1 ? "repositório" : "repositórios"}`);
+    const pendingAhead = rows.filter((r) => r.exists && (r.sync?.ahead ?? 0) > 0);
+    setCount(
+      "overview",
+      pendingAhead.length,
+      pendingAhead.length ? "accent" : "muted",
+      pendingAhead.length
+        ? `${pendingAhead.length} ${pendingAhead.length === 1 ? "projeto com commit para enviar" : "projetos com commits para enviar"}`
+        : ""
+    );
   } catch {
     /* o contador some; a tela Repositórios mostra o erro */
   }
@@ -315,7 +317,9 @@ function renderDiagnosticsCount(d: Diagnostics): void {
   const errors = d.items.filter((i) => i.state === "error").length;
   const warnings = d.items.filter((i) => i.state === "warning").length;
   if (errors > 0) setCount("diagnostics", errors, "error", errors === 1 ? "1 item com erro" : `${errors} itens com erro`);
-  else setCount("diagnostics", warnings, "warning", warnings === 1 ? "1 item pede atenção" : `${warnings} itens pedem atenção`);
+  else if (warnings > 0)
+    setCount("diagnostics", warnings, "warning", warnings === 1 ? "1 item pede atenção" : `${warnings} itens pedem atenção`);
+  else setCount("diagnostics", 0, "muted", "");
 }
 
 async function refreshDiagnosticsCount(): Promise<void> {
@@ -357,7 +361,30 @@ document.addEventListener(DIAGNOSTICS_UPDATED_EVENT, (e) => renderDiagnosticsCou
 void listen("gitpass-config-changed", () => ctx.notifyDataChanged()).catch(() => {});
 void onIntegrationChanged(renderIntegration);
 
+function dismissStartupSplash(): void {
+  const splash = document.querySelector<HTMLElement>("#gitpass-splash");
+  if (!splash) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || getComputedStyle(splash).visibility === "hidden") {
+    splash.remove();
+    return;
+  }
+  const animation = splash.getAnimations().find((item) => "animationName" in item && item.animationName === "gp-splash-lifetime");
+  const currentTime = animation?.currentTime;
+  const elapsed = typeof currentTime === "number" ? currentTime : performance.now();
+  const shell = document.getElementById("app");
+  const previousInert = shell?.inert ?? false;
+  if (shell) shell.inert = true;
+  window.setTimeout(() => {
+    splash.dataset.exit = "true";
+    window.setTimeout(() => {
+      splash.remove();
+      if (shell) shell.inert = previousInert;
+    }, 240);
+  }, Math.max(0, 1380 - elapsed));
+}
+
 navigate((location.hash.slice(1) || "overview") as Route);
+dismissStartupSplash();
 void refreshSidebar();
 void refreshDaemon();
 window.setTimeout(() => void refreshDiagnosticsCount(), 2_000);

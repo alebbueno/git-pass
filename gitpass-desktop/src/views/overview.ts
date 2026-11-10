@@ -6,6 +6,7 @@ import { systemApi, type AuditEntry, type CurrentRepoState, type Diagnostics, ty
 import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
 import { codeChip, errorView, parseError } from "../lib/errors";
 import { icon, type IconName } from "../lib/icons";
+import { FEATURE_TOUR_CHANGED_EVENT, getFeatureTour, requestFeatureTour } from "../lib/feature-tour";
 import { getOnboarding, WELCOME_REQUEST_EVENT } from "../lib/onboarding";
 import { profileChip } from "../lib/profile";
 import {
@@ -28,6 +29,12 @@ import { columnsHtml, plural, projectName, projectRowHtml, reviewReasons } from 
 const MAX_RECENT = 4;
 const MAX_TO_SEND = 5;
 const MAX_EVENTS = 5;
+
+function pendingRepos(repos: RepoRow[]): RepoRow[] {
+  return repos
+    .filter((r) => r.exists && (r.sync?.ahead ?? 0) > 0)
+    .sort((a, b) => (b.sync?.ahead ?? 0) - (a.sync?.ahead ?? 0));
+}
 
 type State = {
   oauth: Loadable<boolean>;
@@ -137,6 +144,17 @@ function step(n: string, title: string, desc: string, done: boolean, next: boole
   </li>`;
 }
 
+function renderFeatureTourTeaser(): string {
+  if (getFeatureTour() !== null) return "";
+  return `<section class="surface home-tour-teaser" aria-labelledby="home-tour-title">
+    <div class="section-head">
+      <h2 class="section-title" id="home-tour-title">Conhecer o GitPass</h2>
+      <button type="button" class="control primary" data-action="feature-tour">${icon("help")}Iniciar tour guiado</button>
+    </div>
+    <p class="caption muted">Painel, repositórios, integração, regras, paleta ⌘K e pull requests — em poucos passos.</p>
+  </section>`;
+}
+
 function renderOnboarding(accounts: AccountRow[], bindings: BindingRow[]): string {
   if (accounts.length > 0 && bindings.length > 0) return "";
   const hasAcc = accounts.length > 0;
@@ -199,7 +217,12 @@ function renderRecent(s: State, accounts: AccountRow[], expanded: string | null)
   const list = recentOrder(s.repos.value, currentState(s)).slice(0, MAX_RECENT);
   return `<section class="page-section home-recent" aria-labelledby="home-recent-title">${head}
     <div class="list-frame">${columnsHtml()}<ul class="projects" aria-label="Repositórios recentes">${list
-      .map((r) => projectRowHtml(r, accounts, currentState(s), { expanded: r.id === expanded }))
+      .map((r) =>
+        projectRowHtml(r, accounts, currentState(s), {
+          expanded: r.id === expanded,
+          highlightAhead: (r.sync?.ahead ?? 0) > 0,
+        })
+      )
       .join("")}</ul></div></section>`;
 }
 
@@ -257,13 +280,14 @@ function renderCurrent(s: State, accounts: AccountRow[]): string {
 
 function renderToSend(s: State, accounts: AccountRow[]): string {
   if (s.repos.status !== "ok" || s.repos.value.length === 0) return "";
-  const pending = s.repos.value.filter((r) => r.exists && (r.sync?.ahead ?? 0) > 0).sort((a, b) => (b.sync?.ahead ?? 0) - (a.sync?.ahead ?? 0));
-  const head = sectionHead("home-send-title", pending.length ? `Commits para enviar · ${pending.length}` : "Commits para enviar", pending.length > MAX_TO_SEND ? { route: "repos?ahead=1", label: "Ver todos" } : undefined);
+  const pending = pendingRepos(s.repos.value);
   if (!pending.length) {
-    return `<section class="page-section" aria-labelledby="home-send-title">${head}<div class="surface home-note">${icon("checkCircle")}<span>Tudo enviado. Nenhum dos ${esc(
+    const head = sectionHead("home-send-title", "Commits para enviar");
+    return `<section class="page-section home-send-section" aria-labelledby="home-send-title">${head}<div class="surface home-note">${icon("checkCircle")}<span>Tudo enviado. Nenhum dos ${esc(
       plural(s.repos.value.length, "repositório", "repositórios")
     )} tem commits locais esperando.</span></div></section>`;
   }
+  const commits = pending.reduce((n, r) => n + (r.sync?.ahead ?? 0), 0);
   const rows = pending
     .slice(0, MAX_TO_SEND)
     .map((r) => {
@@ -271,7 +295,7 @@ function renderToSend(s: State, accounts: AccountRow[]): string {
       const ahead = r.sync?.ahead ?? 0;
       return `<li><button type="button" class="home-send-row" data-nav="${esc(drawerRoute(r.id, "push"))}">
         <span class="home-send-count" aria-hidden="true">${icon("arrowUp", 12)}${ahead}</span>
-        <span class="home-send-text"><strong class="truncate">${esc(projectName(r))}</strong><span class="caption muted truncate">${
+        <span class="home-send-text"><strong class="truncate">${esc(projectName(r))}</strong><span class="home-send-meta truncate">${
           r.branch ? `<code>${esc(r.branch)}</code> · ` : ""
         }${esc(plural(ahead, "commit para enviar", "commits para enviar"))}${r.sync?.has_upstream ? "" : " · branch novo"}</span></span>
         ${acc ? profileChip(acc) : `<span class="state error">${icon("x")}Conta removida</span>`}
@@ -279,7 +303,25 @@ function renderToSend(s: State, accounts: AccountRow[]): string {
       </button></li>`;
     })
     .join("");
-  return `<section class="page-section" aria-labelledby="home-send-title">${head}<ul class="surface home-send">${rows}</ul></section>`;
+  const seeAll =
+    pending.length > MAX_TO_SEND
+      ? `<button type="button" class="home-send-alert-link" data-nav="repos?ahead=1">Ver todos (${pending.length})${icon("chevronRight", 14)}</button>`
+      : `<button type="button" class="home-send-alert-link" data-nav="repos?ahead=1">Abrir lista filtrada${icon("chevronRight", 14)}</button>`;
+  return `<section class="page-section home-send-section home-send-alert" role="alert" aria-labelledby="home-send-title">
+    <div class="home-send-alert-panel">
+      <header class="home-send-alert-head">
+        <div class="home-send-alert-copy">
+          <p class="home-send-alert-kicker">${icon("alert", 14)} Precisa da sua atenção</p>
+          <h2 class="section-title home-send-alert-title" id="home-send-title">Commits para enviar · ${pending.length.toLocaleString("pt-BR")}</h2>
+          <p class="home-send-alert-hint">${esc(
+            plural(commits, "commit local aguardando envio", "commits locais aguardando envio")
+          )} em ${esc(plural(pending.length, "projeto", "projetos"))}. Toque em um projeto para revisar e enviar.</p>
+        </div>
+        ${seeAll}
+      </header>
+      <ul class="home-send home-send-alert-list">${rows}</ul>
+    </div>
+  </section>`;
 }
 
 // ---------- Bloqueios ----------
@@ -313,13 +355,19 @@ function renderBody(s: State, expanded: string | null): string {
     })}`;
   }
   const onboarding = s.accounts.status === "ok" && s.bindings.status === "ok" ? renderOnboarding(accounts, s.bindings.value) : "";
+  const tourTeaser =
+    s.accounts.status === "ok" && s.bindings.status === "ok" && accounts.length > 0 && s.bindings.value.length > 0
+      ? renderFeatureTourTeaser()
+      : "";
   return `
     ${renderStats(s)}
     ${renderAttention(s)}
     ${onboarding}
+    ${tourTeaser}
+    ${renderToSend(s, accounts)}
     ${renderRecent(s, accounts, expanded)}
     <div class="home-grid">
-      <div class="home-col">${renderCurrent(s, accounts)}${renderToSend(s, accounts)}</div>
+      <div class="home-col">${renderCurrent(s, accounts)}</div>
       <div class="home-col">${renderEvents(s)}</div>
     </div>`;
 }
@@ -465,6 +513,9 @@ export const mount: MountView = (root, ctx) => {
         case "welcome":
           document.dispatchEvent(new CustomEvent(WELCOME_REQUEST_EVENT));
           break;
+        case "feature-tour":
+          requestFeatureTour();
+          break;
         case "reload":
           void load(false);
           break;
@@ -502,6 +553,9 @@ export const mount: MountView = (root, ctx) => {
   };
   document.addEventListener(DRAWER_EVENT, onDrawer);
 
+  const onTourChanged = (): void => draw();
+  document.addEventListener(FEATURE_TOUR_CHANGED_EVENT, onTourChanged);
+
   const offSystem = onSystemState((snap) => {
     if (snap.current === state.current && snap.emergency === state.emergency) return;
     state = { ...state, current: snap.current, emergency: snap.emergency };
@@ -525,6 +579,7 @@ export const mount: MountView = (root, ctx) => {
     document.removeEventListener(DATA_CHANGED_EVENT, onData);
     document.removeEventListener(DIAGNOSTICS_UPDATED_EVENT, onDiag);
     document.removeEventListener(DRAWER_EVENT, onDrawer);
+    document.removeEventListener(FEATURE_TOUR_CHANGED_EVENT, onTourChanged);
     body.removeEventListener("click", onClick);
     offSystem();
     unlistenIntegration?.();

@@ -10,5 +10,7 @@
   <string>O GitPass só acessa esta pasta quando você escolhe um repositório que esteja nela.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>O GitPass usa o seletor de pastas do sistema para você escolher repositórios e destinos de clonagem.</string>
+  <key>NSUserNotificationsUsageDescription</key>
+  <string>O GitPass avisa quando há novos commits locais prontos para enviar ao GitHub.</string>
 </dict>
 </plist>

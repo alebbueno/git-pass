@@ -16,10 +16,11 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 opener = "0.7"
 chrono = { workspace = true }
-gitpass-core = { path = "../../crates/gitpass-core" }
+gitpass-core = { path = "../../crates/gitpass-core", features = ["ai"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
+notify-rust = "4.11"
 
 [features]
 default = ["custom-protocol"]

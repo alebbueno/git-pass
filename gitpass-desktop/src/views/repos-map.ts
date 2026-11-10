@@ -12,6 +12,7 @@ import { errMessage, esc, shortenPath, showToast, withBusy } from "../lib/dom";
 import { icon, type IconName } from "../lib/icons";
 import { profileChip, profileName } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView, type ViewContext } from "../lib/view";
+import { suggestionMotivo } from "./repos-ui";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 type Outcome = { ok: true } | { ok: false; error: string };
@@ -491,12 +492,14 @@ export const mount: MountView = (root, ctx) => {
     const chosen = choiceFor(it);
     const checked = state.selected.has(it.root_path) && !!chosen;
     const perm = it.candidates.find((c) => c.account_id === chosen)?.permission ?? bestPermission(it);
+    const motivo = suggestionMotivo(it.suggestion_reason, it.suggestion_label);
+    const reason = motivo && chosen === it.suggested_account_id ? `<span class="map-reason muted small">${esc(motivo)}</span>` : "";
     return `<li class="list-row map-row${checked ? " selected" : ""}" data-index="${i}">
       <input type="checkbox" class="map-check" id="map-cb-${i}" data-index="${i}" data-focus="cb-${i}"${checked ? " checked" : ""}${
         chosen && !busy ? "" : " disabled"
       } />
       ${rowMain(it, `map-cb-${i}`)}
-      <span class="map-row-meta">${permBadge(perm)}${accountPicker(it, i)}</span>
+      <span class="map-row-meta">${reason}${permBadge(perm)}${accountPicker(it, i)}</span>
       ${outcomeHtml(it)}
     </li>`;
   }

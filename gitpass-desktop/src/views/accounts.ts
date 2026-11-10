@@ -7,7 +7,7 @@ import { DeviceFlowModal, ModalBase } from "../lib/device-flow";
 import { icon } from "../lib/icons";
 import { profileAvatar, profileFamily } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView, type ViewContext } from "../lib/view";
-import { openMenu, type MenuItem } from "./repos-ui";
+import { openMenu, openModal, type MenuItem } from "./repos-ui";
 
 type CheckState = { state: "checking" } | AccountCheck;
 
@@ -24,6 +24,7 @@ type State = {
   error: string | null;
   accounts: AccountInfo[];
   oauth: OauthConfigStatus | null;
+  bitbucketOauth: OauthConfigStatus | null;
   checks: Map<string, CheckState>;
   editing: { id: string; draft: string; saving: boolean } | null;
   emailMenu: EmailMenu | null;
@@ -32,6 +33,12 @@ type State = {
 const LABEL_MAX = 64;
 const OAUTH_UNAVAILABLE = "A conexão com o GitHub não está disponível nesta versão do app.";
 const GITHUB_APPS_URL = "https://github.com/settings/applications";
+const BITBUCKET_API_TOKENS_URL = "https://id.atlassian.com/manage-profile/security/api-tokens";
+const BITBUCKET_API_TOKEN_DOC_URL =
+  "https://support.atlassian.com/bitbucket-cloud/docs/create-an-api-token/";
+
+const isGithubAccount = (a: AccountInfo) => (a.host ?? "github") === "github";
+const accountHost = (a: AccountInfo): "github" | "bitbucket" => (isGithubAccount(a) ? "github" : "bitbucket");
 
 /** Permissões OAuth mostradas no cartão; `required` sinaliza quando faltam. */
 const SCOPES: { scope: string; label: string; hint: string; required: boolean; impliedBy: string[] }[] = [
@@ -47,6 +54,7 @@ export const mount: MountView = (root, ctx) => {
     error: null,
     accounts: [],
     oauth: null,
+    bitbucketOauth: null,
     checks: new Map(),
     editing: null,
     emailMenu: null,
@@ -64,7 +72,11 @@ export const mount: MountView = (root, ctx) => {
         <h1>Contas</h1>
         <p data-ref="sub">Gerencie os perfis usados nos seus projetos.</p>
       </div>
-      <button type="button" class="control primary" data-action="connect" hidden>${icon("plus")}<span>Conectar conta</span></button>
+      <div class="page-actions accounts-connect-actions">
+        <button type="button" class="control primary accounts-connect-btn" data-action="connect" aria-haspopup="menu" aria-expanded="false" hidden>
+          ${icon("plus")}<span>Conectar conta</span>${icon("chevronDown", 14)}
+        </button>
+      </div>
     </div>
     <p class="sr-only" data-ref="live" role="status" aria-live="polite"></p>
     <div class="accounts-body" data-ref="body" aria-busy="true"></div>
@@ -76,6 +88,7 @@ export const mount: MountView = (root, ctx) => {
   const headerConnect = root.querySelector<HTMLButtonElement>('[data-action="connect"]')!;
 
   const oauthReady = () => state.oauth?.ok === true;
+  const bitbucketOauthReady = () => state.bitbucketOauth?.ok === true;
   const findAccount = (id: string | undefined) => state.accounts.find((a) => a.id === id);
   const announce = (msg: string) => {
     live.textContent = "";
@@ -89,10 +102,15 @@ export const mount: MountView = (root, ctx) => {
     state.loading = true;
     state.error = null;
     if (!state.accounts.length) render();
-    const [oauthRes, accRes] = await Promise.allSettled([api.oauthStatus(), accountsApi.list()]);
+    const [oauthRes, bbOauthRes, accRes] = await Promise.allSettled([
+      api.oauthStatus(),
+      accountsApi.bitbucketOauthStatus(),
+      accountsApi.list(),
+    ]);
     if (disposed || seq !== loadSeq) return;
     state.loading = false;
     state.oauth = oauthRes.status === "fulfilled" ? oauthRes.value : null;
+    state.bitbucketOauth = bbOauthRes.status === "fulfilled" ? bbOauthRes.value : null;
     if (accRes.status === "fulfilled") {
       state.accounts = accRes.value;
       const ids = new Set(state.accounts.map((a) => a.id));
@@ -148,7 +166,7 @@ export const mount: MountView = (root, ctx) => {
     body.setAttribute("aria-busy", String(state.loading));
     const n = state.accounts.length;
     const ready = oauthReady();
-    headerConnect.hidden = !ready;
+    headerConnect.hidden = state.loading || !!state.error;
 
     if (state.loading && !n) {
       body.innerHTML = renderSkeleton();
@@ -192,28 +210,42 @@ export const mount: MountView = (root, ctx) => {
           <div class="empty-icon">${icon("user", 28)}</div>
           <h3>Nenhuma conta conectada</h3>
           ${
-            ready
-              ? `<p>Conecte uma conta do GitHub para vincular repositórios a um perfil. O GitPass mostra um código curto. Você abre o GitHub no navegador, digita o código e autoriza. O acesso fica salvo nas Chaves do macOS (Keychain).</p>
-                 <button type="button" class="control primary" data-action="connect">${icon("plus")}<span>Conectar conta</span></button>`
-              : `<p>Quando a conexão com o GitHub estiver disponível, você poderá conectar suas contas aqui.</p>`
+            `<p>Conecte GitHub (OAuth) ou Bitbucket (OAuth no navegador ou API token Atlassian). Os acessos ficam no Keychain do Mac. Você pode misturar as duas contas e vincular repositórios de cada uma.</p>
+                 <div class="accounts-connect-actions">
+                   <button type="button" class="control primary accounts-connect-btn" data-action="connect" aria-haspopup="menu" aria-expanded="false">
+                     ${icon("plus")}<span>Conectar conta</span>${icon("chevronDown", 14)}
+                   </button>
+                 </div>
+                 ${ready ? "" : `<p class="caption muted">O fluxo OAuth do GitHub está indisponível neste build; o Bitbucket continua disponível.</p>`}`
           }
         </div>
       </section>`;
   }
 
+  function renderProviderChip(a: AccountInfo): string {
+    const host = accountHost(a);
+    const label = host === "github" ? "GitHub" : "Bitbucket";
+    const mark = host === "github" ? "githubMark" : "bitbucketMark";
+    return `<span class="account-provider" data-host="${host}" title="${esc(label)}">${icon(mark, 14)}<span class="account-provider-label">${esc(label)}</span></span>`;
+  }
+
   function renderCard(a: AccountInfo): string {
     const fam = profileFamily(a.id);
+    const host = accountHost(a);
     const titleId = `accounts-card-${esc(a.id)}`;
     const check = state.checks.get(a.id);
     const repoText = a.repos_count === 0 ? "Nenhum repositório" : a.repos_count === 1 ? "1 repositório" : `${a.repos_count} repositórios`;
     return `
-      <section class="surface account-card ${fam}" data-card="${esc(a.id)}" aria-labelledby="${titleId}">
+      <section class="surface account-card account-card--${host} ${fam}" data-host="${host}" data-card="${esc(a.id)}" aria-labelledby="${titleId}">
         <div class="account-top">
           ${renderAvatar(a)}
           <div class="account-id">${renderIdentity(a, titleId)}</div>
-          <button type="button" class="icon-button account-more" data-action="more" data-account-id="${esc(a.id)}" aria-haspopup="menu" aria-label="Mais ações para ${esc(
-            handle(a)
-          )}" title="Mais ações">${icon("more")}</button>
+          <div class="account-top-end">
+            ${renderProviderChip(a)}
+            <button type="button" class="icon-button account-more" data-action="more" data-account-id="${esc(a.id)}" aria-haspopup="menu" aria-label="Mais ações para ${esc(
+              handle(a)
+            )}" title="Mais ações">${icon("more")}</button>
+          </div>
         </div>
         <div class="account-email">
           <p class="caption muted">E-mail de commit</p>
@@ -229,18 +261,24 @@ export const mount: MountView = (root, ctx) => {
   }
 
   function renderAvatar(a: AccountInfo): string {
-    const fallback = profileAvatar({ id: a.id, login: a.login, label: a.label || a.name }, 42);
-    const src = a.avatar_url ? sizedAvatar(a.avatar_url, 84) : null;
+    const host = accountHost(a);
+    const fallback = profileAvatar({ id: a.id, login: a.login, label: a.label || a.name }, 44).replace(
+      'class="avatar ',
+      'class="avatar accounts-avatar-fallback '
+    );
+    const src = a.avatar_url ? sizedAvatar(a.avatar_url, 88) : null;
     const img =
       src && !failedAvatars.has(src)
-        ? `<img class="accounts-avatar-img" src="${esc(src)}" alt="" width="42" height="42" decoding="async" referrerpolicy="no-referrer" />`
+        ? `<img class="accounts-avatar-img" src="${esc(src)}" alt="" width="44" height="44" decoding="async" referrerpolicy="no-referrer" />`
         : "";
-    return `<span class="accounts-avatar">${fallback}${img}</span>`;
+    return `<span class="accounts-avatar" data-host="${host}">${fallback}${img}</span>`;
   }
 
   function renderIdentity(a: AccountInfo, titleId: string): string {
     const title = displayName(a);
-    const secondary = [a.login ? `@${a.login}` : null, a.label && a.name && a.name !== a.label ? a.name : null].filter(Boolean).join(" · ");
+    const secondary = [a.login ? `@${a.login}` : null, a.label && a.name && a.name !== a.label ? a.name : null]
+      .filter(Boolean)
+      .join(" · ");
     const ed = state.editing;
     if (ed?.id === a.id) {
       return `
@@ -253,7 +291,7 @@ export const mount: MountView = (root, ctx) => {
         }</p>
         <h2 class="sr-only" id="${titleId}">${esc(title)}</h2>`;
     }
-    return `<h2 class="truncate" id="${titleId}">${esc(title)}</h2><p class="muted truncate">${secondary ? esc(secondary) : "sem login"}</p>`;
+    return `<h2 class="truncate account-name" id="${titleId}">${esc(title)}</h2><p class="muted truncate account-handle">${secondary ? esc(secondary) : "sem login"}</p>`;
   }
 
   function renderEmail(a: AccountInfo): string {
@@ -323,9 +361,11 @@ export const mount: MountView = (root, ctx) => {
   }
 
   function renderTokenState(a: AccountInfo, check: CheckState | undefined): string {
-    const reconnect = oauthReady()
-      ? `<button type="button" class="control ghost" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>`
-      : "";
+    const reconnect = isGithubAccount(a)
+      ? oauthReady()
+        ? `<button type="button" class="control ghost" data-action="reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>`
+        : ""
+      : `<button type="button" class="control ghost" data-action="bitbucket-reconnect" data-account-id="${esc(a.id)}">${icon("refresh")}<span>Conectar de novo</span></button>`;
     if (!a.has_token) return `<span class="state warning">${icon("alert")}Desconectada</span>${reconnect}`;
     if (!check || check.state === "checking") {
       return `<span class="state neutral"><span class="spinner" aria-hidden="true"></span>Verificando o acesso…</span>`;
@@ -367,9 +407,10 @@ export const mount: MountView = (root, ctx) => {
     const items: MenuItem[] = [
       { id: "edit-label", html: `${icon("edit")}<span>Renomear perfil</span>` },
       ...(connected ? [{ id: "email-menu", html: `${icon("user")}<span>Alterar o e-mail de commit</span>` }] : []),
-      ...(connected ? [{ id: "refresh", html: `${icon("refresh")}<span>Atualizar com os dados do GitHub</span>` }] : []),
+      ...(connected && isGithubAccount(a) ? [{ id: "refresh", html: `${icon("refresh")}<span>Atualizar com os dados do GitHub</span>` }] : []),
       ...(a.has_token ? [{ id: "recheck", html: `${icon("shieldCheck")}<span>Verificar o acesso</span>` }] : []),
-      ...(oauthReady() ? [{ id: "reconnect", html: `${icon("key")}<span>Conectar de novo</span>` }] : []),
+      ...(isGithubAccount(a) && oauthReady() ? [{ id: "reconnect", html: `${icon("key")}<span>Conectar de novo</span>` }] : []),
+      ...(!isGithubAccount(a) ? [{ id: "bitbucket-reconnect", html: `${icon("key")}<span>Atualizar token</span>` }] : []),
       { id: "remove", html: `${icon("trash")}<span>Remover conta</span>`, danger: true },
     ];
     openMenu(btn, {
@@ -392,6 +433,9 @@ export const mount: MountView = (root, ctx) => {
           case "reconnect":
             openFlow(btn, a);
             break;
+          case "bitbucket-reconnect":
+            void openBitbucketConnect(btn, a.login ?? undefined);
+            break;
           case "remove":
             confirmRemove(btn, a);
             break;
@@ -401,6 +445,96 @@ export const mount: MountView = (root, ctx) => {
   }
 
   // ---------- Ações ----------
+
+  function hostMenuRow(host: "github" | "bitbucket", title: string, detail: string): string {
+    const mark = host === "github" ? "githubMark" : "bitbucketMark";
+    return `<span class="accounts-host-logo" data-host="${host}">${icon(mark, 18)}</span>
+      <span class="accounts-host-copy"><strong>${esc(title)}</strong><span class="accounts-host-detail">${esc(detail)}</span></span>`;
+  }
+
+  function openConnectMenu(opener: HTMLElement): void {
+    const anchor = (opener.closest<HTMLButtonElement>("[data-action='connect']") ?? headerConnect) as HTMLButtonElement;
+    const items: MenuItem[] = [
+      {
+        id: "github",
+        html: hostMenuRow("github", "GitHub", "Código no navegador (OAuth)"),
+        disabled: !oauthReady(),
+      },
+      {
+        id: "bitbucket-oauth",
+        html: hostMenuRow("bitbucket", "Bitbucket", "Entrar no navegador (OAuth)"),
+        disabled: !bitbucketOauthReady(),
+      },
+      {
+        id: "bitbucket-token",
+        html: hostMenuRow("bitbucket", "Bitbucket", "Colar API token da Atlassian"),
+      },
+    ];
+    openMenu(anchor, {
+      label: "Conectar provedor",
+      title: "Escolha o provedor",
+      items,
+      onPick: (id) => {
+        if (id === "github") openFlow(anchor);
+        else if (id === "bitbucket-oauth") void openBitbucketOAuth(anchor);
+        else if (id === "bitbucket-token") void openBitbucketConnect(anchor);
+      },
+    });
+  }
+
+  async function openBitbucketOAuth(opener: HTMLButtonElement): Promise<void> {
+    if (!bitbucketOauthReady()) {
+      showToast("OAuth Bitbucket não está configurado neste app.", "err");
+      return;
+    }
+    try {
+      announce("Abrindo o Bitbucket no navegador. Conclua o login na página.");
+      const res = await withBusy(opener, "Conectando…", () => accountsApi.bitbucketOauthConnect());
+      if (disposed) return;
+      replaceAccount(res.account);
+      state.checks.delete(res.account.id);
+      void runCheck(res.account.id);
+      showToast(res.message, "ok");
+      ctx.notifyDataChanged();
+    } catch (e) {
+      showToast(errMessage(e), "err");
+    }
+  }
+
+  async function openBitbucketConnect(opener: HTMLElement, _presetUser?: string): Promise<void> {
+    if (modal) return;
+    const picked = await openModal<{ user: string; pass: string }>({
+      title: "Conectar Bitbucket",
+      wide: true,
+      confirmLabel: "Conectar",
+      body: `<p class="caption muted accounts-bb-lead">Crie um <a href="${esc(BITBUCKET_API_TOKENS_URL)}" data-open-external>API token</a> na Atlassian (app <strong>Bitbucket</strong>) com pelo menos <code>read:user:bitbucket</code>, <code>read:repository:bitbucket</code> e <code>write:repository:bitbucket</code> (<a href="${esc(BITBUCKET_API_TOKEN_DOC_URL)}" data-open-external>como criar</a>). Cole só o token — <strong>não</strong> use o usuário do Bitbucket no lugar do email.</p>
+        <label class="accounts-bb-field"><span class="caption muted">API token</span>
+          <input class="input" type="password" autocomplete="off" spellcheck="false" data-bb-pass placeholder="ATCTT…" />
+        </label>
+        <label class="accounts-bb-field"><span class="caption muted">Email Atlassian <span class="muted">(opcional)</span></span>
+          <input class="input" type="email" autocomplete="email" spellcheck="false" data-bb-user value="" placeholder="voce@empresa.com" />
+        </label>
+        <p class="caption muted">Se a conexão falhar só com o token, preencha o email da conta Atlassian e tente de novo.</p>`,
+      read: (dialog) => {
+        const user = dialog.querySelector<HTMLInputElement>("[data-bb-user]")?.value.trim() ?? "";
+        const pass = dialog.querySelector<HTMLInputElement>("[data-bb-pass]")?.value.trim() ?? "";
+        if (!pass) return undefined;
+        return { user, pass };
+      },
+    });
+    if (!picked) return;
+    try {
+      const res = await accountsApi.bitbucketConnect(picked.user, picked.pass);
+      if (disposed) return;
+      replaceAccount(res.account);
+      state.checks.delete(res.account.id);
+      void runCheck(res.account.id);
+      showToast(res.message, "ok");
+      ctx.notifyDataChanged();
+    } catch (e) {
+      showToast(errMessage(e), "err");
+    }
+  }
 
   function openFlow(opener: HTMLElement, account?: AccountInfo): void {
     if (modal || !oauthReady()) return;
@@ -567,11 +701,16 @@ export const mount: MountView = (root, ctx) => {
     const id = target.dataset.accountId;
     switch (target.dataset.action) {
       case "connect":
-        openFlow(target);
+        openConnectMenu(target);
         break;
       case "reconnect":
         openFlow(target, findAccount(id));
         break;
+      case "bitbucket-reconnect": {
+        const acc = findAccount(id);
+        if (acc) void openBitbucketConnect(target, acc.login ?? undefined);
+        break;
+      }
       case "repos":
         if (id) ctx.navigate(`repos?profile=${encodeURIComponent(id)}`);
         break;
@@ -668,6 +807,8 @@ export const mount: MountView = (root, ctx) => {
       if (img instanceof HTMLImageElement && img.classList.contains("accounts-avatar-img")) {
         failedAvatars.add(img.getAttribute("src") ?? "");
         img.remove();
+        const card = img.closest<HTMLElement>("[data-card]");
+        if (card?.dataset.card) updateCard(card.dataset.card);
       }
     },
     true

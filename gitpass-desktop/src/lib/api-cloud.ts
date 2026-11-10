@@ -28,7 +28,15 @@ export type CloudRepo = {
   local_path: string | null;
 };
 
-export type ClonePhase = "starting" | "counting" | "compressing" | "receiving" | "resolving" | "checkout" | "binding";
+export type ClonePhase =
+  | "starting"
+  | "creating"
+  | "counting"
+  | "compressing"
+  | "receiving"
+  | "resolving"
+  | "checkout"
+  | "binding";
 
 /** Payload do evento `gitpass-clone-progress`. */
 export type CloneProgressPayload = {
@@ -39,6 +47,16 @@ export type CloneProgressPayload = {
 
 export const CLONE_PROGRESS_EVENT = "gitpass-clone-progress";
 
+export type PrInboxItem = {
+  number: number;
+  title: string;
+  html_url: string;
+  repo_full_name: string;
+  updated_at: string;
+  kind: "review_requested" | "authored" | string;
+  state: string;
+};
+
 export const apiCloud = {
   /** Repositórios da conta com permissões; `local_binding_id` preenchido quando já há clone vinculado. */
   repos: (accountId: string) => invoke<CloudRepo[]>("cloud_repos", { accountId }),
@@ -48,6 +66,25 @@ export const apiCloud = {
    */
   clone: (accountId: string, fullName: string, destParent?: string | null) =>
     invoke<string>("cloud_clone", { accountId, fullName, destParent: destParent ?? null }),
+  /**
+   * Cria um repositório vazio no GitHub (conta pessoal) e clona na pasta escolhida.
+   * `repoName` é só o nome do repositório, sem `dono/`.
+   */
+  createAndClone: (
+    accountId: string,
+    repoName: string,
+    isPrivate: boolean,
+    description?: string | null,
+    destParent?: string | null
+  ) =>
+    invoke<string>("cloud_create_and_clone", {
+      accountId,
+      repoName,
+      private: isPrivate,
+      description: description ?? null,
+      destParent: destParent ?? null,
+    }),
   /** Seletor de pastas nativo; `null` se o utilizador cancelar. */
   chooseFolder: () => invoke<string | null>("cloud_choose_folder"),
+  prInbox: (accountId: string) => invoke<PrInboxItem[]>("cloud_pr_inbox", { accountId }),
 };

@@ -6,6 +6,7 @@ import {
   CLONE_PROGRESS_EVENT,
   type CloneProgressPayload,
   type CloudRepo,
+  type PrInboxItem,
 } from "../lib/api-cloud";
 import { errMessage, esc, relativeTime, shortenPath, showToast, withBusy } from "../lib/dom";
 import { errorView } from "../lib/errors";
@@ -14,6 +15,7 @@ import { profileChip, profileFamily, profileName } from "../lib/profile";
 import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
 import { drawerRoute } from "./repo-detail";
 import { plural } from "./repos-ui";
+import { openCloudCreateOverlay } from "./cloud-create-overlay";
 
 const PAGE_SIZE = 50;
 
@@ -28,6 +30,14 @@ type RepoState =
 type CloneJob = { accountId: string; fullName: string; phase: string; percent: number };
 
 type Popover = { key: string; accountId: string; fullName: string; parent: string | null };
+
+type CreateDraft = {
+  accountId: string;
+  repoName: string;
+  isPrivate: boolean;
+  description: string;
+  parent: string | null;
+};
 
 // ---------- Estado partilhado entre montagens ----------
 // A clonagem continua se o utilizador sair desta vista; ao voltar, o progresso reaparece.
@@ -59,6 +69,7 @@ function ensureProgressListener(): void {
 
 const PHASE_LABEL: Record<string, string> = {
   starting: "Iniciando…",
+  creating: "Criando no GitHub…",
   counting: "Contando objetos",
   compressing: "Comprimindo objetos",
   receiving: "Recebendo objetos",
@@ -70,9 +81,10 @@ const PHASE_LABEL: Record<string, string> = {
 /** Intervalo [início, fim] de cada fase no progresso global (as fases do Git são sequenciais). */
 const PHASE_SPAN: Record<string, [number, number]> = {
   starting: [0, 0],
-  counting: [0, 5],
-  compressing: [5, 10],
-  receiving: [10, 80],
+  creating: [0, 2],
+  counting: [2, 7],
+  compressing: [7, 12],
+  receiving: [12, 80],
   resolving: [80, 95],
   checkout: [95, 100],
   binding: [100, 100],
@@ -118,13 +130,23 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   let profileFilter = initialQuery?.get("profile") ?? "all";
   let popover: Popover | null = null;
   let focusPopover = false;
+  let createOpen = false;
+  let createDraft: CreateDraft = { accountId: "", repoName: "", isPrivate: false, description: "", parent: null };
+  let focusCreate = false;
   let generation = 0;
   let alive = true;
+  let cloudMode: "repos" | "prs" = "repos";
+  const prByAccount = new Map<string, { status: "loading" | "ok" | "error"; items: PrInboxItem[]; message?: string }>();
 
   root.innerHTML = `
     <div class="page-head">
       <div class="heading-group"><h1>Na nuvem</h1><p>Repositórios disponíveis nas suas contas GitHub.</p></div>
-      <button type="button" class="icon-button" id="cloud-refresh" aria-label="Atualizar a lista" title="Atualizar">${icon("refresh")}</button>
+      <div class="page-actions">
+        <button type="button" class="control primary" data-cloud-mode="repos">${icon("repo")}<span>Repositórios</span></button>
+        <button type="button" class="control" data-cloud-mode="prs">${icon("pullRequest")}<span>Pull requests</span></button>
+        <button type="button" class="control primary" id="cloud-create-open" hidden>${icon("plus")}<span>Criar repositório</span></button>
+        <button type="button" class="icon-button" id="cloud-refresh" aria-label="Atualizar a lista" title="Atualizar">${icon("refresh")}</button>
+      </div>
     </div>
     <div class="filterbar" id="cloud-toolbar" role="search" aria-label="Filtros da nuvem" hidden>
       <label class="search">${icon("search")}<span class="sr-only">Buscar na nuvem</span>
@@ -153,6 +175,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   const writeBtn = root.querySelector<HTMLButtonElement>("#cloud-write")!;
   const countEl = root.querySelector<HTMLElement>("#cloud-count")!;
   const body = root.querySelector<HTMLElement>("#cloud-body")!;
+  const createOpenBtn = root.querySelector<HTMLButtonElement>("#cloud-create-open")!;
 
   // ---------- Dados ----------
 
@@ -191,6 +214,29 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
    * `refetch = false` (mudanças de configuração) só vai ao GitHub por contas sem lista válida: os vínculos
    * novos chegam por `api.bindings()` e `clonedKeys`, sem repetir centenas de pedidos à API.
    */
+  async function loadPrInbox(): Promise<void> {
+    const gen = generation;
+    for (const a of accounts.filter((x) => x.has_token)) {
+      prByAccount.set(a.id, { status: "loading", items: [] });
+    }
+    renderBody();
+    await Promise.all(
+      accounts
+        .filter((a) => a.has_token)
+        .map(async (a) => {
+          try {
+            const items = await apiCloud.prInbox(a.id);
+            if (!alive || gen !== generation) return;
+            prByAccount.set(a.id, { status: "ok", items });
+          } catch (e) {
+            if (!alive || gen !== generation) return;
+            prByAccount.set(a.id, { status: "error", items: [], message: errMessage(e) });
+          }
+        })
+    );
+    renderBody();
+  }
+
   async function loadAll(refetch = true): Promise<void> {
     const gen = ++generation;
     try {
@@ -224,6 +270,133 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   function destLabel(p: Popover): string {
     const [owner, name] = p.fullName.split("/");
     return p.parent ? `${shortenPath(p.parent).replace(/\/$/, "")}/${name}` : `~/GitHub/${owner}/${name}`;
+  }
+
+  function tokenizedAccounts(): AccountRow[] {
+    return accounts.filter((a) => a.has_token);
+  }
+
+  function defaultCreateAccountId(): string {
+    return tokenizedAccounts()[0]?.id ?? "";
+  }
+
+  function accountSelectLabel(a: AccountRow): string {
+    const parts = [profileName(a)];
+    if (a.login) parts.push(`@${a.login}`);
+    const mail = a.email?.trim();
+    if (mail) parts.push(mail);
+    return parts.join(" · ");
+  }
+
+  function createDestLabel(d: CreateDraft): string {
+    const acc = accounts.find((a) => a.id === d.accountId);
+    const login = acc?.login ?? "conta";
+    const name = d.repoName.trim() || "repositorio";
+    return d.parent ? `${shortenPath(d.parent).replace(/\/$/, "")}/${name}` : `~/GitHub/${login}/${name}`;
+  }
+
+  function createPanelHtml(d: CreateDraft): string {
+    const opts = tokenizedAccounts();
+    const acc = opts.find((a) => a.id === d.accountId) ?? opts[0];
+    const accountId = acc?.id ?? "";
+    const login = acc?.login ?? "—";
+    return `<section class="surface cloud-create" role="dialog" aria-labelledby="cloud-create-title">
+      <h2 class="section-title" id="cloud-create-title">Criar repositório e projeto</h2>
+      <p class="caption muted">O GitPass cria o repositório no GitHub com o perfil escolhido, clona na pasta e vincula à conta.</p>
+      <div class="cloud-create-fields">
+        <label class="cloud-field">
+          <span class="cloud-field-label">Conta GitHub</span>
+          <span class="select-wrap cloud-field-select">
+            <select id="cloud-create-account" ${opts.length < 2 ? "disabled" : ""} aria-label="Conta GitHub">
+              ${opts
+                .map(
+                  (a) =>
+                    `<option value="${esc(a.id)}"${a.id === accountId ? " selected" : ""}>${esc(accountSelectLabel(a))}</option>`
+                )
+                .join("")}
+            </select>
+          </span>
+        </label>
+        <label class="cloud-field">
+          <span class="cloud-field-label">Nome do repositório</span>
+          <input type="text" class="input" id="cloud-create-name" autocomplete="off" spellcheck="false" placeholder="meu-projeto" value="${esc(d.repoName)}" />
+        </label>
+        <label class="cloud-field">
+          <span class="cloud-field-label">Descrição <span class="caption muted">(opcional)</span></span>
+          <input type="text" class="input" id="cloud-create-desc" autocomplete="off" value="${esc(d.description)}" maxlength="300" placeholder="Resumo curto do projeto" />
+        </label>
+        <label class="repos-check cloud-create-private" for="cloud-create-private">
+          <input type="checkbox" id="cloud-create-private"${d.isPrivate ? " checked" : ""} />
+          <span>
+            <strong>Repositório privado</strong>
+            <span class="caption muted">Só você e quem convidar veem no GitHub.</span>
+          </span>
+        </label>
+        <div class="cloud-field">
+          <span class="cloud-field-label">Pasta do projeto</span>
+          <div class="cloud-dest" title="${esc(createDestLabel({ ...d, accountId }))}">${icon("folder")}<code class="truncate">${esc(createDestLabel({ ...d, accountId }))}</code></div>
+          <div class="cloud-popover-choose">
+            <button type="button" class="control" data-create-choose>${icon("folder")}<span>Escolher pasta…</span></button>
+            ${d.parent ? `<button type="button" class="control ghost" data-create-reset>Usar a pasta padrão</button>` : ""}
+          </div>
+        </div>
+        <p class="caption muted">Será criado como <code class="mono">${esc(login)}/<span id="cloud-create-preview">${esc(d.repoName.trim() || "…")}</span></code> na sua conta pessoal.</p>
+      </div>
+      <div class="cloud-create-actions">
+        <button type="button" class="control ghost" data-create-cancel>Cancelar</button>
+        <button type="button" class="control primary" data-create-confirm>${icon("clone")}<span>Criar e clonar</span></button>
+      </div>
+    </section>`;
+  }
+
+  function readCreateDraftFromDom(): CreateDraft | null {
+    const accountEl = body.querySelector<HTMLSelectElement>("#cloud-create-account");
+    const nameEl = body.querySelector<HTMLInputElement>("#cloud-create-name");
+    if (!accountEl || !nameEl) return null;
+    const priv = body.querySelector<HTMLInputElement>("#cloud-create-private");
+    const desc = body.querySelector<HTMLInputElement>("#cloud-create-desc");
+    return {
+      accountId: accountEl.value,
+      repoName: nameEl.value,
+      isPrivate: !!priv?.checked,
+      description: desc?.value.trim() ?? "",
+      parent: createDraft.parent,
+    };
+  }
+
+  async function startCreate(d: CreateDraft): Promise<void> {
+    const name = d.repoName.trim();
+    if (!name) return showToast("Informe o nome do repositório.", "err");
+    const acc = accounts.find((a) => a.id === d.accountId);
+    if (!acc?.has_token) return showToast("Conecte a conta em «Contas».", "err");
+    const login = acc.login ?? "owner";
+    const fullName = `${login}/${name}`;
+    const key = rowKey(d.accountId, fullName);
+    if (activeClones.has(key)) return;
+
+    const overlay = openCloudCreateOverlay({
+      fullName,
+      destLabel: createDestLabel(d),
+    });
+    const started = Date.now();
+    activeClones.set(key, { accountId: d.accountId, fullName, phase: "creating", percent: 0 });
+    createOpen = false;
+    renderBody();
+
+    try {
+      const path = await apiCloud.createAndClone(d.accountId, name, d.isPrivate, d.description || null, d.parent);
+      await overlay.waitMinimumTime(started);
+      clonedKeys.add(key);
+      ctx.notifyDataChanged();
+      if (acc) void fetchRepos(acc, generation, true);
+      await overlay.showSuccess(path);
+      showToast(`${fullName} criado com sucesso.`, "ok");
+    } catch (e) {
+      await overlay.showError(errMessage(e));
+    } finally {
+      activeClones.delete(key);
+      sink?.render();
+    }
   }
 
   async function startClone(p: Popover): Promise<void> {
@@ -373,6 +546,38 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   }
 
   function renderBody(): void {
+    toolbar.hidden = cloudMode === "prs";
+    if (cloudMode === "prs") {
+      countEl.textContent = "";
+      if (!loadedAccounts) {
+        body.innerHTML = `<div class="list-frame" aria-busy="true">${'<div class="cloud-sk-row"><span class="skeleton"></span></div>'.repeat(3)}</div>`;
+        return;
+      }
+      const blocks = accounts
+        .filter((a) => a.has_token)
+        .map((a) => {
+          const st = prByAccount.get(a.id);
+          if (!st || st.status === "loading") {
+            return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3><p class="caption muted">Carregando…</p></section>`;
+          }
+          if (st.status === "error") {
+            return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3><p class="err">${esc(st.message ?? "Erro")}</p></section>`;
+          }
+          if (!st.items.length) {
+            return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3><p class="caption muted">Nenhum PR em aberto para revisar ou aguardando resposta.</p></section>`;
+          }
+          return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3><ul class="cloud-pr-list">${st.items
+            .map(
+              (pr) =>
+                `<li><a href="${esc(pr.html_url)}" target="_blank" rel="noopener">${icon("external")}<span><strong>${esc(pr.title)}</strong><span class="caption muted">${esc(
+                  pr.repo_full_name
+                )} · ${pr.kind === "review_requested" ? "pedido de revisão" : "autor"} · ${esc(relativeTime(pr.updated_at))}</span></span></a></li>`
+            )
+            .join("")}</ul></section>`;
+        });
+      body.innerHTML = blocks.join("") || `<section class="surface"><p class="caption muted">Conecte uma conta para ver pull requests.</p></section>`;
+      return;
+    }
     if (!loadedAccounts) {
       countEl.textContent = "";
       body.innerHTML = `<div class="list-frame" aria-busy="true"><span class="sr-only">Carregando…</span>${'<div class="cloud-sk-row"><span class="skeleton"></span></div>'.repeat(4)}</div>`;
@@ -418,10 +623,20 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     } else {
       listHtml = `<div class="list-frame empty"><strong>Nenhum repositório encontrado</strong>Experimente outra busca ou ajuste os filtros.</div>`;
     }
-    body.innerHTML = `${notices}${loadingNote}${listHtml}`;
+    if (createOpen) {
+      const synced = readCreateDraftFromDom();
+      if (synced) createDraft = synced;
+    }
+    const createBlock = createOpen && cloudMode === "repos" && tokenizedAccounts().length ? createPanelHtml(createDraft) : "";
+    body.innerHTML = `${createBlock}${notices}${loadingNote}${listHtml}`;
+    createOpenBtn.hidden = cloudMode !== "repos" || tokenizedAccounts().length === 0;
     if (focusPopover) {
       focusPopover = false;
       body.querySelector<HTMLElement>("[data-pop-confirm]")?.focus();
+    }
+    if (focusCreate) {
+      focusCreate = false;
+      body.querySelector<HTMLInputElement>("#cloud-create-name")?.focus();
     }
   }
 
@@ -461,7 +676,24 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     renderBody();
   });
 
+  createOpenBtn.addEventListener("click", () => {
+    if (!tokenizedAccounts().length) return;
+    popover = null;
+    createOpen = true;
+    createDraft = {
+      accountId: profileFilter !== "all" ? profileFilter : defaultCreateAccountId(),
+      repoName: "",
+      isPrivate: false,
+      description: "",
+      parent: null,
+    };
+    focusCreate = true;
+    renderBody();
+  });
+
   let choosing = false;
+  let choosingCreate = false;
+  let createBusy = false;
 
   body.addEventListener("click", (ev) => {
     const el = ev.target as HTMLElement;
@@ -535,19 +767,84 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     }
     if (el.closest("[data-pop-confirm]") && popover) {
       void startClone(popover);
+      return;
+    }
+
+    if (el.closest("[data-create-cancel]")) {
+      createOpen = false;
+      renderBody();
+      createOpenBtn.focus();
+      return;
+    }
+    if (el.closest("[data-create-reset]")) {
+      createDraft.parent = null;
+      renderBody();
+      return;
+    }
+    const createChoose = el.closest<HTMLButtonElement>("[data-create-choose]");
+    if (createChoose && createOpen && !choosingCreate) {
+      choosingCreate = true;
+      const parentBefore = createDraft.parent;
+      const synced = readCreateDraftFromDom();
+      if (synced) createDraft = synced;
+      void withBusy(createChoose, "Escolhendo…", () => apiCloud.chooseFolder())
+        .then((folder) => {
+          if (folder && alive) createDraft.parent = folder;
+          else if (alive) createDraft.parent = parentBefore;
+        })
+        .catch((e) => showToast(errMessage(e)))
+        .finally(() => {
+          choosingCreate = false;
+          if (alive && createOpen) {
+            focusCreate = true;
+            renderBody();
+          }
+        });
+      return;
+    }
+    if (el.closest("[data-create-confirm]") && createOpen && !createBusy) {
+      const d = readCreateDraftFromDom();
+      if (!d) return;
+      createBusy = true;
+      const btn = el.closest<HTMLButtonElement>("[data-create-confirm]");
+      if (btn) btn.disabled = true;
+      void startCreate(d).finally(() => {
+        createBusy = false;
+        renderBody();
+      });
+    }
+  });
+
+  body.addEventListener("input", (ev) => {
+    const t = ev.target as HTMLElement;
+    if (!createOpen) return;
+    if (t.id === "cloud-create-name") {
+      const preview = body.querySelector("#cloud-create-preview");
+      if (preview) preview.textContent = (t as HTMLInputElement).value.trim() || "…";
     }
   });
 
   // Fechar o popover: clique fora ou Escape.
   const onDocClick = (ev: MouseEvent) => {
-    if (!popover) return;
     const t = ev.target as HTMLElement | null;
     if (!t || !t.isConnected) return;
-    if (t.closest(".cloud-popover") || t.closest("[data-clone-open]")) return;
-    popover = null;
-    renderBody();
+    if (popover) {
+      if (t.closest(".cloud-popover") || t.closest("[data-clone-open]")) return;
+      popover = null;
+      renderBody();
+    }
+    if (createOpen && !t.closest(".cloud-create") && !t.closest("#cloud-create-open")) {
+      createOpen = false;
+      renderBody();
+    }
   };
   const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === "Escape" && createOpen) {
+      createOpen = false;
+      renderBody();
+      createOpenBtn.focus();
+      return;
+    }
     if (ev.key === "Escape" && popover) {
       const key = popover.key;
       popover = null;
@@ -558,8 +855,33 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   document.addEventListener("click", onDocClick);
   document.addEventListener("keydown", onKey);
 
+  const syncModeButtons = (): void => {
+    root.querySelectorAll<HTMLButtonElement>("[data-cloud-mode]").forEach((btn) => {
+      btn.classList.toggle("primary", btn.dataset.cloudMode === cloudMode);
+    });
+    const sub = root.querySelector<HTMLElement>(".heading-group p");
+    if (sub) {
+      sub.textContent =
+        cloudMode === "repos"
+          ? "Repositórios disponíveis nas suas contas GitHub."
+          : "Pull requests abertos para revisar ou que você abriu.";
+    }
+  };
+
+  root.addEventListener("click", (e) => {
+    const modeBtn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-cloud-mode]");
+    if (!modeBtn?.dataset.cloudMode) return;
+    const mode = modeBtn.dataset.cloudMode as "repos" | "prs";
+    if (mode === cloudMode) return;
+    cloudMode = mode;
+    syncModeButtons();
+    if (mode === "prs") void loadPrInbox();
+    else renderBody();
+  });
+
   refreshBtn.addEventListener("click", () => {
-    void withBusy(refreshBtn, "", loadAll).catch((e) => showToast(errMessage(e)));
+    const job = cloudMode === "prs" ? loadPrInbox : () => loadAll();
+    void withBusy(refreshBtn, "", job).catch((err) => showToast(errMessage(err)));
   });
 
   ctx.onRoute((_p, q) => {

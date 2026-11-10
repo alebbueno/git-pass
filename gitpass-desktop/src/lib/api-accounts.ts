@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DeviceCodeStart } from "./api";
+import type { DeviceCodeStart, OauthConfigStatus } from "./api";
 
 export type AccountInfo = {
   id: string;
+  host: "github" | "bitbucket";
   login: string | null;
   label: string | null;
   name: string | null;
@@ -70,4 +71,13 @@ export const accountsApi = {
   setEmail: (accountId: string, email: string) => invoke<IdentityUpdate>("accounts_set_email", { accountId, email }),
   remove: (accountId: string) => invoke<{ removed_bindings: number }>("accounts_remove", { accountId }),
   check: (accountId: string) => invoke<AccountCheck>("accounts_check", { accountId }),
+  bitbucketConnect: (username: string, appPassword: string, label?: string | null) =>
+    invoke<{ account: AccountInfo; message: string }>("accounts_bitbucket_connect", {
+      username,
+      appPassword,
+      label: label ?? null,
+    }),
+  bitbucketOauthStatus: () => invoke<OauthConfigStatus>("bitbucket_oauth_config_status"),
+  bitbucketOauthConnect: () =>
+    invoke<{ account: AccountInfo; message: string }>("accounts_bitbucket_oauth_connect"),
 };

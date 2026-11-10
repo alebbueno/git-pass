@@ -6,23 +6,35 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::git_auth::{apply_git_env, for_each_line, git_program, redact, spawn_error};
+use crate::git_auth::{apply_git_env, apply_git_env_bitbucket, for_each_line, git_program, redact, spawn_error};
 pub use crate::git_auth::{parse_progress_line, GitProgress as CloneProgress};
+
+fn valid_repo_segment(seg: &str) -> bool {
+    !seg.is_empty()
+        && seg != "."
+        && seg != ".."
+        && seg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Validates a repository name (GitHub segment rules, without `owner/`).
+pub fn validate_repo_name(name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if !valid_repo_segment(name) {
+        return Err(format!(
+            "Nome de repositório inválido: `{name}`. Use letras, números, hífen, sublinhado ou ponto."
+        ));
+    }
+    Ok(())
+}
 
 /// Splits `owner/repo`, rejecting anything that could escape the destination folder.
 pub fn split_full_name(full_name: &str) -> Result<(String, String), String> {
-    fn valid(seg: &str) -> bool {
-        !seg.is_empty()
-            && seg != "."
-            && seg != ".."
-            && seg
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    }
     let (owner, repo) = full_name
         .split_once('/')
         .ok_or_else(|| format!("Nome de repositório inválido: `{full_name}` (o formato é dono/repositório)."))?;
-    if !valid(owner) || !valid(repo) {
+    if !valid_repo_segment(owner) || !valid_repo_segment(repo) {
         return Err(format!("Nome de repositório inválido: `{full_name}`."));
     }
     Ok((owner.to_string(), repo.to_string()))
@@ -122,8 +134,12 @@ fn is_github_https(url: &str) -> bool {
     url.starts_with("https://github.com/") && !url.contains('@') && !url.contains(char::is_whitespace)
 }
 
+fn is_bitbucket_https(url: &str) -> bool {
+    url.starts_with("https://bitbucket.org/") && !url.contains('@') && !url.contains(char::is_whitespace)
+}
+
 /// Turns raw `git clone` stderr into an actionable pt-BR message.
-pub fn friendly_clone_error(stderr: &str) -> String {
+fn friendly_clone_error_legacy(stderr: &str) -> String {
     let lower = stderr.to_lowercase();
     let last = stderr
         .lines()
@@ -158,17 +174,54 @@ pub fn friendly_clone_error(stderr: &str) -> String {
 ///
 /// `dest_dir` is the final repository folder (e.g. `~/GitHub/owner/repo`); missing parents are created. It must not
 /// exist yet (an empty folder is accepted). `progress_cb` is called when the phase or percentage changes.
+/// Clones a public Git hosting URL with a GitHub OAuth token.
 pub fn clone_repo(
     token: &str,
     clone_url: &str,
     dest_dir: &Path,
     mut progress_cb: impl FnMut(CloneProgress),
 ) -> Result<(), String> {
-    if !is_github_https(clone_url) {
-        return Err(format!("Endereço de clonagem não aceito: `{clone_url}` (só https://github.com/…)."));
+    clone_repo_inner(clone_url, dest_dir, &mut progress_cb, |cmd| apply_git_env(cmd, Some(token)), token)
+}
+
+/// Clones Bitbucket Cloud over HTTPS with API token ou OAuth (nunca grava credenciais no `origin`).
+pub fn clone_bitbucket_repo(
+    username: &str,
+    bundle: &crate::secrets::BitbucketTokenBundle,
+    clone_url: &str,
+    dest_dir: &Path,
+    mut progress_cb: impl FnMut(CloneProgress),
+) -> Result<(), String> {
+    let token = bundle.app_password.trim();
+    if username.trim().is_empty() || token.is_empty() {
+        return Err("Esta conta Bitbucket não tem acesso salvo. Conecte-a em «Contas».".to_string());
     }
-    if token.trim().is_empty() {
-        return Err("Esta conta não tem acesso salvo. Conecte a conta do GitHub em «Contas».".to_string());
+    let via_oauth = bundle.via_oauth;
+    clone_repo_inner(
+        clone_url,
+        dest_dir,
+        &mut progress_cb,
+        move |cmd| apply_git_env_bitbucket(cmd, username, token, via_oauth),
+        token,
+    )
+}
+
+fn clone_repo_inner(
+    clone_url: &str,
+    dest_dir: &Path,
+    progress_cb: &mut impl FnMut(CloneProgress),
+    apply_auth: impl FnOnce(&mut Command),
+    redact_secret: &str,
+) -> Result<(), String> {
+    let github = is_github_https(clone_url);
+    let bitbucket = is_bitbucket_https(clone_url);
+    if !github && !bitbucket {
+        return Err(format!(
+            "Endereço de clonagem não aceito: `{clone_url}` (use https://github.com/… ou https://bitbucket.org/…)."
+        ));
+    }
+    if redact_secret.trim().is_empty() {
+        return Err("Esta conta não tem acesso salvo. Conecte a conta em «Contas».".to_string());
     }
 
     if std::fs::symlink_metadata(dest_dir).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -196,7 +249,7 @@ pub fn clone_repo(
 
     let mut cmd = Command::new(git_program());
     cmd.args(["clone", "--progress", "--", clone_url]).arg(dest_dir);
-    apply_git_env(&mut cmd, Some(token));
+    apply_auth(&mut cmd);
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -226,8 +279,34 @@ pub fn clone_repo(
     if status.success() {
         Ok(())
     } else {
-        let text = redact(&other_lines.join("\n"), token);
-        Err(friendly_clone_error(&text))
+        let text = redact(&other_lines.join("\n"), redact_secret);
+        Err(friendly_clone_error(&text, bitbucket))
+    }
+}
+
+fn friendly_clone_error(stderr: &str, bitbucket: bool) -> String {
+    if bitbucket {
+        return friendly_bitbucket_clone_error(stderr);
+    }
+    friendly_clone_error_legacy(stderr)
+}
+
+fn friendly_bitbucket_clone_error(stderr: &str) -> String {
+    let lower = stderr.to_lowercase();
+    let last = stderr
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("erro desconhecido");
+    if lower.contains("not found") || lower.contains("repository does not exist") {
+        "Repositório não encontrado, ou esta conta não tem acesso. Confira as permissões no Bitbucket.".to_string()
+    } else if lower.contains("authentication") || lower.contains("401") || lower.contains("403") {
+        "A autenticação no Bitbucket falhou. Reconecte a conta em «Contas» e tente de novo.".to_string()
+    } else if lower.contains("could not resolve host") || lower.contains("timed out") {
+        "Sem conexão com o Bitbucket. Veja se você está online e tente de novo.".to_string()
+    } else {
+        format!("Não foi possível clonar: {last}")
     }
 }
 
@@ -302,11 +381,19 @@ mod tests {
     }
 
     #[test]
+    fn validate_repo_name_rejects_invalid() {
+        assert!(validate_repo_name("my-app").is_ok());
+        assert!(validate_repo_name("..").is_err());
+        assert!(validate_repo_name("").is_err());
+        assert!(validate_repo_name("bad name").is_err());
+    }
+
+    #[test]
     fn errors_are_friendly() {
-        assert!(friendly_clone_error("remote: Repository not found.\nfatal: repository 'x' not found").contains("não encontrado"));
-        assert!(friendly_clone_error("fatal: Authentication failed for 'https://github.com/o/r.git/'").contains("autenticação"));
-        assert!(friendly_clone_error("fatal: unable to access: Could not resolve host: github.com").contains("conexão"));
-        assert!(friendly_clone_error("something odd").starts_with("Não foi possível clonar: something odd"));
+        assert!(friendly_clone_error_legacy("remote: Repository not found.\nfatal: repository 'x' not found").contains("não encontrado"));
+        assert!(friendly_clone_error_legacy("fatal: Authentication failed for 'https://github.com/o/r.git/'").contains("autenticação"));
+        assert!(friendly_clone_error_legacy("fatal: unable to access: Could not resolve host: github.com").contains("conexão"));
+        assert!(friendly_clone_error_legacy("something odd").starts_with("Não foi possível clonar: something odd"));
     }
 
     /// Under `/tmp`: macOS's per-user temp dir lives in `/private/var`, which clones refuse.

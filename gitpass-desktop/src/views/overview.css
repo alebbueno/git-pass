@@ -7,12 +7,140 @@
   border-radius: 7px;
 }
 
-.home .home-recent {
-  margin-top: 0;
-}
 .home .home-attention + .home-onboarding,
 .home .stats + .home-onboarding {
   margin-bottom: 24px;
+}
+
+/* Respiro entre stats/avisos/onboarding e a primeira seção do Painel (24px ou 19px do bloco anterior) */
+.home .stats + .home-send-section,
+.home .home-attention + .home-send-section,
+.home .home-onboarding + .home-send-section,
+.home .stats + .home-recent,
+.home .home-attention + .home-recent,
+.home .home-onboarding + .home-recent {
+  margin-top: 0;
+}
+.home .home-send-section + .home-recent {
+  margin-top: 26px;
+}
+
+/* Único aviso compacto: commits para enviar (fundo escuro) */
+.home-send-alert-panel {
+  --home-send-ink: #f1f2ff;
+  --home-send-muted: #b7bdd6;
+  --home-send-dim: #9ca5c5;
+  --home-send-line: #3a4464;
+  --home-send-inset: #1a2038;
+  --home-send-surface: #222842;
+  --home-send-warn: #ffcf8e;
+  --home-send-accent: #beb0ff;
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  border: 1px solid #3f4d75;
+  background: linear-gradient(155deg, #161a2f 0%, #11162b 48%, #0f1528 100%);
+  box-shadow:
+    0 14px 36px #18122a2e,
+    inset 0 1px #ffffff14;
+  color: var(--home-send-ink);
+}
+.home-send-alert-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 2px 4px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--home-send-line) 75%, transparent);
+}
+.home-send-alert-copy {
+  flex: 1;
+  min-width: min(220px, 100%);
+  display: grid;
+  gap: 3px;
+}
+.home-send-alert-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--home-send-warn);
+}
+.home-send-alert-kicker .icon {
+  color: var(--home-send-warn);
+}
+.home-send-alert-title {
+  margin: 0;
+  color: var(--home-send-ink);
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.home-send-alert-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--home-send-muted);
+  max-width: 48ch;
+}
+.home-send-alert-link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--home-send-accent);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.home-send-alert-link:hover {
+  background: #ffffff0f;
+}
+.home-send-alert-list {
+  margin: 0;
+  padding: 6px 2px 2px;
+  list-style: none;
+}
+.home-send-alert-list .home-send-row {
+  min-height: 48px;
+  color: var(--home-send-ink);
+  border-radius: 10px;
+}
+.home-send-alert-list .home-send-row:hover {
+  background: var(--home-send-inset);
+}
+.home-send-alert-list .home-send-meta {
+  color: var(--home-send-dim);
+  font-size: 11px;
+}
+.home-send-alert-list .home-send-meta code {
+  color: var(--home-send-muted);
+}
+.home-send-alert-list .home-send-count {
+  color: var(--home-send-warn);
+  background: #ffcf8e1f;
+  border: 1px solid #ffcf8e4d;
+}
+.home-send-alert-list .project-chevron {
+  color: var(--home-send-dim);
+}
+.home-send-alert-list .pill {
+  filter: saturate(0.95);
+}
+.project-row.has-pending-push {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+.project-row.has-pending-push:hover {
+  background: var(--accent-soft);
 }
 .home-row-sk {
   min-height: 63px;
@@ -102,6 +230,13 @@
 }
 .home-onboarding .row-actions {
   margin-top: 12px;
+}
+
+.home-tour-teaser {
+  margin-bottom: 24px;
+}
+.home-tour-teaser > .caption {
+  margin: -4px 0 0;
 }
 
 /* Colunas de baixo */

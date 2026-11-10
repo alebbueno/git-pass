@@ -1,0 +1,147 @@
+/* Tour guiado pelos recursos — diálogo sobre o workspace. */
+
+.feature-tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5);
+  background: color-mix(in srgb, var(--backdrop, #0a0c10) 62%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.feature-tour {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: min(560px, 100%);
+  max-height: min(88vh, 640px);
+  padding: var(--sp-5) var(--sp-5) var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2xl);
+  background: var(--surface-elevated, var(--surface));
+  box-shadow: var(--surface-shadow-lg, var(--surface-shadow));
+}
+
+.feature-tour-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.feature-tour-kicker {
+  margin: 0 0 var(--sp-1);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.feature-tour-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.feature-tour-body {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.feature-tour-card {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+  padding: var(--sp-4);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--line);
+  background: var(--surface-sheen, var(--surface));
+}
+
+.feature-tour-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-lg);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.feature-tour-tips {
+  margin: var(--sp-2) 0 0;
+  padding-left: 1.15em;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.feature-tour-tips li + li {
+  margin-top: var(--sp-1);
+}
+
+.feature-tour-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.feature-tour-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.feature-tour-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--line-strong, var(--line));
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.feature-tour-dot[aria-current="step"] {
+  transform: scale(1.25);
+  background: var(--accent);
+}
+
+.feature-tour-dot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.feature-tour-step-label {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.feature-tour-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+
+.feature-tour-foot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+}

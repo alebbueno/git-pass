@@ -49,6 +49,12 @@ pub fn load_oauth_env_file_if_needed() -> Result<(), String> {
         if k == "GITHUB_OAUTH_CLIENT_SECRET" && !v.is_empty() {
             std::env::set_var("GITHUB_OAUTH_CLIENT_SECRET", v);
         }
+        if k == "BITBUCKET_OAUTH_CLIENT_ID" && !v.is_empty() {
+            std::env::set_var("BITBUCKET_OAUTH_CLIENT_ID", v);
+        }
+        if k == "BITBUCKET_OAUTH_CLIENT_SECRET" && !v.is_empty() {
+            std::env::set_var("BITBUCKET_OAUTH_CLIENT_SECRET", v);
+        }
     }
     Ok(())
 }
@@ -318,7 +324,7 @@ fn token_endpoint_http_error(what: &str, status: u16, body: &str) -> OauthError 
     OauthError::Msg(format!("{code}: {what} HTTP {status}"))
 }
 
-fn random_string(len: usize) -> String {
+pub(crate) fn random_string(len: usize) -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     let mut rng = rand::thread_rng();
     (0..len)
@@ -579,7 +585,7 @@ fn fetch_github_login(client: &Client, token: &str) -> Result<String, OauthError
     Ok(u.login)
 }
 
-fn html_escape(s: &str) -> String {
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

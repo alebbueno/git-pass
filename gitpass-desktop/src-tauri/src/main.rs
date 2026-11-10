@@ -2,15 +2,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cmd_accounts;
+mod cmd_bitbucket;
 mod cmd_branches;
 mod cmd_cloud;
 mod cmd_integration;
 mod cmd_push;
 mod cmd_repos;
+mod cmd_rules;
+mod cmd_etapas;
 mod cmd_system;
+mod cmd_ai;
 #[cfg(test)]
 mod contract_tests;
+mod dock;
 mod focus;
+mod pending_alert;
 mod tray;
 
 use std::io::{BufRead, BufReader, Write};
@@ -70,6 +76,30 @@ fn oauth_config_status() -> OauthConfigStatus {
             ok: false,
             client_id_configured: false,
             message: "A conexão com o GitHub não está disponível nesta versão do app.".to_string(),
+            oauth_env_path,
+        },
+    }
+}
+
+#[tauri::command]
+fn bitbucket_oauth_config_status() -> OauthConfigStatus {
+    use gitpass_core::oauth_bitbucket::resolve_bitbucket_oauth_client;
+    let oauth_env_path = match gitpass_core::app_support_dir() {
+        Ok(d) => d.join("oauth.env").display().to_string(),
+        Err(_) => "(pasta de dados desconhecida)".to_string(),
+    };
+    let _ = load_oauth_env_file_if_needed();
+    match resolve_bitbucket_oauth_client() {
+        Ok(_) => OauthConfigStatus {
+            ok: true,
+            client_id_configured: true,
+            message: "OAuth Bitbucket disponível (navegador).".to_string(),
+            oauth_env_path,
+        },
+        Err(msg) => OauthConfigStatus {
+            ok: false,
+            client_id_configured: false,
+            message: msg,
             oauth_env_path,
         },
     }
@@ -202,6 +232,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_config_path,
             oauth_config_status,
+            bitbucket_oauth_config_status,
             list_bindings,
             repo_commit_log,
             ipc_ping_gitpassd,
@@ -215,8 +246,14 @@ fn main() {
             cmd_accounts::accounts_set_label,
             cmd_accounts::accounts_emails,
             cmd_accounts::accounts_set_email,
+            cmd_rules::account_rules_list,
+            cmd_rules::account_rules_upsert,
+            cmd_rules::account_rules_remove,
             cmd_accounts::accounts_remove,
             cmd_accounts::accounts_check,
+            cmd_bitbucket::accounts_bitbucket_connect,
+            cmd_bitbucket::accounts_bitbucket_oauth_connect,
+            cmd_bitbucket::bitbucket_repos,
             cmd_repos::repos_list,
             cmd_repos::repos_bind_dialog,
             cmd_repos::repos_bind_path,
@@ -224,11 +261,18 @@ fn main() {
             cmd_repos::repos_unbind,
             cmd_repos::repos_change_account,
             cmd_repos::repos_fix_identity,
+            cmd_repos::repos_identity_diagnostic,
             cmd_repos::repos_discover,
             cmd_repos::repos_pick_folder,
             cmd_repos::repos_map_folder,
             cmd_repos::repos_open_in_finder,
             cmd_repos::repos_open_in_terminal,
+            cmd_etapas::repos_work_status,
+            cmd_etapas::repos_open_in_editor,
+            cmd_etapas::repos_commit_review,
+            cmd_etapas::repos_config_history_list,
+            cmd_etapas::repos_config_history_undo,
+            cmd_etapas::cloud_pr_inbox,
             cmd_push::repos_outgoing,
             cmd_push::repos_commit_files,
             cmd_push::repos_push,
@@ -240,6 +284,7 @@ fn main() {
             cmd_branches::repos_merge_apply,
             cmd_cloud::cloud_repos,
             cmd_cloud::cloud_clone,
+            cmd_cloud::cloud_create_and_clone,
             cmd_cloud::cloud_choose_folder,
             cmd_integration::integration_status,
             cmd_integration::integration_apply,
@@ -255,6 +300,12 @@ fn main() {
             cmd_system::system_diagnostics,
             cmd_system::system_export_logs,
             cmd_system::system_open_accessibility_settings,
+            cmd_ai::ai_status,
+            cmd_ai::ai_set_enabled,
+            cmd_ai::ai_set_key,
+            cmd_ai::ai_test_key,
+            cmd_ai::ai_remove_key,
+            cmd_ai::ai_set_preferences,
         ])
         .setup(|app| {
             cmd_integration::spawn_autostart(app.handle().clone());

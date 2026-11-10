@@ -469,6 +469,12 @@ label.map-row-main {
   font-variant-numeric: tabular-nums;
 }
 
+.map-reason {
+  display: block;
+  flex-basis: 100%;
+  margin-bottom: 4px;
+}
+
 @media (max-width: 720px) {
   .map-row-meta {
     justify-content: flex-start;
