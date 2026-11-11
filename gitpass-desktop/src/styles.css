@@ -2123,6 +2123,12 @@ select:focus-visible,
   position: relative;
   display: inline-flex;
 }
+.repos-menu-floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: calc(var(--z-popover) + 4);
+}
 .repos-menu {
   position: absolute;
   top: calc(100% + 6px);

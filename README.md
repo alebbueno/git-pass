@@ -152,6 +152,20 @@ Saída típica (Apple Silicon):
 
 > Nota: a primeira abertura pode exigir **clicar com o botão direito → Abrir** (app não assinado pela Apple). Assinatura e notarização são passos separados, se quiseres distribuição sem avisos.
 
+### Windows (preview / smoke)
+
+Build nativo no **Windows 10/11** (Rust MSVC, Node 20+, WebView2). O repositório inclui CI em `.github/workflows/build-windows.yml` e o script `scripts/verify-app-build.ps1`.
+
+**Só pelo GitHub (sem PC Windows):** em **Actions → build-windows → Run workflow**, escolha a branch, rode o job e baixe o artefato **gitpass-windows-x64**. Para publicar num **Release**, marque **Publishar o instalador NSIS num GitHub Release** (tag opcional; senão usa `v<versão>-windows-<nº da run>`). Releases fora da `main` entram como *pre-release*.
+
+```powershell
+cd gitpass-desktop
+npm ci
+npm run tauri build
+```
+
+Instalador típico: `target\release\bundle\nsis\GitPass_*_x64-setup.exe`. **Integração Git, daemon (`gitpassd`) e hooks** ainda são limitados no Windows — ver [`docs/plans/windows-port.md`](docs/plans/windows-port.md) (fases W1–W4). Contas OAuth e pastas locais (vincular repo, Explorer) já funcionam em modo preview.
+
 ### OAuth “plug and play” (desktop + CLI)
 
 - **Device flow (default for desktop):** only needs a **public OAuth App `client_id`**. No `client_secret`, no `oauth.env` for end users. In GitHub → **Developer settings** → your **OAuth App**, enable **Device flow**.

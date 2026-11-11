@@ -177,6 +177,16 @@ pub struct OutgoingState {
     pub has_warnings: bool,
     pub can_fix_authors: bool,
     pub can_pull: bool,
+    /// Conta conectada cujos emails batem com o autor dos commits (quando a conta vinculada não bate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_push_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_push_account_login: Option<String>,
+    /// Conta recomendada para enviar neste remoto (dona / push confirmado).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_push_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_push_account_login: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -288,9 +298,9 @@ impl IdentityRules {
             return true;
         }
         match local.split_once('+') {
-            Some((id, l)) if l.eq_ignore_ascii_case(login) && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => {
-                self.user_id.is_none_or(|u| id == u.to_string())
-            }
+            // GitHub usa o id numérico real do usuário no noreply; pode diferir do email salvo na conta
+            // (troca de email primário, login renomeado, etc.). O sufixo `@login` é o sinal confiável.
+            Some((id, l)) if l.eq_ignore_ascii_case(login) && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => true,
             _ => false,
         }
     }
@@ -1392,7 +1402,8 @@ pub fn outgoing_state(repo: &GitRepo, ctx: &OutgoingContext) -> Result<OutgoingS
     let has_warnings = checks.iter().any(|c| c.severity == Warning);
     let busy = repo.operation_in_progress();
     let merges = ahead > 0 && repo.count(&["--min-parents=2"], &range.commits).unwrap_or(1) > 0;
-    let on_branch = other.is_none() && branch.is_some() && remote.is_some() && !busy && dirty.tracked_clean();
+    let on_repo_branch = other.is_none() && branch.is_some() && remote.is_some() && !busy;
+    let on_branch = on_repo_branch && dirty.tracked_clean();
 
     Ok(OutgoingState {
         binding_id: ctx.binding_id.to_string(),
@@ -1413,8 +1424,12 @@ pub fn outgoing_state(repo: &GitRepo, ctx: &OutgoingContext) -> Result<OutgoingS
         head_sha,
         can_push: !has_error,
         has_warnings,
-        can_fix_authors: on_branch && ahead > 0 && !merges,
+        can_fix_authors: on_repo_branch && ahead > 0 && !merges,
         can_pull: on_branch && tracking.is_some() && behind > 0,
+        suggested_push_account_id: None,
+        suggested_push_account_login: None,
+        preferred_push_account_id: None,
+        preferred_push_account_login: None,
     })
 }
 
@@ -1740,16 +1755,44 @@ pub fn pull_rebase(repo: &GitRepo, remote: &str, branch: &str, token: Option<&st
     Err(e)
 }
 
+/// Whether unpushed commits need author/committer aligned with `rules`.
+pub fn unpushed_identity_mismatch(repo: &GitRepo, remote: &str, branch: &str, rules: &IdentityRules) -> Result<bool, String> {
+    if rules.is_empty() {
+        return Ok(false);
+    }
+    if !valid_remote_name(remote) || !valid_branch_name(branch) {
+        return Ok(false);
+    }
+    let target = repo.push_target(remote, branch);
+    let range = Range::new("HEAD", target.tracking.as_deref(), Some(remote));
+    if range.commits.is_empty() {
+        return Ok(false);
+    }
+    let people = repo.identities(&range.commits);
+    Ok(people
+        .iter()
+        .any(|(_, author, committer)| !rules.accepts(author) || !rules.accepts(committer)))
+}
+
 /// Rewrites author and committer of the unpushed commits of `branch` (linear, no merges) as `who`.
 /// Hooks are off for this rebase only. On any failure the branch is put back where it was.
 pub fn rewrite_authors(repo: &GitRepo, remote: &str, branch: &str, who: &Identity) -> Result<(), String> {
+    rewrite_authors_inner(repo, remote, branch, who, false)
+}
+
+/// Like [`rewrite_authors`], but usa `git rebase --autostash` para guardar alterações sem commit temporariamente.
+pub fn rewrite_authors_autostash(repo: &GitRepo, remote: &str, branch: &str, who: &Identity) -> Result<(), String> {
+    rewrite_authors_inner(repo, remote, branch, who, true)
+}
+
+fn rewrite_authors_inner(repo: &GitRepo, remote: &str, branch: &str, who: &Identity, autostash: bool) -> Result<(), String> {
     if !valid_remote_name(remote) || !valid_branch_name(branch) {
         return Err("Nome de remoto ou de branch inválido.".into());
     }
     if who.name.trim().is_empty() || who.email.trim().is_empty() {
         return Err("A conta não tem nome e email de commit. Escolha um email em «Contas» e tente de novo.".into());
     }
-    let old = ensure_clean_branch(repo, branch)?;
+    let old = ensure_branch_for_author_rewrite(repo, branch, autostash)?;
     let target = repo.push_target(remote, branch);
     let range = Range::new("HEAD", target.tracking.as_deref(), Some(remote));
     let shas = repo.rev_list(&range.commits);
@@ -1759,11 +1802,17 @@ pub fn rewrite_authors(repo: &GitRepo, remote: &str, branch: &str, who: &Identit
     if repo.count(&["--min-parents=2"], &range.commits).unwrap_or(1) > 0 {
         return Err("Há commits de merge entre os que ainda não foram enviados. Não dá para corrigir o autor automaticamente.".into());
     }
-    let base = repo.value(&["rev-parse", "-q", "--verify", &format!("{oldest}^1")]);
+    if shas.len() == 1 {
+        return rewrite_single_commit_author(repo, branch, who, autostash, &old);
+    }
+    let git = git_program();
+    let git_q = crate::integration::sh_quote(&git.to_string_lossy());
+    let name_q = crate::integration::sh_quote(who.name.trim());
+    let email_q = crate::integration::sh_quote(who.email.trim());
     let exec = format!(
-        "{} commit --amend --no-edit --reset-author --allow-empty --no-verify --quiet",
-        crate::integration::sh_quote(&git_program().to_string_lossy())
+        "{git_q} -c core.hooksPath=/dev/null -c user.name={name_q} -c user.email={email_q} commit --amend --no-edit --reset-author --allow-empty --no-verify --quiet"
     );
+    let base = repo.value(&["rev-parse", "-q", "--verify", &format!("{oldest}^1")]);
     let mut cmd = repo.command(None);
     cmd.args(["-c", "core.hooksPath=/dev/null"])
         .args(["-c", &format!("user.name={}", who.name.trim())])
@@ -1774,7 +1823,11 @@ pub fn rewrite_authors(repo: &GitRepo, remote: &str, branch: &str, who: &Identit
     for var in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE"] {
         cmd.env_remove(var);
     }
-    cmd.args(["rebase", "--quiet", "--exec", &exec]);
+    cmd.args(["rebase", "--quiet"]);
+    if autostash {
+        cmd.arg("--autostash");
+    }
+    cmd.args(["--exec", &exec]);
     match &base {
         Some(b) => cmd.arg(b),
         None => cmd.arg("--root"),
@@ -1784,10 +1837,85 @@ pub fn rewrite_authors(repo: &GitRepo, remote: &str, branch: &str, who: &Identit
         return Ok(());
     }
     restore(repo, branch, &old);
-    Err(format!(
-        "Não foi possível corrigir o autor dos commits ({}). Nada foi alterado.",
-        last_line(&String::from_utf8_lossy(&out.stderr))
-    ))
+    Err(author_rewrite_error(&out))
+}
+
+fn rewrite_single_commit_author(
+    repo: &GitRepo,
+    branch: &str,
+    who: &Identity,
+    autostash: bool,
+    old_head: &str,
+) -> Result<(), String> {
+    let stashed = if autostash {
+        stash_before_author_fixup(repo)?
+    } else {
+        false
+    };
+    let mut cmd = repo.command(None);
+    cmd.args(["-c", "core.hooksPath=/dev/null"])
+        .env("GIT_AUTHOR_NAME", who.name.trim())
+        .env("GIT_AUTHOR_EMAIL", who.email.trim())
+        .env("GIT_COMMITTER_NAME", who.name.trim())
+        .env("GIT_COMMITTER_EMAIL", who.email.trim())
+        .args(["commit", "--amend", "--reset-author", "--no-edit", "--no-verify", "--quiet"]);
+    let out = cmd.output().map_err(spawn_error)?;
+    if stashed {
+        let pop = repo.command(None).args(["stash", "pop", "--quiet"]).output().map_err(spawn_error)?;
+        if !pop.status.success() {
+            restore(repo, branch, old_head);
+            return Err(format!(
+                "O autor foi corrigido, mas não deu para restaurar suas alterações sem commit: {}",
+                last_line(&String::from_utf8_lossy(&pop.stderr))
+            ));
+        }
+    }
+    if out.status.success() && repo.branch().as_deref() == Some(branch) {
+        return Ok(());
+    }
+    restore(repo, branch, old_head);
+    Err(author_rewrite_error(&out))
+}
+
+fn stash_before_author_fixup(repo: &GitRepo) -> Result<bool, String> {
+    if repo.dirty_counts()?.tracked_clean() {
+        return Ok(false);
+    }
+    let o = repo
+        .command(None)
+        .args(["stash", "push", "-u", "-m", "gitpass-fix-author"])
+        .output()
+        .map_err(spawn_error)?;
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    if !o.status.success() {
+        return Err(author_rewrite_error(&o));
+    }
+    Ok(!msg.contains("No local changes to save"))
+}
+
+fn author_rewrite_error(out: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let combined = format!("{stderr}\n{stdout}");
+    let detail = last_line(&combined);
+    format!("Não foi possível corrigir o autor dos commits ({detail}). Nada foi alterado.")
+}
+
+fn ensure_branch_for_author_rewrite(repo: &GitRepo, branch: &str, autostash: bool) -> Result<String, String> {
+    if repo.branch().as_deref() != Some(branch) {
+        return Err("O branch mudou desde a última verificação. Atualize e tente de novo.".into());
+    }
+    if repo.operation_in_progress() {
+        return Err("Há um rebase ou merge em andamento neste repositório. Termine ou cancele no terminal e tente de novo.".into());
+    }
+    if !autostash && !repo.dirty_counts()?.tracked_clean() {
+        return Err("Há alterações que ainda não viraram commit. Faça um commit ou guarde as alterações (stash) e tente de novo.".into());
+    }
+    repo.head_sha().ok_or_else(|| "Este repositório ainda não tem commits.".to_string())
 }
 
 #[cfg(test)]
@@ -1911,7 +2039,7 @@ mod tests {
         assert!(r.accepts("ana@example.COM"));
         assert!(r.accepts("ana@users.noreply.github.com"));
         assert!(r.accepts("42+Ana@users.noreply.github.com"));
-        assert!(!r.accepts("43+ana@users.noreply.github.com"));
+        assert!(r.accepts("43+ana@users.noreply.github.com"));
         assert!(!r.accepts("bob@users.noreply.github.com"));
         assert!(!r.accepts("ana@example.org"));
         let no_id = IdentityRules { user_id: None, ..rules() };

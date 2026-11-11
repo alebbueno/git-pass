@@ -507,7 +507,7 @@ export const mount: MountView = (root, ctx) => {
       title: "Conectar Bitbucket",
       wide: true,
       confirmLabel: "Conectar",
-      body: `<p class="caption muted accounts-bb-lead">Crie um <a href="${esc(BITBUCKET_API_TOKENS_URL)}" data-open-external>API token</a> na Atlassian (app <strong>Bitbucket</strong>) com pelo menos <code>read:user:bitbucket</code>, <code>read:repository:bitbucket</code> e <code>write:repository:bitbucket</code> (<a href="${esc(BITBUCKET_API_TOKEN_DOC_URL)}" data-open-external>como criar</a>). Cole só o token — <strong>não</strong> use o usuário do Bitbucket no lugar do email.</p>
+      body: `<p class="caption muted accounts-bb-lead">Crie um <a href="${esc(BITBUCKET_API_TOKENS_URL)}" data-open-external>API token</a> na Atlassian (app <strong>Bitbucket</strong>) com pelo menos <code>read:user:bitbucket</code>, <code>read:repository:bitbucket</code>, <code>write:repository:bitbucket</code> e, para pull requests no app, <code>read:pullrequest:bitbucket</code> + <code>write:pullrequest:bitbucket</code> (<a href="${esc(BITBUCKET_API_TOKEN_DOC_URL)}" data-open-external>como criar</a>). Cole só o token — <strong>não</strong> use o usuário do Bitbucket no lugar do email.</p>
         <label class="accounts-bb-field"><span class="caption muted">API token</span>
           <input class="input" type="password" autocomplete="off" spellcheck="false" data-bb-pass placeholder="ATCTT…" />
         </label>

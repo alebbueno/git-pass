@@ -86,5 +86,6 @@ export const apiCloud = {
     }),
   /** Seletor de pastas nativo; `null` se o utilizador cancelar. */
   chooseFolder: () => invoke<string | null>("cloud_choose_folder"),
-  prInbox: (accountId: string) => invoke<PrInboxItem[]>("cloud_pr_inbox", { accountId }),
+  prInbox: (accountId: string, refresh = true) =>
+    invoke<PrInboxItem[]>("cloud_pr_inbox", { accountId, refresh }),
 };

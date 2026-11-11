@@ -3,6 +3,7 @@
 
 mod cmd_accounts;
 mod cmd_bitbucket;
+mod cmd_bitbucket_pr;
 mod cmd_branches;
 mod cmd_cloud;
 mod cmd_integration;
@@ -10,6 +11,7 @@ mod cmd_push;
 mod cmd_repos;
 mod cmd_rules;
 mod cmd_etapas;
+mod cmd_pr;
 mod cmd_system;
 mod cmd_ai;
 #[cfg(test)]
@@ -182,7 +184,16 @@ fn ipc_ping_gitpassd() -> Result<String, String> {
 
 #[tauri::command]
 fn open_keychain_docs() -> String {
-    format!("Os acessos às contas ficam salvos nas Chaves do macOS (Keychain), no serviço `{KEYCHAIN_SERVICE}`, conta github.oauth.<id>. Eles nunca são gravados no arquivo de configurações nem em endereços web.")
+    let store = if cfg!(target_os = "macos") {
+        "nas Chaves do macOS (Keychain)"
+    } else if cfg!(target_os = "windows") {
+        "no Gerenciador de Credenciais do Windows"
+    } else {
+        "no cofre de segredos do sistema"
+    };
+    format!(
+        "Os acessos às contas ficam salvos {store}, no serviço `{KEYCHAIN_SERVICE}`, conta github.oauth.<id>. Eles nunca são gravados no arquivo de configurações nem em endereços web."
+    )
 }
 
 #[tauri::command]
@@ -196,10 +207,18 @@ fn open_application_support() -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = dir;
-        Err("Abrir a pasta só funciona no macOS.".to_string())
+        Err("Abrir a pasta de dados só funciona no macOS e no Windows.".to_string())
     }
 }
 
@@ -259,6 +278,7 @@ fn main() {
             cmd_repos::repos_bind_path,
             cmd_repos::repos_bind_many,
             cmd_repos::repos_unbind,
+            cmd_repos::repos_binding_accounts,
             cmd_repos::repos_change_account,
             cmd_repos::repos_fix_identity,
             cmd_repos::repos_identity_diagnostic,
@@ -273,6 +293,22 @@ fn main() {
             cmd_etapas::repos_config_history_list,
             cmd_etapas::repos_config_history_undo,
             cmd_etapas::cloud_pr_inbox,
+            cmd_pr::github_pr_list_repo,
+            cmd_pr::github_pr_files,
+            cmd_pr::github_pr_detail,
+            cmd_pr::github_pr_create,
+            cmd_pr::github_pr_submit_review,
+            cmd_pr::github_pr_comment_file,
+            cmd_pr::github_pr_request_reviewers,
+            cmd_pr::github_pr_merge,
+            cmd_pr::github_pr_enable_auto_merge,
+            cmd_pr::github_pr_disable_auto_merge,
+            cmd_bitbucket_pr::bitbucket_pr_list_repo,
+            cmd_bitbucket_pr::bitbucket_pr_detail,
+            cmd_bitbucket_pr::bitbucket_pr_create,
+            cmd_bitbucket_pr::bitbucket_pr_approve,
+            cmd_bitbucket_pr::bitbucket_pr_diff,
+            cmd_bitbucket_pr::bitbucket_pr_merge,
             cmd_push::repos_outgoing,
             cmd_push::repos_commit_files,
             cmd_push::repos_push,

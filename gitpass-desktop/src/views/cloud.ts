@@ -16,6 +16,7 @@ import { DATA_CHANGED_EVENT, type MountView } from "../lib/view";
 import { drawerRoute } from "./repo-detail";
 import { plural } from "./repos-ui";
 import { openCloudCreateOverlay } from "./cloud-create-overlay";
+import { openCreatePullRequestWizard, openPullRequestFromInbox } from "./pr-panel";
 
 const PAGE_SIZE = 50;
 
@@ -214,18 +215,20 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
    * `refetch = false` (mudanças de configuração) só vai ao GitHub por contas sem lista válida: os vínculos
    * novos chegam por `api.bindings()` e `clonedKeys`, sem repetir centenas de pedidos à API.
    */
-  async function loadPrInbox(): Promise<void> {
+  async function loadPrInbox(silent = false): Promise<void> {
     const gen = generation;
-    for (const a of accounts.filter((x) => x.has_token)) {
-      prByAccount.set(a.id, { status: "loading", items: [] });
+    if (!silent) {
+      for (const a of accounts.filter((x) => x.has_token)) {
+        prByAccount.set(a.id, { status: "loading", items: [] });
+      }
+      renderBody();
     }
-    renderBody();
     await Promise.all(
       accounts
         .filter((a) => a.has_token)
         .map(async (a) => {
           try {
-            const items = await apiCloud.prInbox(a.id);
+            const items = await apiCloud.prInbox(a.id, !silent);
             if (!alive || gen !== generation) return;
             prByAccount.set(a.id, { status: "ok", items });
           } catch (e) {
@@ -234,7 +237,25 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
           }
         })
     );
-    renderBody();
+    if (!silent || cloudMode === "prs") renderBody();
+  }
+
+  let prPollTimer: number | null = null;
+  const PR_POLL_MS = 60_000;
+
+  function stopPrPoll(): void {
+    if (prPollTimer !== null) {
+      window.clearInterval(prPollTimer);
+      prPollTimer = null;
+    }
+  }
+
+  function startPrPoll(): void {
+    stopPrPoll();
+    prPollTimer = window.setInterval(() => {
+      if (!alive || cloudMode !== "prs") return;
+      void loadPrInbox(true);
+    }, PR_POLL_MS);
   }
 
   async function loadAll(refetch = true): Promise<void> {
@@ -566,12 +587,14 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
           if (!st.items.length) {
             return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3><p class="caption muted">Nenhum PR em aberto para revisar ou aguardando resposta.</p></section>`;
           }
-          return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3><ul class="cloud-pr-list">${st.items
+          return `<section class="surface"><h3 class="cloud-acc-title">${profileChip(a)}</h3>
+            <div class="cloud-pr-toolbar"><button type="button" class="control primary" data-pr-create data-account-id="${esc(a.id)}">${icon("plus")}<span>Novo PR</span></button></div>
+            <ul class="cloud-pr-list">${st.items
             .map(
               (pr) =>
-                `<li><a href="${esc(pr.html_url)}" target="_blank" rel="noopener">${icon("external")}<span><strong>${esc(pr.title)}</strong><span class="caption muted">${esc(
+                `<li><button type="button" class="pr-list-btn" data-pr-open data-account-id="${esc(a.id)}" data-repo="${esc(pr.repo_full_name)}" data-pr-number="${pr.number}">${icon("pullRequest", 16)}<span><strong>${esc(pr.title)}</strong><span class="caption muted">${esc(
                   pr.repo_full_name
-                )} · ${pr.kind === "review_requested" ? "pedido de revisão" : "autor"} · ${esc(relativeTime(pr.updated_at))}</span></span></a></li>`
+                )} · #${pr.number} · ${pr.kind === "review_requested" ? "pedido de revisão" : "autor"} · ${esc(relativeTime(pr.updated_at))}</span></span></button></li>`
             )
             .join("")}</ul></section>`;
         });
@@ -710,6 +733,24 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     if (el.closest("[data-more]")) {
       showAll = true;
       renderBody();
+      return;
+    }
+
+    const prOpen = el.closest<HTMLElement>("[data-pr-open]");
+    if (prOpen?.dataset.accountId && prOpen.dataset.repo && prOpen.dataset.prNumber) {
+      const acc = accounts.find((a) => a.id === prOpen.dataset.accountId);
+      const provider = acc?.host === "bitbucket" ? "bitbucket" : "github";
+      openPullRequestFromInbox(
+        prOpen.dataset.accountId,
+        { repo_full_name: prOpen.dataset.repo, number: Number(prOpen.dataset.prNumber) },
+        () => void loadPrInbox(),
+        provider
+      );
+      return;
+    }
+    const prCreate = el.closest<HTMLElement>("[data-pr-create]");
+    if (prCreate?.dataset.accountId) {
+      void openCreatePullRequestWizard(prCreate.dataset.accountId, () => void loadPrInbox());
       return;
     }
 
@@ -864,7 +905,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
       sub.textContent =
         cloudMode === "repos"
           ? "Repositórios disponíveis nas suas contas GitHub."
-          : "Pull requests abertos para revisar ou que você abriu.";
+          : "Pull requests no GitHub e no Bitbucket (abertos e pedidos de revisão).";
     }
   };
 
@@ -875,8 +916,13 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
     if (mode === cloudMode) return;
     cloudMode = mode;
     syncModeButtons();
-    if (mode === "prs") void loadPrInbox();
-    else renderBody();
+    if (mode === "prs") {
+      void loadPrInbox();
+      startPrPoll();
+    } else {
+      stopPrPoll();
+      renderBody();
+    }
   });
 
   refreshBtn.addEventListener("click", () => {
@@ -911,6 +957,7 @@ export const mount: MountView = (root, ctx, _param, initialQuery) => {
   return () => {
     alive = false;
     generation++;
+    stopPrPoll();
     popover = null;
     document.removeEventListener(DATA_CHANGED_EVENT, onDataChanged);
     document.removeEventListener("click", onDocClick);

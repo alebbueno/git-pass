@@ -429,6 +429,79 @@ pub fn decide_account(offline: Option<AccountSuggestion>, push: &[(Uuid, Option<
     AccountDecision::Ask { suggested }
 }
 
+/// Who may be bound to this repo when the user switches accounts.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BindingSwitchOption {
+    pub account_id: Uuid,
+    /// `None` when the check was not run (offline / Bitbucket).
+    pub can_push: Option<bool>,
+    pub owner_match: bool,
+    pub recommended: bool,
+    pub allowed: bool,
+}
+
+/// Accounts allowed for this binding: owner/login match, confirmed push, or the recommended pick.
+pub fn binding_switch_options(
+    cfg: &AppConfig,
+    binding: &RepoBinding,
+    push_checks: &[(Uuid, Option<bool>)],
+) -> Vec<BindingSwitchOption> {
+    use crate::remote::normalize_owner;
+
+    let owner = binding.github_owner.as_deref();
+    let norm = owner.map(normalize_owner);
+    let offline = owner
+        .and_then(|o| crate::account_rules::suggest_account_for_repo(cfg, &binding.root_path, o))
+        .or_else(|| owner.and_then(|o| suggest_account_offline(cfg, o)));
+    let recommended = offline.as_ref().map(|s| s.account_id).or_else(|| {
+        let pushers: Vec<Uuid> = push_checks
+            .iter()
+            .filter(|(_, p)| *p == Some(true))
+            .map(|(id, _)| *id)
+            .collect();
+        (pushers.len() == 1).then_some(pushers[0])
+    });
+
+    cfg.accounts
+        .iter()
+        .map(|a| {
+            let owner_match = match (&norm, a.github_login.as_deref()) {
+                (Some(n), Some(l)) => normalize_owner(l) == *n,
+                _ => false,
+            };
+            let can_push = push_checks
+                .iter()
+                .find(|(id, _)| *id == a.id)
+                .map(|(_, p)| *p)
+                .unwrap_or(None);
+            let is_rec = recommended == Some(a.id);
+            let mut allowed = can_push == Some(true) || owner_match || is_rec;
+            if can_push == Some(false) && !owner_match && !is_rec {
+                allowed = false;
+            }
+            BindingSwitchOption {
+                account_id: a.id,
+                can_push,
+                owner_match,
+                recommended: is_rec,
+                allowed,
+            }
+        })
+        .collect()
+}
+
+pub fn account_allowed_for_binding(
+    cfg: &AppConfig,
+    binding: &RepoBinding,
+    account_id: Uuid,
+    push_checks: &[(Uuid, Option<bool>)],
+) -> bool {
+    binding_switch_options(cfg, binding, push_checks)
+        .into_iter()
+        .find(|o| o.account_id == account_id)
+        .is_some_and(|o| o.allowed)
+}
+
 // --- Repo inspection ---
 
 /// The repo's git directory (`.git`, or the target of a `.git` file in worktrees/submodules).

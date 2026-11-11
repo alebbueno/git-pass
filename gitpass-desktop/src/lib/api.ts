@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 /** Resposta de `accounts_list` (campos usados pelo shell e pelas vistas); `AccountInfo` em api-accounts.ts tem o tipo completo. */
 export type AccountRow = {
   id: string;
+  host?: "github" | "bitbucket";
   login: string | null;
   label: string | null;
   name?: string | null;

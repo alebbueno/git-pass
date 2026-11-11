@@ -13,6 +13,7 @@ pub mod commit_review;
 pub mod config_history;
 pub mod identity_diagnostic;
 pub mod pr_inbox;
+pub mod github_pr;
 pub mod work_radar;
 pub mod integration;
 pub mod logs_export;
@@ -21,6 +22,7 @@ pub mod redact;
 mod config;
 pub mod github_api;
 pub mod bitbucket_api;
+pub mod bitbucket_pr;
 pub mod bitbucket_repos;
 pub mod github_repos;
 mod hooks;
@@ -73,7 +75,20 @@ pub use oauth_github::{
 };
 pub use github_api::{token_can_push, token_can_push_for_account, GithubApiError};
 pub use clone::{clone_bitbucket_repo, validate_clone_parent, validate_repo_name};
+pub use bitbucket_pr::{
+    approve_bitbucket_pull_request, create_bitbucket_pull_request, fetch_bitbucket_pr_inbox,
+    fetch_bitbucket_pull_request_detail, fetch_bitbucket_pull_request_diff, list_bitbucket_pull_requests,
+    merge_bitbucket_pull_request, BitbucketPullRequestDetail,
+};
 pub use bitbucket_repos::{list_bitbucket_repos, BitbucketRepoSummary};
+pub use github_pr::{
+    anchor_line_in_patch, comment_on_pull_request_file, create_pull_request, fetch_pull_request_detail,
+    fetch_pull_request_files, line_exists_on_right_side, list_repo_pull_requests, merge_pull_request,
+    request_pull_request_reviewers, submit_pull_request_review,
+    CommentSide, CreatePullRequestInput, disable_pull_request_auto_merge, enable_pull_request_auto_merge,
+    MergeMethod, MergePullRequestResult, PrCheckRow, PrFileChange, PrReviewComment, PullRequestCreated,
+    PullRequestDetail, PrReviewRow, RepoPullRequestRow, ReviewEvent,
+};
 pub use oauth_bitbucket::{
     bitbucket_oauth_login, resolve_bitbucket_oauth_client, DEFAULT_BITBUCKET_OAUTH_CALLBACK_PORT,
     DEFAULT_BITBUCKET_OAUTH_SCOPES,

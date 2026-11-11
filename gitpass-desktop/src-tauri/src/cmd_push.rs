@@ -13,11 +13,12 @@ use gitpass_core::branches;
 use gitpass_core::github_api::fetch_repo_permissions;
 use gitpass_core::github_user::{fetch_emails, fetch_user};
 use gitpass_core::outgoing::{
-    self, github_branch_url, outgoing_state, push_refusal, CommitFile, FetchOutcome, FileLimits, GitNetError,
-    GitRepo, Identity, IdentityRules, OutgoingContext, OutgoingState, Permission, PushPhase, PushProgress,
-    PushResult,
+    self, github_branch_url, outgoing_state, push_refusal, CheckCode, CommitFile, FetchOutcome, FileLimits,
+    GitNetError, GitRepo, Identity, IdentityRules, OutgoingContext, OutgoingState, Permission, PushPhase,
+    PushProgress, PushResult,
 };
-use gitpass_core::{Account, AppConfig, GithubApiError};
+use gitpass_core::bindings::{account_allowed_for_binding, binding_switch_options};
+use gitpass_core::{Account, AppConfig, GithubApiError, RepoBinding};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -245,6 +246,76 @@ fn noreply_user_id(email: &str) -> Option<u64> {
     local.split_once('+')?.0.parse().ok()
 }
 
+/// When commits were authored with another connected account, suggest switching instead of rewriting history.
+fn enrich_push_account_suggestion(state: &mut OutgoingState, cfg: &AppConfig, current: &Account) {
+    if let Some((id, login)) = suggest_push_account(cfg, current, state) {
+        state.suggested_push_account_id = Some(id.to_string());
+        state.suggested_push_account_login = Some(login);
+    }
+}
+
+fn enrich_preferred_push_account(state: &mut OutgoingState, cfg: &AppConfig, binding: &RepoBinding, checks: &[(Uuid, Option<bool>)]) {
+    let opts = binding_switch_options(cfg, binding, checks);
+    let Some(opt) = opts.iter().find(|o| o.recommended) else {
+        return;
+    };
+    let Some(acc) = cfg.accounts.iter().find(|a| a.id == opt.account_id) else {
+        return;
+    };
+    state.preferred_push_account_id = Some(opt.account_id.to_string());
+    state.preferred_push_account_login = acc
+        .github_login
+        .clone()
+        .or(acc.label.clone())
+        .filter(|s| !s.trim().is_empty());
+}
+
+fn suggest_push_account(cfg: &AppConfig, current: &Account, state: &OutgoingState) -> Option<(Uuid, String)> {
+    let mismatch: HashSet<&str> = state
+        .checks
+        .iter()
+        .filter(|c| c.code == CheckCode::AuthorMismatch)
+        .filter_map(|c| c.sha.as_deref())
+        .collect();
+    if mismatch.is_empty() {
+        return None;
+    }
+    let emails: HashSet<String> = state
+        .commits
+        .iter()
+        .filter(|c| mismatch.contains(c.sha.as_str()))
+        .map(|c| c.author_email.to_ascii_lowercase())
+        .collect();
+    if emails.is_empty() {
+        return None;
+    }
+    let mut found: Vec<&Account> = Vec::new();
+    for acc in &cfg.accounts {
+        if acc.id == current.id || acc.host != current.host {
+            continue;
+        }
+        let rules = identity_rules(Some(acc), None);
+        if emails.iter().all(|e| rules.accepts(e)) {
+            found.push(acc);
+        }
+    }
+    if found.len() != 1 {
+        return None;
+    }
+    let acc = found[0];
+    if let Some(binding) = cfg.repos.iter().find(|r| r.id.to_string() == state.binding_id) {
+        if !account_allowed_for_binding(cfg, binding, acc.id, &[]) {
+            return None;
+        }
+    }
+    let login = acc
+        .github_login
+        .clone()
+        .or(acc.label.clone())
+        .filter(|s| !s.trim().is_empty())?;
+    Some((acc.id, login))
+}
+
 pub(crate) fn identity_rules(account: Option<&Account>, person: Option<Person>) -> IdentityRules {
     let Some(a) = account else {
         return IdentityRules::default();
@@ -348,7 +419,7 @@ fn prepare(binding_id: &str, fetch: Fetch, branch: Option<&str>) -> Result<Prepa
     let identity = identity_rules(b.account.as_ref(), person);
 
     let binding_id = b.id.to_string();
-    let state = outgoing_state(
+    let mut state = outgoing_state(
         &b.repo,
         &OutgoingContext {
             binding_id: &binding_id,
@@ -362,6 +433,16 @@ fn prepare(binding_id: &str, fetch: Fetch, branch: Option<&str>) -> Result<Prepa
             limits: FileLimits::default(),
         },
     )?;
+    if let Ok(cfg) = AppConfig::load_or_default() {
+        if let Some(binding) = cfg.repos.iter().find(|r| r.id == b.id) {
+            let online = matches!(fetch, Fetch::Yes | Fetch::Done);
+            let checks = crate::cmd_repos::binding_push_checks(&cfg, binding, online);
+            enrich_preferred_push_account(&mut state, &cfg, binding, &checks);
+            if let Some(acc) = b.account.as_ref() {
+                enrich_push_account_suggestion(&mut state, &cfg, acc);
+            }
+        }
+    }
     Ok(Prepared {
         binding_id,
         repo: b.repo,
@@ -468,13 +549,13 @@ fn fix_authors_blocking(app: &AppHandle, binding_id: &str, expected_head: &str) 
     ensure_head(&p.state, expected_head)?;
     if !p.state.can_fix_authors {
         return Err(
-            "Não dá para corrigir os autores agora: é preciso estar em um branch, sem alterações pendentes, sem commits de merge e com commits para enviar."
+            "Não dá para corrigir os autores agora: é preciso estar no branch da pasta, sem commits de merge e com commits para enviar."
                 .into(),
         );
     }
     let who = commit_identity(p.account.as_ref())?;
     let (remote, branch) = remote_and_branch(&p)?;
-    let done = outgoing::rewrite_authors(&p.repo, &remote, &branch, &who);
+    let done = outgoing::rewrite_authors_autostash(&p.repo, &remote, &branch, &who);
     notify_changed(app, &p.binding_id);
     done?;
     Ok(prepare(binding_id, Fetch::No, None)?.state)
@@ -582,12 +663,72 @@ mod tests {
     }
 
     #[test]
+    fn suggest_push_account_when_author_matches_other_connected_account() {
+        use gitpass_core::outgoing::{CheckCode, CheckSeverity, DirtyCounts, OutgoingCommit, PushCheck};
+
+        let decks = account(Some("ana@example.com"));
+        let mut bob = account(Some("102812387+dobytgame@users.noreply.github.com"));
+        bob.github_login = Some("dobytgame".into());
+        let cfg = AppConfig {
+            accounts: vec![decks.clone(), bob.clone()],
+            ..AppConfig::default()
+        };
+        let state = OutgoingState {
+            binding_id: "x".into(),
+            branch: Some("main".into()),
+            remote_name: Some("origin".into()),
+            upstream: Some("origin/main".into()),
+            remote_branch_url: None,
+            ahead: 1,
+            behind: 0,
+            fetched: false,
+            dirty: DirtyCounts::default(),
+            commits: vec![OutgoingCommit {
+                sha: "abc123".into(),
+                short_sha: "abc123".into(),
+                subject: "feat".into(),
+                body: String::new(),
+                author_name: "Bob".into(),
+                author_email: "102812387+dobytgame@users.noreply.github.com".into(),
+                authored_at: "2020-01-01T00:00:00Z".into(),
+                committer_name: "Bob".into(),
+                committer_email: "102812387+dobytgame@users.noreply.github.com".into(),
+                files_changed: 1,
+                insertions: 1,
+                deletions: 0,
+                is_merge: false,
+                checks: vec![],
+            }],
+            truncated: false,
+            checks: vec![PushCheck {
+                code: CheckCode::AuthorMismatch,
+                severity: CheckSeverity::Error,
+                message: "x".into(),
+                sha: Some("abc123".into()),
+                path: None,
+            }],
+            head_sha: Some("abc123".into()),
+            can_push: false,
+            has_warnings: false,
+            can_fix_authors: false,
+            can_pull: false,
+            suggested_push_account_id: None,
+            suggested_push_account_login: None,
+            preferred_push_account_id: None,
+            preferred_push_account_login: None,
+        };
+        let picked = suggest_push_account(&cfg, &decks, &state).expect("dobytgame");
+        assert_eq!(picked.0, bob.id);
+        assert_eq!(picked.1, "dobytgame");
+    }
+
+    #[test]
     fn identity_rules_combine_config_and_github() {
         let a = account(Some("123+ana@users.noreply.github.com"));
         let offline = identity_rules(Some(&a), None);
         assert_eq!(offline.user_id, Some(123));
         assert!(offline.accepts("123+ana@users.noreply.github.com"));
-        assert!(!offline.accepts("999+ana@users.noreply.github.com"));
+        assert!(offline.accepts("999+ana@users.noreply.github.com"));
 
         let online = identity_rules(
             Some(&account(Some("ana@work.com"))),

@@ -15,6 +15,7 @@ import { errMessage, esc, relativeTime, showToast } from "../lib/dom";
 import { icon, type IconName } from "../lib/icons";
 import { profileChip } from "../lib/profile";
 import { branchesOf, defaultBranchOf, ensureBranches, onBranchesChange } from "./repo-branches";
+import { openCreatePullRequest, openPullRequestPanel } from "./pr-panel";
 import { formatBytes, identityText, openModal, plural, profileFor, repoName } from "./repos-ui";
 
 // ---------- Textos ----------
@@ -147,7 +148,7 @@ type Session = {
   expanded: Set<string>;
   files: Map<string, FilesEntry>;
   run: PushRun;
-  action: "fix" | "pull" | null;
+  action: "fix" | "pull" | "switch" | null;
 };
 
 export type SessionEvent = "all" | "progress" | "pushed";
@@ -419,6 +420,8 @@ export type PushTabDeps = {
   accounts: () => AccountRow[];
   goAccounts: () => void;
   changeAccount: (btn: HTMLButtonElement) => void;
+  /** Troca direto para a conta sugerida (autor dos commits). */
+  switchToAccount: (btn: HTMLButtonElement, accountId: string) => Promise<boolean>;
   fixIdentity: (btn: HTMLButtonElement) => void;
   /** Abre «Levar commits para outro branch». */
   openMerge: (source: string, target: string) => void;
@@ -533,10 +536,11 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
         ${branchBarHtml(repo, s)}
         ${statusLineHtml(s)}
         ${s.run.phase === "failed" ? failedHtml(s.run.error) : ""}
+        ${wrongBindingAccountHtml(repo, st)}
         ${summaryHtml(repo, st)}
         ${wrongBranchHtml(repo, st, s)}
         ${onCurrent(repo, s) ? identityHintHtml(repo) : ""}
-        ${checksHtml(st, s)}
+        ${checksHtml(repo, st, s)}
         ${st.commits.length ? commitsHtml(st, s) : ""}
         ${st.ahead > 0 || s.run.phase === "running" ? barHtml(repo, st, s) : ""}
       </div>`;
@@ -621,9 +625,25 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
     </div></div>`;
   }
 
+  function wrongBindingAccountHtml(repo: RepoRow, st: OutgoingState): string {
+    const id = st.preferred_push_account_id;
+    const login = st.preferred_push_account_login;
+    if (!id || !login || id === repo.account_id || st.checks.some((c) => c.code === "author_mismatch")) return "";
+    return `<div class="callout warning push-callout-action">${icon("user")}<span>Este repositório deve usar <strong>@${esc(
+      login
+    )}</strong> (conta com acesso no GitHub). A conta atual não é a indicada para enviar aqui.</span>
+      <button type="button" class="btn" data-action="switch-push-account" data-account-id="${esc(
+        id
+      )}" data-focus="switch-repo-account">${icon("check", 14)}<span>Usar @${esc(login)}</span></button></div>`;
+  }
+
   function accountChip(repo: RepoRow): string {
     if (repo.account_missing) return `<span class="badge error">${icon("x", 12)}conta removida</span>`;
-    return profileChip(profileFor(deps.accounts(), repo));
+    const chip = profileChip(profileFor(deps.accounts(), repo));
+    const busy = session(repo.id).action === "switch" || session(repo.id).run.phase === "running";
+    return `<span class="repos-menu-host push-account-host"><button type="button" class="push-account-chip" data-action="change-account" data-focus="push-account" aria-haspopup="menu" aria-expanded="false" title="Trocar conta deste repositório"${
+      busy || deps.accounts().length === 0 ? " disabled" : ""
+    }>${chip}</button></span>`;
   }
 
   function summaryHtml(repo: RepoRow, st: OutgoingState): string {
@@ -682,7 +702,7 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
 
   function fixReason(st: OutgoingState): string {
     if (st.commits.some((c) => c.is_merge)) return "Não dá para corrigir aqui porque há commits de merge entre os que vão ser enviados.";
-    if (isDirty(st)) return "Faça commit ou guarde (git stash) as alterações sem commit antes de corrigir.";
+    if (isDirty(st)) return "Há alterações sem commit; o GitPass guarda temporariamente (stash) durante a correção.";
     return "Não dá para corrigir automaticamente agora. Clique em “Verificar de novo”.";
   }
 
@@ -692,24 +712,75 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
     return "";
   }
 
-  function checkActionHtml(code: CheckCode, st: OutgoingState, s: Session, fixShown: { v: boolean }): string {
+  function checkActionHtml(
+    code: CheckCode,
+    st: OutgoingState,
+    s: Session,
+    repo: RepoRow,
+    fixShown: { v: boolean },
+    switchShown: { v: boolean }
+  ): string {
     const busy = s.action !== null || s.run.phase === "running" || s.pendingFetch > 0;
     const spin = (label: string): string => `<span class="spinner" aria-hidden="true"></span><span>${esc(label)}</span>`;
     const current = onCurrent(deps.repo(), s);
     switch (code) {
       case "author_mismatch":
       case "committer_mismatch": {
-        if (fixShown.v) return "";
-        fixShown.v = true;
-        if (!current && !st.can_fix_authors)
-          return `<span class="small push-reason">Para corrigir o autor, mude a pasta para este branch (aba Branches) e volte aqui.</span>`;
-        const reasonId = `push-fix-reason-${code}`;
-        return st.can_fix_authors
-          ? `<button type="button" class="btn" data-action="fix-authors" data-focus="fix-authors"${busy ? " disabled" : ""}${
-              s.action === "fix" ? ' aria-busy="true"' : ""
-            }>${s.action === "fix" ? spin("Corrigindo…") : `${icon("edit", 14)}<span>Corrigir autor dos commits</span>`}</button>`
-          : `<button type="button" class="btn" disabled aria-describedby="${reasonId}">${icon("edit", 14)}<span>Corrigir autor dos commits</span></button>
-             <span class="small push-reason" id="${reasonId}">${esc(fixReason(st))}</span>`;
+        if (code === "committer_mismatch" && (fixShown.v || switchShown.v)) return "";
+        const parts: string[] = [];
+        const preferredId = st.preferred_push_account_id;
+        const preferredLogin = st.preferred_push_account_login;
+        const suggestedId = st.suggested_push_account_id;
+        const suggestedLogin = st.suggested_push_account_login;
+        const repoSwitchId =
+          preferredId && preferredLogin && preferredId !== repo.account_id ? preferredId : null;
+        const authorSwitchId =
+          !repoSwitchId && suggestedId && suggestedLogin && suggestedId !== repo.account_id ? suggestedId : null;
+        if (code === "author_mismatch" && !switchShown.v && (repoSwitchId || authorSwitchId)) {
+          switchShown.v = true;
+          const targetId = repoSwitchId ?? authorSwitchId!;
+          const targetLogin = repoSwitchId ? preferredLogin! : suggestedLogin!;
+          const from = repo.account_login ? `@${repo.account_login}` : "esta conta";
+          const reason = repoSwitchId
+            ? `Use @${esc(targetLogin)} neste repositório (dona ou permissão de envio no GitHub). Se o commit foi feito com outra conta, depois use «Corrigir autor».`
+            : `Os commits foram feitos com @${esc(targetLogin)}. Troque a conta e envie — sem reescrever o histórico.`;
+          parts.push(
+            `<button type="button" class="btn" data-action="switch-push-account" data-account-id="${esc(
+              targetId
+            )}" data-focus="switch-account"${busy || s.action === "switch" ? " disabled" : ""}${
+              s.action === "switch" ? ' aria-busy="true"' : ""
+            }>${
+              s.action === "switch"
+                ? spin("Trocando conta…")
+                : `${icon("user", 14)}<span>Trocar ${esc(from)} por @${esc(targetLogin)}</span>`
+            }</button>`,
+            `<span class="small push-reason">${reason}</span>`
+          );
+        }
+        if (code === "author_mismatch" && !fixShown.v) {
+          fixShown.v = true;
+          if (!current && !st.can_fix_authors) {
+            parts.push(
+              `<span class="small push-reason">Para corrigir o autor, mude a pasta para este branch (aba Branches) e volte aqui.</span>`
+            );
+          } else {
+            const reasonId = "push-fix-reason-author";
+            const ghost = switchShown.v ? " ghost" : "";
+            parts.push(
+              st.can_fix_authors
+                ? `<button type="button" class="btn${ghost}" data-action="fix-authors" data-focus="fix-authors"${
+                    busy ? " disabled" : ""
+                  }${s.action === "fix" ? ' aria-busy="true"' : ""}>${
+                    s.action === "fix"
+                      ? spin("Corrigindo…")
+                      : `${icon("edit", 14)}<span>${switchShown.v ? "Reescrever autor para a conta atual" : "Corrigir autor dos commits"}</span>`
+                  }</button>`
+                : `<button type="button" class="btn${ghost}" disabled aria-describedby="${reasonId}">${icon("edit", 14)}<span>Corrigir autor dos commits</span></button>
+                   <span class="small push-reason" id="${reasonId}">${esc(fixReason(st))}</span>`
+            );
+          }
+        }
+        return parts.join("");
       }
       case "behind_remote": {
         if (st.can_pull) {
@@ -743,17 +814,18 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
     }
   }
 
-  function checksHtml(st: OutgoingState, s: Session): string {
+  function checksHtml(repo: RepoRow, st: OutgoingState, s: Session): string {
     const shown = st.checks.filter((c) => c.code !== "nothing_to_push");
     if (shown.length === 0) {
       if (st.ahead === 0) return "";
       return `<div class="callout success push-allgood">${icon("check")}<span><strong>Tudo certo.</strong> Os commits estão com o autor certo e nada impede o envio.</span></div>`;
     }
     const fixShown = { v: false };
+    const switchShown = { v: false };
     return checkGroupsHtml(shown, {
       commits: st.commits,
       linkCommits: true,
-      action: (code) => checkActionHtml(code, st, s, fixShown),
+      action: (code) => checkActionHtml(code, st, s, repo, fixShown, switchShown),
     });
   }
 
@@ -935,6 +1007,18 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
     const target = run.target ?? r.branch;
     const acc = deps.accounts().find((a) => a.id === run.accountId);
     const ghUrl = r.remote_branch_url ?? repo.remote_url;
+    const baseBranch = defaultBranchOf(repo.id)?.name ?? "main";
+    const owner = repo.github_owner?.trim() ?? "";
+    const ghRepo = repo.github_repo?.trim() ?? "";
+    const canOpenPr =
+      r.pushed > 0 &&
+      !!owner &&
+      !!ghRepo &&
+      target.trim() !== "" &&
+      target.trim() !== baseBranch;
+    const openPrBtn = canOpenPr
+    ? `<button type="button" class="btn primary" data-action="open-pr" data-account-id="${esc(run.accountId)}" data-owner="${esc(owner)}" data-repo="${esc(ghRepo)}" data-head="${esc(target)}" data-base="${esc(baseBranch)}" data-focus="success-pr">${icon("merge", 14)}<span>Abrir pull request</span></button>`
+    : "";
     return `<div class="push-success">
       <div class="empty-icon push-success-icon" aria-hidden="true">${icon("check", 26)}</div>
       <h3 class="push-success-title" tabindex="-1" data-focus="success-title">${esc(
@@ -943,9 +1027,10 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
       <p class="push-success-sub">Para <code>${esc(target)}</code>${acc ? ` com ${profileChip(acc)}` : ""}</p>
       ${r.created_upstream ? `<p class="push-success-sub">${icon("branch", 14)} O branch foi criado no GitHub.</p>` : ""}
       <div class="push-success-actions">
+        ${openPrBtn}
         ${
           ghUrl
-            ? `<a class="btn primary" href="${esc(ghUrl)}" data-focus="success-gh">${icon("external", 14)}<span>Ver no GitHub</span><span class="sr-only"> (abre no navegador)</span></a>`
+            ? `<a class="btn${canOpenPr ? "" : " primary"}" href="${esc(ghUrl)}" data-focus="success-gh">${icon("external", 14)}<span>Ver no GitHub</span><span class="sr-only"> (abre no navegador)</span></a>`
             : ""
         }
         <button type="button" class="btn" data-action="done" data-focus="success-done">${icon("commit", 14)}<span>Voltar aos commits</span></button>
@@ -1050,6 +1135,7 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
           <li>As mensagens e os arquivos não mudam.</li>
           <li>Os commits ganham códigos (SHA) novos.</li>
           <li>Commits que já estão no GitHub não são alterados.</li>
+          <li>Alterações sem commit são guardadas no stash e devolvidas no fim.</li>
           <li>Se algo der errado, o branch volta a ficar como estava.</li>
         </ul>`,
       confirmLabel: `Corrigir ${plural(st.ahead, "commit", "commits")}`,
@@ -1136,12 +1222,51 @@ export function mountPushTab(el: HTMLElement, deps: PushTabDeps): { refresh: () 
       case "change-account":
         deps.changeAccount(btn);
         break;
+      case "switch-push-account": {
+        const accountId = btn.dataset.accountId;
+        if (!accountId) break;
+        void (async () => {
+          s.action = "switch";
+          emit(repo.id);
+          try {
+            const ok = await deps.switchToAccount(btn, accountId);
+            if (ok) {
+              await refreshOutgoing(repo.id, true);
+              pendingFocus = "push";
+            }
+          } finally {
+            s.action = null;
+            emit(repo.id);
+          }
+        })();
+        break;
+      }
       case "fix-identity":
         deps.fixIdentity(btn);
         break;
       case "merge-to-default":
         if (btn.dataset.branch && btn.dataset.target) deps.openMerge(btn.dataset.branch, btn.dataset.target);
         break;
+      case "open-pr": {
+        const accountId = btn.dataset.accountId;
+        const owner = btn.dataset.owner;
+        const ghRepo = btn.dataset.repo;
+        const head = btn.dataset.head;
+        const base = btn.dataset.base ?? "main";
+        if (!accountId || !owner || !ghRepo || !head) break;
+        void (async () => {
+          const created = await openCreatePullRequest(accountId, owner, ghRepo, head, base);
+          if (created) {
+            openPullRequestPanel({
+              accountId,
+              owner,
+              repo: ghRepo,
+              number: created.number,
+            });
+          }
+        })();
+        break;
+      }
     }
   });
 

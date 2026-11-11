@@ -485,6 +485,11 @@ fn push_json_matches_typescript() {
         has_warnings: false,
         can_fix_authors: false,
         can_pull: false,
+        // Contrato TS exige as chaves mesmo quando não há sugestão (campos omitidos no JSON só com None).
+        suggested_push_account_id: Some(String::new()),
+        suggested_push_account_login: Some(String::new()),
+        preferred_push_account_id: Some(String::new()),
+        preferred_push_account_login: Some(String::new()),
     };
     assert_eq!(keys(&state), ts_keys(&ts, "OutgoingState"));
     let dirty_ts = ts_fields(&ts_type(&ts, "OutgoingState")).into_iter().find(|(k, _)| k == "dirty").unwrap().1;

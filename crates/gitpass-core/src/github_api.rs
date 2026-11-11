@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ pub enum GithubApiError {
     Keychain(String),
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RepoPermissions {
     #[serde(default)]
     pub admin: bool,

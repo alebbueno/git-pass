@@ -11,6 +11,7 @@ import { resolvedTheme, setTheme, THEME_CHANGED_EVENT } from "../lib/theme";
 import { DATA_CHANGED_EVENT, DRAWER_EVENT, type DrawerEventDetail, type ViewContext } from "../lib/view";
 import { sourceTag, verdictPill } from "../shell/current-repo";
 import { defaultBranchOf, forgetBranches, mountBranchesTab, refreshBranches } from "./repo-branches";
+import { mountRepoPrsTab } from "./repo-prs";
 import { openMergeFlow } from "./repo-merge";
 import {
   forgetSession,
@@ -40,12 +41,13 @@ function commitDay(date: string): string {
   return d.toLocaleDateString("pt-BR", opts);
 }
 
-export type Tab = "overview" | "push" | "branches" | "history" | "config";
+export type Tab = "overview" | "push" | "branches" | "pulls" | "history" | "config";
 
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "overview", label: "Visão geral", icon: "repo" },
   { id: "push", label: "Enviar", icon: "send" },
   { id: "branches", label: "Branches", icon: "branch" },
+  { id: "pulls", label: "Pull requests", icon: "pullRequest" },
   { id: "history", label: "Histórico", icon: "history" },
   { id: "config", label: "Configuração", icon: "settings" },
 ];
@@ -602,6 +604,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
         accounts: () => accounts,
         goAccounts: () => ctx.navigate("accounts"),
         changeAccount: (btn) => pickAccount(btn),
+        switchToAccount: (btn, accountId) => changeAccount(btn, current(), accountId),
         fixIdentity: (btn) => void fixIdentity(btn),
         openMerge: (source, target) => openMerge(source, target),
         onBranchChange: () => syncRoute(),
@@ -615,6 +618,14 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
         openMerge: (source, target) => openMerge(source, target),
         openPush: (branch) => openPushFor(branch),
         onCheckedOut: (row) => afterCheckout(row),
+      });
+    } else if (tab === "pulls") {
+      const host = document.createElement("div");
+      host.className = "drawer-tab-host";
+      panel.appendChild(host);
+      tabHandle = mountRepoPrsTab(host, {
+        repo: current,
+        account: () => accountOf(current()),
       });
     } else if (tab === "history") {
       tabHandle = mountHistory();
@@ -1212,15 +1223,53 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
   function pickAccount(btn: HTMLButtonElement): void {
     const b = current();
     if (accounts.length === 0) return;
-    openAccountMenu(btn, accounts, "Usar neste repositório", b.account_id, (id) => void changeAccount(btn, b, id));
+    void withBusy(btn, "Conferindo…", async () => {
+      const rows = await reposApi.bindingAccounts(b.id, true);
+      const allowed = rows.filter((r) => r.allowed);
+      if (!allowed.length) {
+        showToast(
+          "Nenhuma conta conectada pode enviar neste repositório. Verifique o acesso no GitHub e reconecte a conta certa.",
+          "err"
+        );
+        return;
+      }
+      const choices = allowed
+        .map((r) => accounts.find((a) => a.id === r.account_id))
+        .filter((a): a is AccountRow => !!a);
+      const title =
+        allowed.length === 1 && allowed[0].recommended
+          ? "Conta para este repositório"
+          : "Contas que podem enviar aqui";
+      openAccountMenu(btn, choices, title, b.account_id, (id) => {
+        if (id === b.account_id) return;
+        const row = allowed.find((r) => r.account_id === id);
+        if (!row?.allowed) {
+          showToast("Esta conta não tem permissão para enviar neste repositório.", "err");
+          return;
+        }
+        void changeAccount(btn, current(), id).then((ok) => {
+          if (!ok) return;
+          editing = false;
+          tabHandle?.refresh();
+        });
+      });
+    }).catch((e) => showToast(errMessage(e), "err"));
   }
 
   async function changeAccount(btn: HTMLButtonElement, b: RepoRow, accountId: string): Promise<boolean> {
     try {
-      const row = await withBusy(btn, "Trocando…", () => reposApi.changeAccount(b.id, accountId));
-      showToast(`${repoName(row)} agora usa ${who(accountId)}. Identidade do Git atualizada.`, "ok");
+      const out = await withBusy(btn, "Trocando…", () => reposApi.changeAccount(b.id, accountId));
+      const row = out.repo;
+      const toast =
+        out.authors_adjusted
+          ? `${repoName(row)} usa ${who(accountId)}. ${out.authors_message ?? "Autor dos commits ajustado."}`
+          : out.authors_message
+            ? `${repoName(row)} usa ${who(accountId)}, mas ${out.authors_message}`
+            : `${repoName(row)} agora usa ${who(accountId)}. Identidade do Git atualizada.`;
+      showToast(toast, out.authors_adjusted || !out.authors_message ? "ok" : "err");
       onRepoUpdated(row);
-      void refreshOutgoing(row.id, true);
+      await refreshOutgoing(row.id, true);
+      if (tab === "push") tabHandle?.refresh();
       if (showsIdentityDiagnostic()) void loadIdentityDiagnostic(row.id, { remote: identityDiag?.remote ?? null });
       return true;
     } catch (e) {
@@ -1352,9 +1401,7 @@ export function createRepoDrawer(el: HTMLElement, ctx: ViewContext, hooks: Drawe
         reposApi.openInTerminal(b.root_path).catch((err) => showToast(errMessage(err), "err"));
         break;
       case "edit-account":
-        editing = !editing;
-        tabHandle?.refresh();
-        if (editing) panel.querySelector<HTMLSelectElement>("#drawer-profile")?.focus();
+        pickAccount(btn);
         break;
       case "cancel-account":
         editing = false;

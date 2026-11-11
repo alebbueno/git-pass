@@ -32,7 +32,7 @@ fn config_err(e: ConfigError) -> String {
     format!("Não foi possível ler ou salvar as configurações do GitPass ({e}).")
 }
 
-fn bb_err(e: BitbucketApiError) -> String {
+pub(crate) fn bb_err(e: BitbucketApiError) -> String {
     match e {
         BitbucketApiError::Http { status: 401 | 403, .. } => {
             "O Bitbucket recusou o token. Use um API token da Atlassian com escopos Bitbucket (inclua read:user:bitbucket). Cole só o token ou o email Atlassian + token.".into()
@@ -42,6 +42,23 @@ fn bb_err(e: BitbucketApiError) -> String {
             "Não foi possível conectar ao Bitbucket. Veja se você está online e tente de novo.".into()
         }
         BitbucketApiError::Json(_) => "Resposta inesperada do Bitbucket. Tente de novo.".into(),
+    }
+}
+
+/// Erros ao criar, aprovar ou mesclar PR — normalmente falta `write:pullrequest:bitbucket` no token.
+pub(crate) fn bb_err_pr_write(e: BitbucketApiError) -> String {
+    match &e {
+        BitbucketApiError::Http { status: 403, body } => {
+            let hint = "Sem permissão para alterar pull requests. No API token Atlassian, inclua \
+                write:pullrequest:bitbucket (e read:pullrequest:bitbucket para listar). No OAuth Bitbucket, \
+                inclua pullrequest:write. Reconecte a conta em Contas com esses escopos.";
+            if body.trim().is_empty() {
+                hint.to_string()
+            } else {
+                format!("{hint}\n\nDetalhe do Bitbucket: {body}")
+            }
+        }
+        _ => bb_err(e),
     }
 }
 

@@ -229,6 +229,27 @@ export type OutgoingState = {
   can_fix_authors: boolean;
   /** Dá para trazer os commits do GitHub com rebase (árvore limpa, upstream existe, behind > 0). */
   can_pull: boolean;
+  /** Outra conta conectada cujo email bate com o autor dos commits (trocar em vez de reescrever). */
+  suggested_push_account_id: string | null;
+  suggested_push_account_login: string | null;
+  preferred_push_account_id: string | null;
+  preferred_push_account_login: string | null;
+};
+
+export type ChangeAccountResult = {
+  repo: RepoRow;
+  authors_adjusted: boolean;
+  authors_message: string | null;
+};
+
+export type BindingAccountRow = {
+  account_id: string;
+  login: string | null;
+  label: string | null;
+  can_push: boolean | null;
+  owner_match: boolean;
+  recommended: boolean;
+  allowed: boolean;
 };
 
 export type CommitFile = {
@@ -417,8 +438,10 @@ export const reposApi = {
     invoke<BindItemResult[]>("repos_bind_many", { items }),
   unbind: (bindingId: string, resetIdentity: boolean) =>
     invoke<void>("repos_unbind", { bindingId, resetIdentity }),
+  bindingAccounts: (bindingId: string, verify = true) =>
+    invoke<BindingAccountRow[]>("repos_binding_accounts", { bindingId, verify }),
   changeAccount: (bindingId: string, accountId: string) =>
-    invoke<RepoRow>("repos_change_account", { bindingId, accountId }),
+    invoke<ChangeAccountResult>("repos_change_account", { bindingId, accountId }),
   fixIdentity: (bindingId: string) => invoke<RepoRow>("repos_fix_identity", { bindingId }),
   identityDiagnostic: (bindingId: string, remote: string | null = null, verifyToken = false) =>
     invoke<IdentityDiagnosticRow>("repos_identity_diagnostic", { bindingId, remote, verifyToken }),

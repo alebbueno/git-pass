@@ -5,10 +5,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gitpass_core::bindings::{
-    change_binding_account, create_binding, decide_account, default_discover_roots, discover_unbound_repos,
-    expected_identity, fix_binding_identity, github_https_url, identity_state, pick_remote, read_head,
-    read_origin_url, read_remotes, read_repo_identity, remote_url_has_credentials, remove_binding,
-    AccountDecision, IdentityState, RemotePick, SuggestionReason, DISCOVER_MAX_DEPTH,
+    account_allowed_for_binding, binding_switch_options, change_binding_account, create_binding, decide_account,
+    default_discover_roots, discover_unbound_repos, expected_identity, fix_binding_identity, github_https_url,
+    identity_state, pick_remote, read_head, read_origin_url, read_remotes, read_repo_identity,
+    remote_url_has_credentials, remove_binding, AccountDecision, IdentityState, RemotePick,
+    SuggestionReason, DISCOVER_MAX_DEPTH,
 };
 use gitpass_core::github_api::{token_can_push_for_account, GithubApiError};
 use gitpass_core::identity_diagnostic::{binding_identity_diagnostic, CommitDiagnostic, IdentityDiagnostic, PushDiagnostic};
@@ -17,12 +18,14 @@ use gitpass_core::repo_map::{
 };
 use gitpass_core::config_history::{record_change_account, record_fix_identity, ConfigHistoryStatus};
 use gitpass_core::outgoing::{GitRepo, SyncSummary};
+use gitpass_core::outgoing::{rewrite_authors_autostash, unpushed_identity_mismatch};
 use gitpass_core::{git_work_tree_root, parse_github_remote, AppConfig, GithubRepoSummary, RepoBinding};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::cmd_cloud::list_account_repos;
+use crate::cmd_push::{commit_identity, identity_rules};
 
 const CONFIG_CHANGED_EVENT: &str = "gitpass-config-changed";
 pub(crate) const MAP_PROGRESS_EVENT: &str = "repos-map-progress";
@@ -69,6 +72,26 @@ pub struct CandidateRow {
     account_id: String,
     /// `None`: could not verify (no token, offline, API error).
     can_push: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeAccountResult {
+    pub repo: RepoRow,
+    pub authors_adjusted: bool,
+    pub authors_message: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingAccountRow {
+    pub account_id: String,
+    pub login: Option<String>,
+    pub label: Option<String>,
+    pub can_push: Option<bool>,
+    pub owner_match: bool,
+    pub recommended: bool,
+    pub allowed: bool,
 }
 
 #[derive(Serialize)]
@@ -343,6 +366,77 @@ fn push_check(account_id: Uuid, owner: &str, repo: &str) -> Option<bool> {
     }
 }
 
+pub(crate) fn binding_push_checks(cfg: &AppConfig, binding: &RepoBinding, online: bool) -> Vec<(Uuid, Option<bool>)> {
+    let Some((owner, repo)) = binding
+        .github_owner
+        .as_deref()
+        .zip(binding.github_repo.as_deref())
+    else {
+        return cfg.accounts.iter().map(|a| (a.id, None)).collect();
+    };
+    if !online {
+        return cfg.accounts.iter().map(|a| (a.id, None)).collect();
+    }
+    std::thread::scope(|scope| {
+        cfg.accounts
+            .iter()
+            .map(|a| {
+                let id = a.id;
+                let owner = owner.to_string();
+                let repo = repo.to_string();
+                let h = scope.spawn(move || push_check(id, &owner, &repo));
+                (id, h.join().ok().flatten())
+            })
+            .collect()
+    })
+}
+
+fn adjust_authors_after_account_change(root: &Path, account: &gitpass_core::Account) -> Result<Option<String>, String> {
+    let repo = GitRepo::new(root);
+    let remotes = read_remotes(root);
+    let remote = match pick_remote(&remotes) {
+        RemotePick::GitHub { name, .. } | RemotePick::Bitbucket { name, .. } => name,
+        _ => return Ok(None),
+    };
+    let Some(branch) = repo.branch() else {
+        return Ok(None);
+    };
+    let who = commit_identity(Some(account))?;
+    let rules = identity_rules(Some(account), None);
+    if !unpushed_identity_mismatch(&repo, &remote, &branch, &rules)? {
+        return Ok(None);
+    }
+    match rewrite_authors_autostash(&repo, &remote, &branch, &who) {
+        Ok(()) => Ok(Some(format!(
+            "Autor dos commits ajustado para {} <{}>.",
+            who.name.trim(),
+            who.email.trim()
+        ))),
+        Err(e) => Ok(Some(format!(
+            "Conta trocada, mas o autor dos commits não foi ajustado: {e}"
+        ))),
+    }
+}
+
+fn binding_account_rows(cfg: &AppConfig, binding: &RepoBinding, online: bool) -> Vec<BindingAccountRow> {
+    let checks = binding_push_checks(cfg, binding, online);
+    let opts = binding_switch_options(cfg, binding, &checks);
+    opts.into_iter()
+        .filter_map(|o| {
+            let acc = cfg.accounts.iter().find(|a| a.id == o.account_id)?;
+            Some(BindingAccountRow {
+                account_id: o.account_id.to_string(),
+                login: acc.github_login.clone(),
+                label: acc.label.clone(),
+                can_push: o.can_push,
+                owner_match: o.owner_match,
+                recommended: o.recommended,
+                allowed: o.allowed,
+            })
+        })
+        .collect()
+}
+
 /// Offline suggestion first; only queries the API (in parallel) when the owner is not one of the logins.
 fn choose_account(cfg: &AppConfig, target: &RepoTarget) -> (AccountDecision, Vec<(Uuid, Option<bool>)>) {
     let offline = gitpass_core::account_rules::suggest_account_for_repo(cfg, &target.root, &target.owner);
@@ -407,8 +501,8 @@ fn pick_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn pick_folder(_prompt: &str) -> Result<Option<PathBuf>, String> {
-    Err("O seletor de pastas só funciona no macOS.".to_string())
+fn pick_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
+    Ok(rfd::FileDialog::new().set_title(prompt).pick_folder())
 }
 
 fn expand_home(raw: &str) -> PathBuf {
@@ -423,7 +517,9 @@ fn expand_home(raw: &str) -> PathBuf {
 }
 
 fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 /// Root of a bound repo matching `path` (symlinks resolved). The WebView is untrusted: only folders
@@ -459,10 +555,36 @@ pub(crate) fn open_with(args: &[&str], path: &Path) -> Result<(), String> {
             Err("Não foi possível abrir a pasta.".to_string())
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let path_s = path.display().to_string();
+        if args.is_empty() {
+            std::process::Command::new("explorer")
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Não foi possível abrir: {e}"))?;
+            return Ok(());
+        }
+        if args == ["-a", "Terminal"] {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", "/D", &path_s, "cmd"])
+                .spawn()
+                .map_err(|e| format!("Não foi possível abrir o terminal: {e}"))?;
+            return Ok(());
+        }
+        if args.len() == 2 && args[0] == "-a" {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", args[1], &path_s])
+                .spawn()
+                .map_err(|e| format!("Não foi possível abrir no editor: {e}"))?;
+            return Ok(());
+        }
+        Err("Não foi possível abrir a pasta.".to_string())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (args, path);
-        Err("Só funciona no macOS.".to_string())
+        Err("Abrir pasta só está disponível no macOS e no Windows.".to_string())
     }
 }
 
@@ -601,7 +723,26 @@ pub async fn repos_unbind(app: AppHandle, binding_id: String, reset_identity: bo
 }
 
 #[tauri::command]
-pub async fn repos_change_account(app: AppHandle, binding_id: String, account_id: String) -> Result<RepoRow, String> {
+pub async fn repos_binding_accounts(binding_id: String, verify: Option<bool>) -> Result<Vec<BindingAccountRow>, String> {
+    blocking(move || {
+        let id = parse_id(&binding_id, "vínculo")?;
+        let cfg = load_config()?;
+        let binding = cfg
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| "Vínculo desconhecido.".to_string())?;
+        Ok(binding_account_rows(&cfg, binding, verify.unwrap_or(true)))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repos_change_account(
+    app: AppHandle,
+    binding_id: String,
+    account_id: String,
+) -> Result<ChangeAccountResult, String> {
     blocking(move || {
         let id = parse_id(&binding_id, "vínculo")?;
         let account = parse_id(&account_id, "conta")?;
@@ -612,6 +753,26 @@ pub async fn repos_change_account(app: AppHandle, binding_id: String, account_id
         let Some(binding) = cfg.repos.iter().find(|r| r.id == id).cloned() else {
             return Err("Vínculo desconhecido. Atualize a lista e tente de novo.".to_string());
         };
+        let checks = binding_push_checks(&cfg, &binding, true);
+        if !account_allowed_for_binding(&cfg, &binding, account, &checks) {
+            let owner = binding.github_owner.as_deref().unwrap_or("?");
+            let repo = binding.github_repo.as_deref().unwrap_or("?");
+            let rec = binding_switch_options(&cfg, &binding, &checks)
+                .into_iter()
+                .find(|o| o.recommended)
+                .and_then(|o| cfg.accounts.iter().find(|a| a.id == o.account_id))
+                .and_then(|a| a.github_login.clone().or(a.label.clone()));
+            return Err(rec.map(|login| {
+                format!(
+                    "A conta escolhida não pode enviar para {owner}/{repo}. Use @{login} — é a conta certa para este repositório."
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "A conta escolhida não pode enviar para {owner}/{repo}. Escolha uma conta com acesso de escrita neste repositório."
+                )
+            }));
+        }
         let before_account = binding.account_id;
         let before_identity = read_repo_identity(&binding.root_path);
         let res = change_binding_account(&mut cfg, id, account);
@@ -634,7 +795,17 @@ pub async fn repos_change_account(app: AppHandle, binding_id: String, account_id
         );
         notify(&app);
         res.map_err(|e| message.unwrap_or_else(|| format!("A conta foi trocada, mas a identidade do Git não foi aplicada: {e}")))?;
-        row_for(&cfg, id)
+        let account = cfg.accounts.iter().find(|a| a.id == account).cloned().unwrap();
+        let authors_message = adjust_authors_after_account_change(&binding.root_path, &account).ok().flatten();
+        let authors_adjusted = authors_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Autor dos commits ajustado"));
+        notify(&app);
+        Ok(ChangeAccountResult {
+            repo: row_for(&cfg, id)?,
+            authors_adjusted,
+            authors_message,
+        })
     })
     .await
 }

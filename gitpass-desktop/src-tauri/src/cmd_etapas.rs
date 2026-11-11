@@ -5,9 +5,11 @@ use gitpass_core::commit_review::{binding_commit_review, CommitReviewRow};
 use gitpass_core::config_history::{
     list_records, remove_record, undo_snapshot, ConfigHistoryOp, ConfigHistoryRecord, UndoError,
 };
+use gitpass_core::bitbucket_pr::fetch_bitbucket_pr_inbox;
+use gitpass_core::bitbucket_token_load;
 use gitpass_core::pr_inbox::{fetch_pr_inbox, PrInboxItem};
 use gitpass_core::work_radar::{inspect_work_tree, WorkTreeStatus};
-use gitpass_core::AppConfig;
+use gitpass_core::{AccountHost, AppConfig};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -152,18 +154,42 @@ pub async fn repos_commit_review(binding_id: String, limit: Option<usize>) -> Re
 }
 
 #[tauri::command]
-pub async fn cloud_pr_inbox(account_id: String) -> Result<Vec<PrInboxItem>, String> {
+pub async fn cloud_pr_inbox(account_id: String, refresh: Option<bool>) -> Result<Vec<PrInboxItem>, String> {
     crate::cmd_repos::blocking(move || {
         let id = parse_id(&account_id)?;
         let cfg = AppConfig::load_or_default().map_err(|e| e.to_string())?;
-        let login = cfg
+        let account = cfg
             .accounts
             .iter()
             .find(|a| a.id == id)
-            .and_then(|a| a.github_login.clone())
             .ok_or_else(|| "Conta desconhecida.".to_string())?;
-        let token = current_token(id)?;
-        fetch_pr_inbox(&token, &login).map_err(crate::cmd_cloud::api_error_message)
+        let login = account
+            .github_login
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "Conta sem identificador.".to_string())?;
+        if account.host == AccountHost::Bitbucket {
+            let bundle = bitbucket_token_load(id)
+                .map_err(|e| format!("Keychain: {e}"))?
+                .ok_or_else(|| "Reconecte a conta Bitbucket.".to_string())?;
+            let bound: Vec<String> = cfg
+                .repos
+                .iter()
+                .filter(|b| b.account_id == id)
+                .filter_map(|b| match (&b.github_owner, &b.github_repo) {
+                    (Some(o), Some(r)) if !o.trim().is_empty() && !r.trim().is_empty() => {
+                        Some(format!("{}/{}", o.trim(), r.trim()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let force = refresh.unwrap_or(true);
+            fetch_bitbucket_pr_inbox(&login, &bundle.app_password, bundle.via_oauth, &bound, force)
+                .map_err(crate::cmd_bitbucket::bb_err)
+        } else {
+            let token = current_token(id)?;
+            fetch_pr_inbox(&token, &login).map_err(crate::cmd_cloud::api_error_message)
+        }
     })
     .await
 }

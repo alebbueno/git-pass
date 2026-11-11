@@ -327,8 +327,15 @@ fn save_dialog(default_name: &str) -> Result<Option<PathBuf>, String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn save_dialog(_default_name: &str) -> Result<Option<PathBuf>, String> {
-    Err("Exportar os logs só funciona no macOS.".into())
+fn save_dialog(default_name: &str) -> Result<Option<PathBuf>, String> {
+    Ok(rfd::FileDialog::new()
+        .set_title("Salvar os logs do GitPass")
+        .set_file_name(default_name)
+        .save_file()
+        .map(|p| {
+            let is_zip = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+            if is_zip { p } else { p.with_extension("zip") }
+        }))
 }
 
 #[tauri::command]
@@ -337,7 +344,9 @@ pub async fn system_export_logs() -> Result<Option<String>, String> {
         let name = logs_export::default_file_name(chrono::Local::now());
         let Some(dest) = save_dialog(&name)? else { return Ok(None) };
         let diag = run_diagnostics(true)?;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from);
         logs_export::write_logs_zip(&app_support()?, home.as_deref(), &diag, &dest)?;
         Ok(Some(dest.display().to_string()))
     })

@@ -110,6 +110,82 @@ pub fn validate_for_connect(atlassian_email: Option<&str>, token: &str) -> Resul
     }
 }
 
+pub(crate) fn authed_post_empty(
+    url: &str,
+    username: &str,
+    token: &str,
+    via_oauth: bool,
+) -> Result<String, BitbucketApiError> {
+    let auth = bearer_header(token);
+    let _ = via_oauth;
+    let res = client()
+        .post(url)
+        .header("Authorization", auth)
+        .header("Accept", "application/json")
+        .send()?;
+    let status_code = res.status().as_u16();
+    let body = res.text().unwrap_or_default();
+    if !(200..300).contains(&status_code) {
+        return Err(BitbucketApiError::Http {
+            status: status_code,
+            body,
+        });
+    }
+    Ok(body)
+}
+
+pub(crate) fn authed_post_json(
+    url: &str,
+    _username: &str,
+    token: &str,
+    via_oauth: bool,
+    json: serde_json::Value,
+) -> Result<String, BitbucketApiError> {
+    let auth = bearer_header(token);
+    let _ = via_oauth;
+    let res = client()
+        .post(url)
+        .header("Authorization", auth)
+        .header("Content-Type", "application/json")
+        .json(&json)
+        .send()?;
+    let status_code = res.status().as_u16();
+    let body = res.text().unwrap_or_default();
+    if !(200..300).contains(&status_code) {
+        return Err(BitbucketApiError::Http {
+            status: status_code,
+            body,
+        });
+    }
+    Ok(body)
+}
+
+pub(crate) fn authed_put_json(
+    url: &str,
+    _username: &str,
+    token: &str,
+    via_oauth: bool,
+    json: serde_json::Value,
+) -> Result<String, BitbucketApiError> {
+    let auth = bearer_header(token);
+    let _ = via_oauth;
+    let res = client()
+        .put(url)
+        .header("Authorization", auth)
+        .header("Content-Type", "application/json")
+        .json(&json)
+        .send()?;
+    let status_code = res.status().as_u16();
+    let body = res.text().unwrap_or_default();
+    if !(200..300).contains(&status_code) {
+        return Err(BitbucketApiError::Http {
+            status: status_code,
+            body,
+        });
+    }
+    Ok(body)
+}
+
 pub(crate) fn authed_get(
     url: &str,
     _username: &str,

@@ -104,6 +104,28 @@
   color: var(--muted);
 }
 
+.push-account-chip {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.push-account-chip:hover .pill,
+.push-account-chip:focus-visible .pill {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+}
+.push-account-chip:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
 .callout.push-new-branch {
   align-items: center;
   margin: var(--sp-3) 0 0;

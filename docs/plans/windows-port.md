@@ -1,6 +1,6 @@
 # Plano: build e portabilidade Windows
 
-> **Status:** documento inicial (2026-11-09). **Não implementado** — o produto v0.1 permanece **macOS 14+** como plataforma alvo (ver [README](../../README.md)). Este plano descreve como gerar artefatos Windows no futuro próximo e o que falta para **paridade funcional**.
+> **Status:** atualizado 2026-11-11. **Fase W0 em andamento** — CI `build-windows.yml`, bundle NSIS, sidecars `.exe` e UX básica (pastas, Explorer, logs). Paridade de produto (daemon, hooks, integração Git) ainda **macOS 14+** como referência (ver [README](../../README.md)).
 
 ## Objetivo
 
@@ -17,8 +17,8 @@
 
 | Área | macOS hoje | Windows hoje |
 |------|------------|--------------|
-| CI / release | `.github/workflows/build-gate.yml` → `macos-14`, `scripts/verify-app-build.sh` | Não existe |
-| Tauri bundle | `targets: ["app", "dmg"]` em `gitpass-desktop/src-tauri/tauri.conf.json` | Não configurado |
+| CI / release | `.github/workflows/build-gate.yml` → `macos-14`, `scripts/verify-app-build.sh` | `.github/workflows/build-windows.yml` + `scripts/verify-app-build.ps1` |
+| Tauri bundle | `targets: ["app", "dmg", "nsis"]` em `gitpass-desktop/src-tauri/tauri.conf.json` | NSIS no host Windows (smoke CI) |
 | Sidecars | `gitpass-desktop/scripts/build-sidecars.mjs` + `src-tauri/binaries/*-{triple}` | Triple `x86_64-pc-windows-msvc` (e opcionalmente `aarch64-pc-windows-msvc`) não gerado no pipeline |
 | Segredos | Keychain (`keyring`, serviço `com.gitpass.GitPass`) | `keyring` pode usar Credential Manager, mas UI/copy ainda falam “Keychain do macOS” |
 | Integração Git | `credential.helper` + `osxkeychain`, hooks, `launchd` | Stubs / erros em `#[cfg(not(unix))]` em `integration.rs`, `hooks.rs`, `ipc_client.rs` |
@@ -96,7 +96,11 @@ cargo build -p gitpass-desktop --release
 
 ## Instruções: CI GitHub Actions (recomendado)
 
-Adicionar workflow separado (não substituir o gate macOS até a paridade mínima):
+Workflow: `.github/workflows/build-windows.yml` (não substitui o gate macOS até a paridade mínima).
+
+**Disparo manual:** Actions → **build-windows** → **Run workflow** (qualquer branch). Artefato **gitpass-windows-x64**. Opcional: marcar **Publicar… GitHub Release** para anexar o NSIS a um release (tag customizada ou `v<versão>-windows-<run>`).
+
+Esboço histórico do job (referência):
 
 ```yaml
 # Esboço — .github/workflows/build-windows.yml (futuro)
@@ -168,10 +172,10 @@ Checklist de arquivos:
 
 ### Fase W0 — Smoke build (1–2 PRs)
 
-- [ ] CI `windows-latest` + artefato NSIS/MSI.
-- [ ] Sidecars Windows compilados e empacotados.
-- [ ] App inicia; navegação, configurações, temas (o que não chama comandos mac-only).
-- [ ] Mensagens honestas na UI quando recurso não existir no Windows (já parcialmente presentes).
+- [x] CI `windows-latest` + artefato NSIS (MSI opcional depois).
+- [x] Sidecars Windows: sufixo `.exe` em `build-sidecars.mjs`.
+- [ ] App inicia; navegação, configurações, temas (validar no runner / VM).
+- [x] Mensagens honestas na UI quando recurso não existir no Windows (daemon, integração Git).
 
 **Gate:** `npx tsc`, `contract` tests, `tauri build` no runner Windows.
 
@@ -199,8 +203,8 @@ Checklist de arquivos:
 
 ### Fase W3 — Shell desktop (UX Windows)
 
-- [ ] Seletor de pastas: `rfd` / dialog Tauri / API nativa (substituir `osascript` em `cmd_repos.rs`).
-- [ ] Abrir pasta / Explorer: `explorer` ou `opener` (substituir `open` em `main.rs`, `cmd_repos.rs`).
+- [x] Seletor de pastas: `rfd` em `cmd_repos.rs` (macOS mantém `osascript`).
+- [x] Abrir pasta / Explorer / terminal / editor: `explorer` e `cmd start` em `cmd_repos.rs`; pasta de dados em `main.rs`.
 - [ ] Tray: validar comportamento Tauri 2 no Windows; notificações sem `notify-rust` mac-only (dependência já em `target.'cfg(macos)'`).
 - [ ] Atalhos: `Ctrl` em vez de `⌘` onde o front usa meta (paleta, tour).
 - [ ] `focus.rs`, `pending_alert.rs`, `dock.rs` — revisar ou guardar atrás de `cfg(macos)`.
@@ -275,7 +279,7 @@ Legenda: **S** smoke (W0), **P** paridade planejada (W1–W4), **—** fora de e
 |----|---------|------|-------|
 | WIN-DL-001 | IPC Windows: named pipe vs TCP localhost | — | Afeta `gitpassd` e firewall |
 | WIN-DL-002 | Daemon: serviço Windows vs tarefa de logon vs só app | — | Afeta hooks fora do app |
-| WIN-DL-003 | Instalador padrão: NSIS vs MSI | — | CI e UX de install |
+| WIN-DL-003 | Instalador padrão: NSIS vs MSI | 2026-11-11 | Começar com **NSIS** no CI |
 | WIN-DL-004 | Convivência com Git Credential Manager | — | Padrão em Git for Windows |
 
 ---

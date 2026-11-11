@@ -52,8 +52,18 @@ function build(triple) {
   return triple === host ? join(targetDir, profileDir) : join(targetDir, triple, profileDir);
 }
 
+function sidecarFileName(sidecar, triple) {
+  const base = `${sidecar}-${triple}`;
+  return triple.includes("windows") ? `${base}.exe` : base;
+}
+
+function cargoBinPath(outDir, bin, triple) {
+  const name = triple.includes("windows") ? `${bin}.exe` : bin;
+  return join(outDir, name);
+}
+
 function install(src, sidecar, triple) {
-  const dest = join(binariesDir, `${sidecar}-${triple}`);
+  const dest = join(binariesDir, sidecarFileName(sidecar, triple));
   const tmp = `${dest}.tmp`;
   copyFileSync(src, tmp);
   chmodSync(tmp, 0o755);
@@ -69,13 +79,13 @@ if (target === "universal-apple-darwin") {
   const arches = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
   const outDirs = arches.map(build);
   for (const s of SIDECARS) {
-    arches.forEach((t, i) => install(join(outDirs[i], s.bin), s.sidecar, t));
-    const dest = join(binariesDir, `${s.sidecar}-${target}`);
+    arches.forEach((t, i) => install(cargoBinPath(outDirs[i], s.bin, t), s.sidecar, t));
+    const dest = join(binariesDir, sidecarFileName(s.sidecar, target));
     execFileSync("lipo", ["-create", "-output", dest, ...outDirs.map((d) => join(d, s.bin))], { stdio: "inherit" });
     chmodSync(dest, 0o755);
     console.log(`build-sidecars: ${dest}`);
   }
 } else {
   const outDir = build(target);
-  for (const s of SIDECARS) install(join(outDir, s.bin), s.sidecar, target);
+  for (const s of SIDECARS) install(cargoBinPath(outDir, s.bin, target), s.sidecar, target);
 }

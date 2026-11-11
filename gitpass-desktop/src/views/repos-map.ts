@@ -748,10 +748,17 @@ export const mount: MountView = (root, ctx) => {
     if (!it.binding_id || !target || busy) return;
     busy = true;
     try {
-      await withBusy(btn, "Trocando…", () => reposApi.changeAccount(it.binding_id!, target));
+      const out = await withBusy(btn, "Trocando…", () => reposApi.changeAccount(it.binding_id!, target));
       it.bound_account_id = target;
       it.bound_matches_suggestion = true;
-      showToast(`${itemName(it)} agora usa ${who(target)}. Identidade do Git atualizada.`, "ok");
+      showToast(
+        out.authors_adjusted
+          ? `${itemName(it)} usa ${who(target)}. Autor dos commits ajustado.`
+          : out.authors_message
+            ? `${itemName(it)} usa ${who(target)}. ${out.authors_message}`
+            : `${itemName(it)} agora usa ${who(target)}. Identidade do Git atualizada.`,
+        out.authors_adjusted || !out.authors_message ? "ok" : "err"
+      );
       ctx.notifyDataChanged();
     } catch (e) {
       showToast(errMessage(e), "err");

@@ -273,7 +273,7 @@ export function closeMenus(): void {
   activeMenu?.close();
 }
 
-/** Menu suspenso junto de `btn` (o pai do botão recebe `.repos-menu-host`). Clicar de novo no botão fecha. */
+/** Menu suspenso (fixo no `body` para não ser cortado na gaveta rolável). Clicar de novo no botão fecha. */
 export function openMenu(btn: HTMLButtonElement, opts: MenuOptions): void {
   if (activeMenu) {
     const same = activeMenu.btn === btn;
@@ -281,9 +281,9 @@ export function openMenu(btn: HTMLButtonElement, opts: MenuOptions): void {
     if (same) return;
   }
   const radio = opts.kind === "radio";
-  const host = btn.parentElement!;
+  btn.parentElement?.classList.add("repos-menu-host");
   const menu = document.createElement("div");
-  menu.className = `repos-menu${opts.glass ? " material" : " repos-menu-solid"}`;
+  menu.className = `repos-menu repos-menu-floating${opts.glass ? " material" : " repos-menu-solid"}`;
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", opts.label);
   menu.innerHTML = `${opts.title ? `<p class="repos-menu-title muted small">${esc(opts.title)}</p>` : ""}${opts.items
@@ -295,15 +295,40 @@ export function openMenu(btn: HTMLButtonElement, opts: MenuOptions): void {
       }>${it.html}</button>`;
     })
     .join("")}`;
-  host.classList.add("repos-menu-host");
-  host.appendChild(menu);
+  document.body.appendChild(menu);
   btn.setAttribute("aria-expanded", "true");
   const items = Array.from(menu.querySelectorAll<HTMLButtonElement>(".repos-menu-item"));
   (items.find((i) => i.getAttribute("aria-disabled") !== "true") ?? items[0])?.focus();
 
-  const onDocDown = (e: PointerEvent): void => {
-    if (!menu.contains(e.target as Node) && !btn.contains(e.target as Node)) close();
+  const placeMenu = (): void => {
+    const rect = btn.getBoundingClientRect();
+    const w = menu.offsetWidth || 260;
+    const h = menu.offsetHeight || 120;
+    let top = rect.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 6);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - w - 8));
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
   };
+  placeMenu();
+  requestAnimationFrame(placeMenu);
+
+  let picking = false;
+  const pickItem = (item: HTMLButtonElement): void => {
+    const id = item.dataset.item;
+    if (!id || item.getAttribute("aria-disabled") === "true" || picking) return;
+    picking = true;
+    close();
+    if (btn.isConnected) btn.focus();
+    opts.onPick(id);
+  };
+
+  const onDocClick = (e: MouseEvent): void => {
+    const t = e.target as Node;
+    if (menu.contains(t) || btn.contains(t)) return;
+    close();
+  };
+  const onScroll = (): void => placeMenu();
   const onKey = (e: KeyboardEvent): void => {
     const i = items.indexOf(document.activeElement as HTMLButtonElement);
     if (e.key === "Escape") {
@@ -323,27 +348,50 @@ export function openMenu(btn: HTMLButtonElement, opts: MenuOptions): void {
     } else if (e.key === "End") {
       e.preventDefault();
       items[items.length - 1]?.focus();
+    } else if (e.key === "Enter" || e.key === " ") {
+      const el = document.activeElement as HTMLButtonElement;
+      if (menu.contains(el) && el.dataset.item) {
+        e.preventDefault();
+        pickItem(el);
+      }
     } else if (e.key === "Tab") {
       close();
     }
   };
+  let docClickTimer = 0;
   const close = (): void => {
-    document.removeEventListener("pointerdown", onDocDown, true);
+    window.clearTimeout(docClickTimer);
+    document.removeEventListener("click", onDocClick, true);
+    window.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("resize", onScroll);
     menu.removeEventListener("keydown", onKey);
+    menu.removeEventListener("click", onMenuClick);
+    menu.removeEventListener("mouseup", onMenuUp);
     menu.remove();
     if (btn.isConnected) btn.setAttribute("aria-expanded", "false");
     if (activeMenu?.close === close) activeMenu = null;
   };
-  document.addEventListener("pointerdown", onDocDown, true);
-  menu.addEventListener("keydown", onKey);
-  menu.addEventListener("click", (e) => {
+  const onMenuClick = (e: MouseEvent): void => {
     const item = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-item]");
-    if (!item?.dataset.item || item.getAttribute("aria-disabled") === "true") return;
-    const id = item.dataset.item;
-    close();
-    btn.focus();
-    opts.onPick(id);
-  });
+    if (!item) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pickItem(item);
+  };
+  const onMenuUp = (e: MouseEvent): void => {
+    if (e.button !== 0) return;
+    const item = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-item]");
+    if (!item) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pickItem(item);
+  };
+  menu.addEventListener("keydown", onKey);
+  menu.addEventListener("click", onMenuClick);
+  menu.addEventListener("mouseup", onMenuUp);
+  docClickTimer = window.setTimeout(() => document.addEventListener("click", onDocClick, true), 0);
+  window.addEventListener("scroll", onScroll, true);
+  window.addEventListener("resize", onScroll);
   activeMenu = { btn, close };
 }
 
