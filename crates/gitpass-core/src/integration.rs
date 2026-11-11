@@ -5,7 +5,7 @@
 //! file and disable LaunchAgent management, so they never touch the real `~/.gitconfig` or launchd.
 
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -718,6 +718,7 @@ impl<'a> GitConfig<'a> {
 
 #[cfg(unix)]
 pub fn ping_daemon(socket: &Path, timeout: Duration) -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixStream;
 
     if !socket.exists() {

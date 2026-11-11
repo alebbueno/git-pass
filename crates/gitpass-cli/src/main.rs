@@ -25,8 +25,11 @@ use gitpass_core::{
     HookContext, HookPhase, IpcRequest, IpcResponse, RepoBinding, ValidateFail,
 };
 use uuid::Uuid;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
+#[cfg(unix)]
 use tokio::net::UnixStream as AsyncUnixStream;
+#[cfg(unix)]
 use tokio::time::timeout;
 
 #[derive(Parser)]
@@ -922,6 +925,13 @@ fn ipc_validate_hook_sync(ctx: &HookContext) -> Result<IpcResponse, DaemonUnreac
     ipc_client::request(&path, &req, timeouts)
 }
 
+#[cfg(not(unix))]
+async fn ping_async() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+    eprintln!("gitpassd ainda não está disponível nesta plataforma (Windows: fase W2).");
+    Ok(1)
+}
+
+#[cfg(unix)]
 async fn ping_async() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     let path = ipc_socket_path()?;
     if !path.exists() {

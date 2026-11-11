@@ -112,7 +112,7 @@ pub fn validate_for_connect(atlassian_email: Option<&str>, token: &str) -> Resul
 
 pub(crate) fn authed_post_empty(
     url: &str,
-    username: &str,
+    _username: &str,
     token: &str,
     via_oauth: bool,
 ) -> Result<String, BitbucketApiError> {
