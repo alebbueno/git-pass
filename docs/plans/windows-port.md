@@ -47,7 +47,7 @@ Cross-compile pontual (`--target x86_64-pc-windows-msvc` no macOS) não é recom
 | **Windows 10/11** (x64; ARM64 opcional depois) | Host de build |
 | **Rust stable** (`rustup`) | Perfil `x86_64-pc-windows-msvc` |
 | **Visual Studio Build Tools** | C++ workload (linker MSVC) |
-| **Node.js 20+** | `gitpass-desktop/package-lock.json` |
+| **Node.js 20+** (CI usa **24**) | `gitpass-desktop/package-lock.json` |
 | **WebView2 Runtime** | Em dev, instalado no sistema; o instalador Tauri pode embutir bootstrapper |
 | **Git for Windows** | Para testar integração e hooks localmente |
 
